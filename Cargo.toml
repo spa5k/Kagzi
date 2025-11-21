@@ -1,0 +1,10 @@
+[workspace]
+members = ["crates/kagzi-core", "crates/kagzi-cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.1.0"
+authors = ["Kagzi Developers <dev@kagzi.local>"]
+description = "Kagzi multi-crate workspace"
