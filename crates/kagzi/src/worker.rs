@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn, debug};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use kagzi_core::{queries, Database, WorkflowStatus};
@@ -135,7 +135,10 @@ impl Worker {
             None => return Ok(false), // No workflows available
         };
 
-        debug!("Worker {} picked up workflow {}", self.worker_id, workflow_run.id);
+        debug!(
+            "Worker {} picked up workflow {}",
+            self.worker_id, workflow_run.id
+        );
 
         // Try to acquire lease
         match queries::acquire_worker_lease(

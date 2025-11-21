@@ -33,3 +33,50 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_error_display() {
+        let id = Uuid::new_v4();
+        let err = Error::WorkflowNotFound(id);
+        assert_eq!(err.to_string(), format!("Workflow not found: {}", id));
+
+        let err = Error::StepNotFound(id, "step-1".to_string());
+        assert_eq!(
+            err.to_string(),
+            format!("Step not found: workflow_run_id={}, step_id=step-1", id)
+        );
+
+        let err = Error::WorkflowAlreadyExists(id);
+        assert_eq!(err.to_string(), format!("Workflow already exists: {}", id));
+
+        let err = Error::InvalidStatusTransition {
+            from: "PENDING".to_string(),
+            to: "COMPLETED".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "Invalid workflow status transition: from PENDING to COMPLETED"
+        );
+
+        let err = Error::LeaseNotAcquired;
+        assert_eq!(err.to_string(), "Worker lease not acquired");
+
+        let err = Error::Migration("test migration error".to_string());
+        assert_eq!(err.to_string(), "Migration error: test migration error");
+
+        let err = Error::Other("test error".to_string());
+        assert_eq!(err.to_string(), "test error");
+    }
+
+    #[test]
+    fn test_error_from_serde() {
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let err: Error = json_err.into();
+        assert!(matches!(err, Error::Serialization(_)));
+    }
+}

@@ -11,10 +11,7 @@ struct SimpleInput {
     message: String,
 }
 
-async fn simple_workflow(
-    ctx: WorkflowContext,
-    input: SimpleInput,
-) -> anyhow::Result<String> {
+async fn simple_workflow(ctx: WorkflowContext, input: SimpleInput) -> anyhow::Result<String> {
     println!("Starting workflow with message: {}", input.message);
 
     let result: String = ctx
@@ -34,10 +31,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter("info,kagzi=debug,sqlx=warn")
         .init();
 
-    let database_url =
-        env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://kagzi:kagzi_dev_password@localhost:5432/kagzi".to_string()
-        });
+    let database_url = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://kagzi:kagzi_dev_password@localhost:5432/kagzi".to_string());
 
     let kagzi = Kagzi::connect(&database_url).await?;
 

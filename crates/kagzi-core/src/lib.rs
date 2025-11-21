@@ -10,6 +10,5 @@ pub mod queries;
 pub use db::Database;
 pub use error::{Error, Result};
 pub use models::{
-    CreateStepRun, CreateWorkflowRun, StepRun, StepStatus, WorkerLease, WorkflowRun,
-    WorkflowStatus,
+    CreateStepRun, CreateWorkflowRun, StepRun, StepStatus, WorkerLease, WorkflowRun, WorkflowStatus,
 };
