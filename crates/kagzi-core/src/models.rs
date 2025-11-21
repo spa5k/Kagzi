@@ -113,3 +113,88 @@ pub struct CreateStepRun {
     pub error: Option<String>,
     pub status: StepStatus,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_workflow_status_display() {
+        assert_eq!(WorkflowStatus::Pending.to_string(), "PENDING");
+        assert_eq!(WorkflowStatus::Running.to_string(), "RUNNING");
+        assert_eq!(WorkflowStatus::Completed.to_string(), "COMPLETED");
+        assert_eq!(WorkflowStatus::Failed.to_string(), "FAILED");
+        assert_eq!(WorkflowStatus::Sleeping.to_string(), "SLEEPING");
+        assert_eq!(WorkflowStatus::Cancelled.to_string(), "CANCELLED");
+    }
+
+    #[test]
+    fn test_step_status_display() {
+        assert_eq!(StepStatus::Completed.to_string(), "COMPLETED");
+        assert_eq!(StepStatus::Failed.to_string(), "FAILED");
+    }
+
+    #[test]
+    fn test_workflow_status_equality() {
+        assert_eq!(WorkflowStatus::Pending, WorkflowStatus::Pending);
+        assert_ne!(WorkflowStatus::Pending, WorkflowStatus::Running);
+    }
+
+    #[test]
+    fn test_step_status_equality() {
+        assert_eq!(StepStatus::Completed, StepStatus::Completed);
+        assert_ne!(StepStatus::Completed, StepStatus::Failed);
+    }
+
+    #[test]
+    fn test_workflow_status_serialization() {
+        let status = WorkflowStatus::Pending;
+        let json = serde_json::to_string(&status).unwrap();
+        let deserialized: WorkflowStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(status, deserialized);
+    }
+
+    #[test]
+    fn test_step_status_serialization() {
+        let status = StepStatus::Completed;
+        let json = serde_json::to_string(&status).unwrap();
+        let deserialized: StepStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(status, deserialized);
+    }
+
+    #[test]
+    fn test_create_workflow_run() {
+        let input = serde_json::json!({"user_id": "123"});
+        let create_run = CreateWorkflowRun {
+            workflow_name: "test-workflow".to_string(),
+            workflow_version: Some("v1".to_string()),
+            input: input.clone(),
+        };
+
+        assert_eq!(create_run.workflow_name, "test-workflow");
+        assert_eq!(create_run.workflow_version, Some("v1".to_string()));
+        assert_eq!(create_run.input, input);
+    }
+
+    #[test]
+    fn test_create_step_run() {
+        let run_id = Uuid::new_v4();
+        let output = serde_json::json!({"result": "success"});
+
+        let create_step = CreateStepRun {
+            workflow_run_id: run_id,
+            step_id: "step-1".to_string(),
+            input_hash: Some("hash123".to_string()),
+            output: Some(output.clone()),
+            error: None,
+            status: StepStatus::Completed,
+        };
+
+        assert_eq!(create_step.workflow_run_id, run_id);
+        assert_eq!(create_step.step_id, "step-1");
+        assert_eq!(create_step.input_hash, Some("hash123".to_string()));
+        assert_eq!(create_step.output, Some(output));
+        assert_eq!(create_step.error, None);
+        assert_eq!(create_step.status, StepStatus::Completed);
+    }
+}

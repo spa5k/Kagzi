@@ -8,10 +8,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 /// Create a new workflow run
-pub async fn create_workflow_run(
-    pool: &PgPool,
-    create: CreateWorkflowRun,
-) -> Result<WorkflowRun> {
+pub async fn create_workflow_run(pool: &PgPool, create: CreateWorkflowRun) -> Result<WorkflowRun> {
     let workflow_version = create.workflow_version.unwrap_or_else(|| "v1".to_string());
 
     let run = sqlx::query_as::<_, WorkflowRun>(
@@ -33,13 +30,11 @@ pub async fn create_workflow_run(
 
 /// Get a workflow run by ID
 pub async fn get_workflow_run(pool: &PgPool, id: Uuid) -> Result<WorkflowRun> {
-    sqlx::query_as::<_, WorkflowRun>(
-        "SELECT * FROM workflow_runs WHERE id = $1"
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(Error::WorkflowNotFound(id))
+    sqlx::query_as::<_, WorkflowRun>("SELECT * FROM workflow_runs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(Error::WorkflowNotFound(id))
 }
 
 /// Update workflow run status
@@ -49,7 +44,10 @@ pub async fn update_workflow_status(
     status: WorkflowStatus,
     error: Option<String>,
 ) -> Result<WorkflowRun> {
-    let completed_at = if matches!(status, WorkflowStatus::Completed | WorkflowStatus::Failed | WorkflowStatus::Cancelled) {
+    let completed_at = if matches!(
+        status,
+        WorkflowStatus::Completed | WorkflowStatus::Failed | WorkflowStatus::Cancelled
+    ) {
         Some(Utc::now())
     } else {
         None
@@ -81,7 +79,7 @@ pub async fn update_workflow_output(
     output: serde_json::Value,
 ) -> Result<WorkflowRun> {
     let run = sqlx::query_as::<_, WorkflowRun>(
-        "UPDATE workflow_runs SET output = $2 WHERE id = $1 RETURNING *"
+        "UPDATE workflow_runs SET output = $2 WHERE id = $1 RETURNING *",
     )
     .bind(id)
     .bind(output)
@@ -148,7 +146,7 @@ pub async fn get_step_run(
     step_id: &str,
 ) -> Result<Option<StepRun>> {
     let step = sqlx::query_as::<_, StepRun>(
-        "SELECT * FROM step_runs WHERE workflow_run_id = $1 AND step_id = $2"
+        "SELECT * FROM step_runs WHERE workflow_run_id = $1 AND step_id = $2",
     )
     .bind(workflow_run_id)
     .bind(step_id)
@@ -156,17 +154,17 @@ pub async fn get_step_run(
     .await?;
 
     if step.is_some() {
-        debug!("Found cached step: workflow={}, step={}", workflow_run_id, step_id);
+        debug!(
+            "Found cached step: workflow={}, step={}",
+            workflow_run_id, step_id
+        );
     }
 
     Ok(step)
 }
 
 /// Create a new step run
-pub async fn create_step_run(
-    pool: &PgPool,
-    create: CreateStepRun,
-) -> Result<StepRun> {
+pub async fn create_step_run(pool: &PgPool, create: CreateStepRun) -> Result<StepRun> {
     let completed_at = if matches!(create.status, StepStatus::Completed | StepStatus::Failed) {
         Some(Utc::now())
     } else {
@@ -190,17 +188,17 @@ pub async fn create_step_run(
     .fetch_one(pool)
     .await?;
 
-    debug!("Created step run: workflow={}, step={}", create.workflow_run_id, create.step_id);
+    debug!(
+        "Created step run: workflow={}, step={}",
+        create.workflow_run_id, create.step_id
+    );
     Ok(step)
 }
 
 /// Get all step runs for a workflow
-pub async fn get_workflow_steps(
-    pool: &PgPool,
-    workflow_run_id: Uuid,
-) -> Result<Vec<StepRun>> {
+pub async fn get_workflow_steps(pool: &PgPool, workflow_run_id: Uuid) -> Result<Vec<StepRun>> {
     let steps = sqlx::query_as::<_, StepRun>(
-        "SELECT * FROM step_runs WHERE workflow_run_id = $1 ORDER BY created_at ASC"
+        "SELECT * FROM step_runs WHERE workflow_run_id = $1 ORDER BY created_at ASC",
     )
     .bind(workflow_run_id)
     .fetch_all(pool)
@@ -253,10 +251,7 @@ pub async fn acquire_worker_lease(
 }
 
 /// Release a worker lease
-pub async fn release_worker_lease(
-    pool: &PgPool,
-    workflow_run_id: Uuid,
-) -> Result<()> {
+pub async fn release_worker_lease(pool: &PgPool, workflow_run_id: Uuid) -> Result<()> {
     sqlx::query("DELETE FROM worker_leases WHERE workflow_run_id = $1")
         .bind(workflow_run_id)
         .execute(pool)
@@ -267,16 +262,11 @@ pub async fn release_worker_lease(
 }
 
 /// Update worker heartbeat
-pub async fn update_worker_heartbeat(
-    pool: &PgPool,
-    workflow_run_id: Uuid,
-) -> Result<()> {
-    sqlx::query(
-        "UPDATE worker_leases SET heartbeat_at = NOW() WHERE workflow_run_id = $1"
-    )
-    .bind(workflow_run_id)
-    .execute(pool)
-    .await?;
+pub async fn update_worker_heartbeat(pool: &PgPool, workflow_run_id: Uuid) -> Result<()> {
+    sqlx::query("UPDATE worker_leases SET heartbeat_at = NOW() WHERE workflow_run_id = $1")
+        .bind(workflow_run_id)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

@@ -40,7 +40,10 @@ async fn welcome_email_workflow(
     ctx: WorkflowContext,
     input: WelcomeInput,
 ) -> anyhow::Result<WelcomeResult> {
-    println!("🚀 Starting welcome email workflow for: {}", input.user_name);
+    println!(
+        "🚀 Starting welcome email workflow for: {}",
+        input.user_name
+    );
 
     // Step 1: Create user in database (memoized)
     let user: User = ctx
@@ -103,10 +106,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter("info,kagzi=debug,sqlx=warn")
         .init();
 
-    let database_url =
-        env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://kagzi:kagzi_dev_password@localhost:5432/kagzi".to_string()
-        });
+    let database_url = env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://kagzi:kagzi_dev_password@localhost:5432/kagzi".to_string());
 
     let kagzi = Kagzi::connect(&database_url).await?;
 

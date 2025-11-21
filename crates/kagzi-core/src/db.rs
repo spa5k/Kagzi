@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Database connection manager
 #[derive(Clone)]
@@ -40,7 +40,7 @@ impl Database {
                 SELECT FROM information_schema.tables
                 WHERE table_schema = 'public'
                 AND table_name = 'workflow_runs'
-            )"
+            )",
         )
         .fetch_one(&self.pool)
         .await?;
@@ -67,9 +67,7 @@ impl Database {
 
     /// Health check - verify database connectivity
     pub async fn health_check(&self) -> Result<()> {
-        sqlx::query("SELECT 1")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
         Ok(())
     }
 }

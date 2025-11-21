@@ -11,9 +11,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use kagzi_core::{
-    queries, CreateStepRun, Database, StepStatus,
-};
+use kagzi_core::{queries, CreateStepRun, Database, StepStatus};
 
 /// Workflow execution context
 ///
@@ -71,12 +69,8 @@ impl WorkflowContext {
         T: Serialize + for<'de> Deserialize<'de>,
     {
         // Check if step already exists (memoization)
-        if let Some(step_run) = queries::get_step_run(
-            self.db.pool(),
-            self.workflow_run_id,
-            step_id,
-        )
-        .await?
+        if let Some(step_run) =
+            queries::get_step_run(self.db.pool(), self.workflow_run_id, step_id).await?
         {
             debug!(
                 "Step '{}' already executed for workflow {}, returning cached result",
@@ -158,12 +152,8 @@ impl WorkflowContext {
     /// ```
     pub async fn sleep(&self, step_id: &str, duration: std::time::Duration) -> Result<()> {
         // Check if this sleep has already completed (memoization)
-        if let Some(step_run) = queries::get_step_run(
-            self.db.pool(),
-            self.workflow_run_id,
-            step_id,
-        )
-        .await?
+        if let Some(step_run) =
+            queries::get_step_run(self.db.pool(), self.workflow_run_id, step_id).await?
         {
             if matches!(step_run.status, StepStatus::Completed) {
                 debug!(
@@ -184,12 +174,7 @@ impl WorkflowContext {
         );
 
         // Set workflow to sleeping status
-        queries::set_workflow_sleep(
-            self.db.pool(),
-            self.workflow_run_id,
-            sleep_until,
-        )
-        .await?;
+        queries::set_workflow_sleep(self.db.pool(), self.workflow_run_id, sleep_until).await?;
 
         // Mark this sleep step as completed so we don't repeat it on resume
         queries::create_step_run(
@@ -212,12 +197,8 @@ impl WorkflowContext {
     /// Sleep until a specific time
     pub async fn sleep_until(&self, step_id: &str, wake_time: DateTime<Utc>) -> Result<()> {
         // Check if this sleep has already completed
-        if let Some(step_run) = queries::get_step_run(
-            self.db.pool(),
-            self.workflow_run_id,
-            step_id,
-        )
-        .await?
+        if let Some(step_run) =
+            queries::get_step_run(self.db.pool(), self.workflow_run_id, step_id).await?
         {
             if matches!(step_run.status, StepStatus::Completed) {
                 debug!(
@@ -233,12 +214,7 @@ impl WorkflowContext {
             self.workflow_run_id, wake_time, step_id
         );
 
-        queries::set_workflow_sleep(
-            self.db.pool(),
-            self.workflow_run_id,
-            wake_time,
-        )
-        .await?;
+        queries::set_workflow_sleep(self.db.pool(), self.workflow_run_id, wake_time).await?;
 
         queries::create_step_run(
             self.db.pool(),
