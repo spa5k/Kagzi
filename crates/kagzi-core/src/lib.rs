@@ -1,14 +1,15 @@
-/// Returns the default greeting used throughout the Kagzi project.
-pub fn greeting() -> &'static str {
-    "Welcome to Kagzi!"
-}
+//! # Kagzi Core
+//!
+//! Core database models and queries for the Kagzi workflow engine.
 
-#[cfg(test)]
-mod tests {
-    use super::greeting;
+pub mod db;
+pub mod error;
+pub mod models;
+pub mod queries;
 
-    #[test]
-    fn greeting_is_consistent() {
-        assert_eq!(greeting(), "Welcome to Kagzi!");
-    }
-}
+pub use db::Database;
+pub use error::{Error, Result};
+pub use models::{
+    CreateStepRun, CreateWorkflowRun, StepRun, StepStatus, WorkerLease, WorkflowRun,
+    WorkflowStatus,
+};
