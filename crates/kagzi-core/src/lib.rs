@@ -6,9 +6,12 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod queries;
+pub mod retry;
 
 pub use db::Database;
 pub use error::{Error, ErrorKind, Result, StepError, WorkflowError};
 pub use models::{
-    CreateStepRun, CreateWorkflowRun, StepRun, StepStatus, WorkerLease, WorkflowRun, WorkflowStatus,
+    CreateStepRun, CreateWorkflowRun, StepAttempt, StepRun, StepStatus, WorkerLease, WorkflowRun,
+    WorkflowStatus,
 };
+pub use retry::{RetryPolicy, RetryPredicate};

@@ -31,6 +31,9 @@ uuid = { version = "1", features = ["serde", "v4"] }
 anyhow = "1"
 thiserror = "2.0.17"
 
+# Random number generation (for retry jitter)
+rand = "0.8"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

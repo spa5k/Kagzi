@@ -30,8 +30,9 @@ pub mod worker;
 
 // Re-exports
 pub use client::Kagzi;
-pub use context::WorkflowContext;
+pub use context::{StepBuilder, WorkflowContext};
 pub use worker::Worker;
 
-// Re-export common types
+// Re-export common types from kagzi-core
+pub use kagzi_core::{RetryPolicy, RetryPredicate};
 pub use uuid::Uuid;

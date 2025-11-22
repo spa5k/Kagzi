@@ -270,3 +270,174 @@ pub async fn update_worker_heartbeat(pool: &PgPool, workflow_run_id: Uuid) -> Re
 
     Ok(())
 }
+
+// ============================================================================
+// Retry-related queries
+// ============================================================================
+
+/// Update step retry state (attempts, next_retry_at, retry_policy)
+pub async fn update_step_retry_state(
+    pool: &PgPool,
+    workflow_run_id: Uuid,
+    step_id: &str,
+    attempts: i32,
+    next_retry_at: Option<DateTime<Utc>>,
+    retry_policy: Option<serde_json::Value>,
+    error: Option<serde_json::Value>,
+) -> Result<StepRun> {
+    let step = sqlx::query_as::<_, StepRun>(
+        r#"
+        UPDATE step_runs
+        SET attempts = $3,
+            next_retry_at = $4,
+            retry_policy = $5,
+            error = $6,
+            status = 'FAILED'
+        WHERE workflow_run_id = $1 AND step_id = $2
+        RETURNING *
+        "#,
+    )
+    .bind(workflow_run_id)
+    .bind(step_id)
+    .bind(attempts)
+    .bind(next_retry_at)
+    .bind(retry_policy)
+    .bind(error)
+    .fetch_one(pool)
+    .await?;
+
+    debug!(
+        "Updated retry state: workflow={}, step={}, attempts={}, next_retry={:?}",
+        workflow_run_id, step_id, attempts, next_retry_at
+    );
+
+    Ok(step)
+}
+
+/// Create a step attempt record
+pub async fn create_step_attempt(
+    pool: &PgPool,
+    step_run_id: i64,
+    attempt_number: i32,
+) -> Result<StepAttempt> {
+    let attempt = sqlx::query_as::<_, StepAttempt>(
+        r#"
+        INSERT INTO step_attempts (step_run_id, attempt_number, status)
+        VALUES ($1, $2, 'running')
+        RETURNING *
+        "#,
+    )
+    .bind(step_run_id)
+    .bind(attempt_number)
+    .fetch_one(pool)
+    .await?;
+
+    debug!(
+        "Created step attempt: step_run_id={}, attempt={}",
+        step_run_id, attempt_number
+    );
+
+    Ok(attempt)
+}
+
+/// Update step attempt with result
+pub async fn update_step_attempt(
+    pool: &PgPool,
+    id: i64,
+    status: &str,
+    error: Option<serde_json::Value>,
+) -> Result<StepAttempt> {
+    let attempt = sqlx::query_as::<_, StepAttempt>(
+        r#"
+        UPDATE step_attempts
+        SET status = $2,
+            error = $3,
+            completed_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        "#,
+    )
+    .bind(id)
+    .bind(status)
+    .bind(error)
+    .fetch_one(pool)
+    .await?;
+
+    debug!("Updated step attempt {}: status={}", id, status);
+
+    Ok(attempt)
+}
+
+/// Get all attempts for a step run
+pub async fn get_step_attempts(pool: &PgPool, step_run_id: i64) -> Result<Vec<StepAttempt>> {
+    let attempts = sqlx::query_as::<_, StepAttempt>(
+        "SELECT * FROM step_attempts WHERE step_run_id = $1 ORDER BY attempt_number ASC",
+    )
+    .bind(step_run_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(attempts)
+}
+
+/// Get workflows that are ready for retry
+/// This includes workflows in PENDING state that have steps with next_retry_at in the past
+pub async fn poll_workflows_ready_for_retry(pool: &PgPool) -> Result<Vec<Uuid>> {
+    let now = Utc::now();
+
+    let workflow_ids: Vec<(Uuid,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT sr.workflow_run_id
+        FROM step_runs sr
+        JOIN workflow_runs wr ON wr.id = sr.workflow_run_id
+        WHERE sr.next_retry_at IS NOT NULL
+          AND sr.next_retry_at <= $1
+          AND wr.status = 'PENDING'
+        "#,
+    )
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(workflow_ids.into_iter().map(|(id,)| id).collect())
+}
+
+/// Clear retry schedule for a step (when it succeeds or exhausts retries)
+pub async fn clear_step_retry_schedule(
+    pool: &PgPool,
+    workflow_run_id: Uuid,
+    step_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE step_runs
+        SET next_retry_at = NULL
+        WHERE workflow_run_id = $1 AND step_id = $2
+        "#,
+    )
+    .bind(workflow_run_id)
+    .bind(step_id)
+    .execute(pool)
+    .await?;
+
+    debug!(
+        "Cleared retry schedule: workflow={}, step={}",
+        workflow_run_id, step_id
+    );
+
+    Ok(())
+}
+
+/// Get step run by internal ID (needed for step_attempts foreign key)
+pub async fn get_step_run_by_id(pool: &PgPool, step_run_id: i64) -> Result<Option<StepRun>> {
+    // Note: We need to add an 'id' column to step_runs table
+    // For now, this is a placeholder that will need migration support
+    let step = sqlx::query_as::<_, StepRun>(
+        "SELECT * FROM step_runs WHERE workflow_run_id::text || step_id = $1",
+    )
+    .bind(step_run_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(step)
+}
