@@ -164,7 +164,7 @@ async fn retry_pattern_workflow(
                                 error: None,
                             });
                         }
-                        Err(err) => {
+                        Err(_err) => {
                             consecutive_failures += 1;
                             println!("     ✗ Attempt {} failed", attempt);
 
@@ -229,7 +229,8 @@ mod rand {
         );
     }
 
-    pub fn random<T: SampleUniform>() -> T {
+    #[allow(private_bounds)]
+    pub(crate) fn random<T: SampleUniform>() -> T {
         T::sample_single()
     }
 

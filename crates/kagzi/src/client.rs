@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
 
-use kagzi_core::{queries, CreateWorkflowRun, Database, WorkflowRun};
+use kagzi_core::{queries, CreateWorkflowRun, Database, ErrorKind, StepError, WorkflowRun};
 
 use crate::context::WorkflowContext;
 use crate::worker::Worker;
@@ -181,10 +181,10 @@ impl WorkflowHandle {
                     });
                 }
                 kagzi_core::WorkflowStatus::Failed => {
-                    return Err(anyhow::anyhow!(
-                        "Workflow failed: {}",
-                        run.error.unwrap_or_else(|| "Unknown error".to_string())
-                    ));
+                    let error_msg = run
+                        .error_message()
+                        .unwrap_or_else(|| "Unknown error".to_string());
+                    return Err(anyhow::anyhow!("Workflow failed: {}", error_msg));
                 }
                 kagzi_core::WorkflowStatus::Cancelled => {
                     return Err(anyhow::anyhow!("Workflow was cancelled"));
@@ -199,11 +199,14 @@ impl WorkflowHandle {
 
     /// Cancel the workflow
     pub async fn cancel(&self) -> Result<()> {
+        let step_error = StepError::new(ErrorKind::Cancelled, "Cancelled by user");
+        let error_json = serde_json::to_value(&step_error)?;
+
         queries::update_workflow_status(
             self.db.pool(),
             self.run_id,
             kagzi_core::WorkflowStatus::Cancelled,
-            Some("Cancelled by user".to_string()),
+            Some(error_json),
         )
         .await?;
 

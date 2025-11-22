@@ -64,7 +64,7 @@ async fn batch_processing_workflow(
                 println!(
                     "  📦 Processing batch {}/{} ({} files)...",
                     batch_number,
-                    (total_files + input.batch_size - 1) / input.batch_size,
+                    total_files.div_ceil(input.batch_size),
                     batch_files.len()
                 );
 
@@ -107,7 +107,7 @@ async fn batch_processing_workflow(
         all_errors.extend(batch_result.errors);
 
         // Short delay between batches
-        if batch_number < (total_files + input.batch_size - 1) / input.batch_size {
+        if batch_number < total_files.div_ceil(input.batch_size) {
             ctx.sleep(
                 &format!("delay-after-batch-{}", batch_number),
                 std::time::Duration::from_secs(1),
