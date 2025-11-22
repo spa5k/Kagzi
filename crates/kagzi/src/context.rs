@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use kagzi_core::{queries, CreateStepRun, Database, StepStatus};
+use kagzi_core::{queries, CreateStepRun, Database, ErrorKind, StepError, StepStatus};
 
 /// Workflow execution context
 ///
@@ -81,8 +81,22 @@ impl WorkflowContext {
             if let Some(output) = step_run.output {
                 let result: T = serde_json::from_value(output)?;
                 return Ok(result);
-            } else if let Some(error) = step_run.error {
-                return Err(anyhow::anyhow!("Step previously failed: {}", error));
+            } else if let Some(error_value) = step_run.error {
+                // Try to deserialize as StepError, fallback to string message
+                if let Ok(step_error) = serde_json::from_value::<StepError>(error_value.clone()) {
+                    return Err(anyhow::anyhow!(
+                        "Step previously failed: {} - {}",
+                        step_error.kind,
+                        step_error.message
+                    ));
+                } else if let Some(error_str) = error_value.as_str() {
+                    // Legacy string error
+                    return Err(anyhow::anyhow!("Step previously failed: {}", error_str));
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Step previously failed with unknown error format"
+                    ));
+                }
             }
         }
 
@@ -114,6 +128,13 @@ impl WorkflowContext {
                 info!("Step '{}' completed successfully", step_id);
             }
             Err(ref e) => {
+                // Convert anyhow::Error to StepError
+                let step_error = StepError::new(ErrorKind::Unknown, e.to_string())
+                    .with_source(format!("{:?}", e));
+
+                // Serialize StepError to JSONB
+                let error_json = serde_json::to_value(&step_error)?;
+
                 queries::create_step_run(
                     self.db.pool(),
                     CreateStepRun {
@@ -121,7 +142,7 @@ impl WorkflowContext {
                         step_id: step_id.to_string(),
                         input_hash: None,
                         output: None,
-                        error: Some(e.to_string()),
+                        error: Some(error_json),
                         status: StepStatus::Failed,
                     },
                 )

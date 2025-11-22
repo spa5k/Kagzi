@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use kagzi_core::{queries, Database, WorkflowStatus};
+use kagzi_core::{queries, Database, ErrorKind, StepError, WorkflowStatus};
 
 use crate::client::WorkflowFn;
 use crate::context::WorkflowContext;
@@ -231,11 +231,16 @@ impl Worker {
                     // Actual error
                     warn!("Workflow {} failed: {}", workflow_run_id, error_msg);
 
+                    // Convert to structured error
+                    let step_error = StepError::new(ErrorKind::Unknown, error_msg)
+                        .with_source(format!("{:?}", e));
+                    let error_json = serde_json::to_value(&step_error)?;
+
                     queries::update_workflow_status(
                         self.db.pool(),
                         workflow_run_id,
                         WorkflowStatus::Failed,
-                        Some(error_msg),
+                        Some(error_json),
                     )
                     .await?;
                 }

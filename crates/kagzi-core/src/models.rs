@@ -64,11 +64,32 @@ pub struct WorkflowRun {
     pub input: serde_json::Value,
     pub output: Option<serde_json::Value>,
     pub status: WorkflowStatus,
-    pub error: Option<String>,
+    pub error: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub sleep_until: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl WorkflowRun {
+    /// Get the error as a structured StepError if available
+    pub fn get_step_error(&self) -> Option<crate::error::StepError> {
+        self.error
+            .as_ref()
+            .and_then(|e| serde_json::from_value(e.clone()).ok())
+    }
+
+    /// Get the error message as a string
+    pub fn error_message(&self) -> Option<String> {
+        self.error.as_ref().and_then(|e| {
+            if let Some(msg) = e.get("message") {
+                msg.as_str().map(|s| s.to_string())
+            } else {
+                // Fallback for legacy string errors
+                e.as_str().map(|s| s.to_string())
+            }
+        })
+    }
 }
 
 /// A step run represents the memoized result of a single step in a workflow
@@ -78,11 +99,32 @@ pub struct StepRun {
     pub step_id: String,
     pub input_hash: Option<String>,
     pub output: Option<serde_json::Value>,
-    pub error: Option<String>,
+    pub error: Option<serde_json::Value>,
     pub status: StepStatus,
     pub attempts: i32,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl StepRun {
+    /// Get the error as a structured StepError if available
+    pub fn get_step_error(&self) -> Option<crate::error::StepError> {
+        self.error
+            .as_ref()
+            .and_then(|e| serde_json::from_value(e.clone()).ok())
+    }
+
+    /// Get the error message as a string
+    pub fn error_message(&self) -> Option<String> {
+        self.error.as_ref().and_then(|e| {
+            if let Some(msg) = e.get("message") {
+                msg.as_str().map(|s| s.to_string())
+            } else {
+                // Fallback for legacy string errors
+                e.as_str().map(|s| s.to_string())
+            }
+        })
+    }
 }
 
 /// A worker lease ensures only one worker processes a workflow at a time
@@ -110,7 +152,7 @@ pub struct CreateStepRun {
     pub step_id: String,
     pub input_hash: Option<String>,
     pub output: Option<serde_json::Value>,
-    pub error: Option<String>,
+    pub error: Option<serde_json::Value>,
     pub status: StepStatus,
 }
 

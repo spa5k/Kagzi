@@ -42,7 +42,7 @@ pub async fn update_workflow_status(
     pool: &PgPool,
     id: Uuid,
     status: WorkflowStatus,
-    error: Option<String>,
+    error: Option<serde_json::Value>,
 ) -> Result<WorkflowRun> {
     let completed_at = if matches!(
         status,
