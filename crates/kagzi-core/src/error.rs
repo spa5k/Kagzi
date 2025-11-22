@@ -134,11 +134,7 @@ impl StepError {
     }
 
     /// Add context key-value pair
-    pub fn with_context(
-        mut self,
-        key: impl Into<String>,
-        value: impl Serialize,
-    ) -> Result<Self> {
+    pub fn with_context(mut self, key: impl Into<String>, value: impl Serialize) -> Result<Self> {
         self.context
             .insert(key.into(), serde_json::to_value(value)?);
         Ok(self)
@@ -290,7 +286,10 @@ mod tests {
         let err = StepError::new(ErrorKind::RateLimited, "Too many requests")
             .with_context("retry_after", 60)
             .unwrap();
-        assert_eq!(err.context.get("retry_after").unwrap(), &serde_json::json!(60));
+        assert_eq!(
+            err.context.get("retry_after").unwrap(),
+            &serde_json::json!(60)
+        );
     }
 
     #[test]

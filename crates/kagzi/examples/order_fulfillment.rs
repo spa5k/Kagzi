@@ -161,11 +161,10 @@ async fn order_fulfillment_workflow(
             let shipment = ShipmentInfo {
                 tracking_number: format!(
                     "TRK{}",
-                    uuid::Uuid::new_v4()
+                    &uuid::Uuid::new_v4()
                         .to_string()
                         .replace("-", "")
                         .to_uppercase()[..12]
-                        .to_string()
                 ),
                 carrier: "FastShip Express".to_string(),
                 estimated_delivery: chrono::Utc::now()
