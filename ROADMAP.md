@@ -31,35 +31,38 @@ This roadmap outlines the implementation plan for Kagzi V2, focusing on 5 core f
 
 **Goal**: Add retry policies and advanced error handling
 
-#### Week 1: Advanced Error Handling
+#### Week 1: Advanced Error Handling ✅ **COMPLETE**
 **Why First**: Retry policies depend on error classification
 
 **Tasks**:
-- [ ] Create `crates/kagzi-core/src/error.rs` - Enhanced error types
-  - [ ] Define `StepError` struct with classification
-  - [ ] Define `ErrorKind` enum (Transient, Permanent, etc.)
-  - [ ] Implement `From` traits for common error types (reqwest, sqlx, etc.)
-  - [ ] Add serialization/deserialization for JSONB storage
-- [ ] Modify `crates/kagzi-core/src/models.rs`
-  - [ ] Change `last_error` field to JSONB in StepRun model
-  - [ ] Add helper methods for error extraction
-- [ ] Update `crates/kagzi/src/context.rs`
-  - [ ] Use structured errors in step execution
-  - [ ] Add error classification logic
-  - [ ] Store errors as structured JSONB
-- [ ] Update `crates/kagzi-core/src/queries.rs`
-  - [ ] Modify error storage queries to use JSONB
-  - [ ] Add queries for error analytics
-- [ ] Write unit tests
-  - [ ] Error classification tests
-  - [ ] Serialization/deserialization tests
-  - [ ] From trait implementations
+- [x] Create `crates/kagzi-core/src/error.rs` - Enhanced error types
+  - [x] Define `StepError` struct with classification
+  - [x] Define `ErrorKind` enum (Transient, Permanent, etc.)
+  - [x] Implement `From` traits for common error types (reqwest, sqlx, etc.)
+  - [x] Add serialization/deserialization for JSONB storage
+- [x] Modify `crates/kagzi-core/src/models.rs`
+  - [x] Change `last_error` field to JSONB in StepRun model
+  - [x] Add helper methods for error extraction
+- [x] Update `crates/kagzi/src/context.rs`
+  - [x] Use structured errors in step execution
+  - [x] Add error classification logic
+  - [x] Store errors as structured JSONB
+- [x] Update `crates/kagzi-core/src/queries.rs`
+  - [x] Modify error storage queries to use JSONB
+  - [x] Add queries for error analytics
+- [x] Write unit tests
+  - [x] Error classification tests
+  - [x] Serialization/deserialization tests
+  - [x] From trait implementations
 
 **Deliverables**:
 - ✅ Structured error system
 - ✅ Error classification working
 - ✅ Errors stored as JSONB
 - ✅ Unit tests passing
+
+**Completed**: 2025-11-22
+**Commit**: c109f13
 
 #### Week 2-2.5: Automatic Retry Policies
 **Depends On**: Error handling (Week 1)
@@ -454,10 +457,10 @@ This roadmap outlines the implementation plan for Kagzi V2, focusing on 5 core f
 
 ## Weekly Checkpoints
 
-### Week 1 Checkpoint
-- [ ] Advanced error handling complete
-- [ ] Error types defined and tested
-- [ ] Errors stored as JSONB
+### Week 1 Checkpoint ✅
+- [x] Advanced error handling complete
+- [x] Error types defined and tested
+- [x] Errors stored as JSONB
 
 ### Week 2.5 Checkpoint
 - [ ] Retry policies working
