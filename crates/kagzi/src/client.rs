@@ -10,9 +10,10 @@ use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
 
-use kagzi_core::{queries, CreateWorkflowRun, Database, ErrorKind, StepError, WorkflowRun};
+use kagzi_core::{queries, CreateWorkflowRun, Database, ErrorKind, StepError, WorkflowRun, WorkflowStatus};
 
 use crate::context::WorkflowContext;
+use crate::versioning::WorkflowRegistry;
 use crate::worker::Worker;
 
 /// Type alias for workflow functions
@@ -26,6 +27,7 @@ pub type WorkflowFn<I> = Arc<
 pub struct Kagzi {
     db: Arc<Database>,
     workflows: Arc<RwLock<HashMap<String, WorkflowFn<serde_json::Value>>>>,
+    registry: Arc<WorkflowRegistry>,
 }
 
 impl Kagzi {
@@ -53,6 +55,7 @@ impl Kagzi {
         Ok(Self {
             db: Arc::new(db),
             workflows: Arc::new(RwLock::new(HashMap::new())),
+            registry: Arc::new(WorkflowRegistry::new()),
         })
     }
 
@@ -128,11 +131,150 @@ impl Kagzi {
         })
     }
 
+    /// Register a workflow with a specific version
+    ///
+    /// This allows multiple versions of the same workflow to coexist.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kagzi::{Kagzi, WorkflowContext};
+    /// # use serde::{Deserialize, Serialize};
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let kagzi = Kagzi::connect("postgres://localhost/kagzi").await?;
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct MyInput { name: String }
+    ///
+    /// // Register version 1
+    /// kagzi.register_workflow_versioned("my-workflow", 1, |ctx, input: MyInput| async move {
+    ///     // Old implementation
+    ///     Ok(format!("Hello, {}", input.name))
+    /// }).await?;
+    ///
+    /// // Register version 2 with improved logic
+    /// kagzi.register_workflow_versioned("my-workflow", 2, |ctx, input: MyInput| async move {
+    ///     // New implementation
+    ///     Ok(format!("Greetings, {}", input.name))
+    /// }).await?;
+    ///
+    /// // Set version 2 as default
+    /// kagzi.set_default_version("my-workflow", 2).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn register_workflow_versioned<I, O, F, Fut>(
+        &self,
+        name: &str,
+        version: i32,
+        workflow_fn: F,
+    ) -> Result<()>
+    where
+        I: for<'de> Deserialize<'de> + Send + Sync + 'static,
+        O: Serialize + Send + Sync + 'static,
+        F: Fn(WorkflowContext, I) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<O>> + Send + 'static,
+    {
+        // Register in the new versioning registry
+        self.registry.register(name, version, move |ctx, input| {
+            let fut = workflow_fn(ctx, input);
+            Box::pin(async move {
+                fut.await
+            })
+        }).await;
+
+        // Also register in the database
+        queries::create_workflow_version(
+            self.db.pool(),
+            name,
+            version,
+            false, // Not default by default
+            None,
+        ).await?;
+
+        info!("Registered workflow {} version {}", name, version);
+        Ok(())
+    }
+
+    /// Set the default version for a workflow
+    ///
+    /// New workflow runs will use this version unless explicitly specified.
+    pub async fn set_default_version(&self, name: &str, version: i32) -> Result<()> {
+        // Set in registry
+        self.registry.set_default_version(name, version).await?;
+
+        // Set in database
+        queries::set_default_version(self.db.pool(), name, version).await?;
+
+        info!("Set default version for {} to {}", name, version);
+        Ok(())
+    }
+
+    /// Get the default version for a workflow
+    pub async fn get_default_version(&self, name: &str) -> Option<i32> {
+        self.registry.get_default_version(name).await
+    }
+
+    /// Start a workflow run with a specific version
+    pub async fn start_workflow_with_version<I>(
+        &self,
+        name: &str,
+        version: i32,
+        input: I,
+    ) -> Result<WorkflowHandle>
+    where
+        I: Serialize,
+    {
+        let input_value = serde_json::to_value(input)?;
+
+        let run = queries::create_workflow_run(
+            self.db.pool(),
+            CreateWorkflowRun {
+                workflow_name: name.to_string(),
+                workflow_version: Some(version),
+                input: input_value,
+            },
+        )
+        .await?;
+
+        info!("Started workflow: {} v{} (run_id: {})", name, version, run.id);
+
+        Ok(WorkflowHandle {
+            run_id: run.id,
+            db: self.db.clone(),
+        })
+    }
+
+    /// Deprecate a workflow version
+    ///
+    /// This marks the version as deprecated but does not remove it.
+    /// Existing workflow runs will continue to execute.
+    pub async fn deprecate_version(&self, name: &str, version: i32) -> Result<()> {
+        queries::deprecate_workflow_version(self.db.pool(), name, version).await?;
+        info!("Deprecated workflow {} version {}", name, version);
+        Ok(())
+    }
+
+    /// Count workflow runs for a specific version
+    pub async fn count_workflows_by_version(
+        &self,
+        name: &str,
+        version: i32,
+        status: Option<WorkflowStatus>,
+    ) -> Result<i64> {
+        Ok(queries::count_workflow_runs_by_version(self.db.pool(), name, version, status).await?)
+    }
+
+    /// Get all versions of a workflow
+    pub async fn get_workflow_versions(&self, name: &str) -> Result<Vec<i32>> {
+        Ok(self.registry.get_versions(name).await)
+    }
+
     /// Create a new worker
     ///
     /// Workers poll the database for pending workflows and execute them.
     pub fn create_worker(&self) -> Worker {
-        Worker::new(self.db.clone(), self.workflows.clone())
+        Worker::new(self.db.clone(), self.workflows.clone(), self.registry.clone())
     }
 
     /// Get a handle to an existing workflow run
