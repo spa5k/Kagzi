@@ -26,6 +26,7 @@
 
 pub mod client;
 pub mod context;
+pub mod health;
 pub mod parallel;
 pub mod versioning;
 pub mod worker;
@@ -33,9 +34,10 @@ pub mod worker;
 // Re-exports
 pub use client::Kagzi;
 pub use context::{StepBuilder, WorkflowContext};
+pub use health::{HealthCheckConfig, HealthChecker, HealthStatus, WorkerHealth};
 pub use parallel::{ParallelErrorStrategy, ParallelExecutor, ParallelResult};
 pub use versioning::WorkflowRegistry;
-pub use worker::Worker;
+pub use worker::{Worker, WorkerBuilder, WorkerConfig};
 
 // Re-export common types from kagzi-core
 pub use kagzi_core::{RetryPolicy, RetryPredicate};
