@@ -295,23 +295,313 @@ impl WorkflowContext {
     ///
     /// ```no_run
     /// # use kagzi::WorkflowContext;
+    /// # use std::pin::Pin;
     /// # async fn example(ctx: WorkflowContext) -> anyhow::Result<()> {
     /// // Execute multiple API calls in parallel
     /// let user_ids = vec!["user1", "user2", "user3"];
-    /// // Note: Full implementation pending
+    /// let steps: Vec<(String, Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>>)> = user_ids
+    ///     .into_iter()
+    ///     .map(|id| {
+    ///         let step_id = format!("fetch-{}", id);
+    ///         let future: Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>> =
+    ///             Box::pin(async move {
+    ///                 Ok::<_, anyhow::Error>(format!("data-{}", id))
+    ///             });
+    ///         (step_id, future)
+    ///     })
+    ///     .collect();
+    /// let results = ctx.parallel_vec("fetch-users", steps).await?;
     /// # Ok(())
     /// # }
     /// # ```
     pub async fn parallel_vec<T>(
         &self,
-        _group_name: &str,
-        _steps: Vec<(String, std::pin::Pin<Box<dyn Future<Output = Result<T>> + Send>>)>,
+        group_name: &str,
+        steps: Vec<(String, std::pin::Pin<Box<dyn Future<Output = Result<T>> + Send>>)>,
     ) -> Result<Vec<T>>
     where
         T: Serialize + for<'de> Deserialize<'de> + Send + 'static,
     {
-        // TODO: Implement parallel execution logic
-        Err(anyhow::anyhow!("Parallel execution not yet fully implemented"))
+        use crate::parallel::{ParallelErrorStrategy, ParallelExecutor};
+
+        if steps.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Generate a unique parallel group ID
+        let parallel_group_id = Uuid::new_v4();
+
+        info!(
+            "Executing {} parallel steps in group '{}' ({})",
+            steps.len(),
+            group_name,
+            parallel_group_id
+        );
+
+        // Check cache for all steps first using bulk query
+        let step_ids: Vec<String> = steps.iter().map(|(id, _)| id.clone()).collect();
+        let cached_steps = queries::bulk_check_step_cache(
+            self.db.pool(),
+            self.workflow_run_id,
+            &step_ids,
+        )
+        .await?;
+
+        let mut cached_results: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+
+        for step_run in cached_steps {
+            if let Some(output) = step_run.output {
+                cached_results.insert(step_run.step_id, output);
+            }
+        }
+
+        // Separate cached and uncached steps
+        let mut results_map: std::collections::HashMap<String, T> =
+            std::collections::HashMap::new();
+        let mut uncached_steps = Vec::new();
+
+        for (step_id, future) in steps {
+            if let Some(cached_output) = cached_results.get(&step_id) {
+                // Use cached result
+                let result: T = serde_json::from_value(cached_output.clone())?;
+                results_map.insert(step_id.clone(), result);
+                debug!("Using cached result for parallel step '{}'", step_id);
+            } else {
+                // Need to execute
+                uncached_steps.push((step_id, future));
+            }
+        }
+
+        // Execute uncached steps in parallel
+        if !uncached_steps.is_empty() {
+            info!(
+                "Executing {} uncached steps in parallel (cached: {})",
+                uncached_steps.len(),
+                results_map.len()
+            );
+
+            use tokio::task::JoinSet;
+            let mut join_set = JoinSet::new();
+
+            for (step_id, future) in uncached_steps {
+                let step_id_clone = step_id.clone();
+                let ctx_clone = self.clone();
+                let pg_id = parallel_group_id;
+                let parent = Some(group_name.to_string());
+
+                join_set.spawn(async move {
+                    let exec = ParallelExecutor::new(
+                        &ctx_clone,
+                        pg_id,
+                        parent,
+                        ParallelErrorStrategy::FailFast,
+                    );
+                    let result = exec.execute_step(&step_id_clone, future).await;
+                    (step_id_clone, result)
+                });
+            }
+
+            // Collect results
+            while let Some(join_result) = join_set.join_next().await {
+                match join_result {
+                    Ok((step_id, Ok(value))) => {
+                        results_map.insert(step_id, value);
+                    }
+                    Ok((step_id, Err(e))) => {
+                        join_set.abort_all();
+                        return Err(anyhow::anyhow!(
+                            "Parallel step '{}' failed: {}",
+                            step_id,
+                            e
+                        ));
+                    }
+                    Err(join_error) => {
+                        join_set.abort_all();
+                        return Err(anyhow::anyhow!("Task join error: {}", join_error));
+                    }
+                }
+            }
+        }
+
+        // Return results in original order
+        let results: Result<Vec<T>> = step_ids
+            .into_iter()
+            .map(|id| {
+                results_map
+                    .remove(&id)
+                    .ok_or_else(|| anyhow::anyhow!("Missing result for step '{}'", id))
+            })
+            .collect();
+
+        results
+    }
+
+    /// Execute a fixed number of steps in parallel (tuple-based)
+    ///
+    /// This is a type-safe version of parallel execution for when you know
+    /// the number of steps at compile time. It returns results as a tuple.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kagzi::WorkflowContext;
+    /// # async fn example(ctx: WorkflowContext) -> anyhow::Result<()> {
+    /// let (user, posts, comments) = ctx.parallel(
+    ///     "fetch-user-data",
+    ///     (
+    ///         ("user", async { Ok::<_, anyhow::Error>("user data".to_string()) }),
+    ///         ("posts", async { Ok::<_, anyhow::Error>(vec!["post1", "post2"]) }),
+    ///         ("comments", async { Ok::<_, anyhow::Error>(vec!["comment1"]) }),
+    ///     )
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// # ```
+    pub async fn parallel<T1, T2>(
+        &self,
+        group_name: &str,
+        steps: (
+            (&str, impl Future<Output = Result<T1>>),
+            (&str, impl Future<Output = Result<T2>>),
+        ),
+    ) -> Result<(T1, T2)>
+    where
+        T1: Serialize + for<'de> Deserialize<'de> + Send + 'static,
+        T2: Serialize + for<'de> Deserialize<'de> + Send + 'static,
+    {
+        use crate::parallel::{ParallelErrorStrategy, ParallelExecutor};
+
+        let parallel_group_id = Uuid::new_v4();
+        let executor = ParallelExecutor::new(
+            self,
+            parallel_group_id,
+            Some(group_name.to_string()),
+            ParallelErrorStrategy::FailFast,
+        );
+
+        let (step1, step2) = steps;
+
+        let (r1, r2) = tokio::join!(
+            executor.execute_step(step1.0, step1.1),
+            executor.execute_step(step2.0, step2.1),
+        );
+
+        Ok((r1?, r2?))
+    }
+
+    /// Race multiple steps, returning the first one to complete successfully
+    ///
+    /// Unlike `parallel()` which waits for all steps, `race()` returns as soon
+    /// as any step completes successfully. Other steps are cancelled.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kagzi::WorkflowContext;
+    /// # use std::pin::Pin;
+    /// # async fn example(ctx: WorkflowContext) -> anyhow::Result<()> {
+    /// let steps: Vec<(String, Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>>)> = vec![
+    ///     ("api1".to_string(), Box::pin(async { Ok("result1".to_string()) })),
+    ///     ("api2".to_string(), Box::pin(async { Ok("result2".to_string()) })),
+    /// ];
+    ///
+    /// let (winner_id, result) = ctx.race("fastest-api", steps).await?;
+    /// println!("Step {} won the race", winner_id);
+    /// # Ok(())
+    /// # }
+    /// # ```
+    pub async fn race<T>(
+        &self,
+        group_name: &str,
+        steps: Vec<(String, std::pin::Pin<Box<dyn Future<Output = Result<T>> + Send>>)>,
+    ) -> Result<(String, T)>
+    where
+        T: Serialize + for<'de> Deserialize<'de> + Send + 'static,
+    {
+        use crate::parallel::{ParallelErrorStrategy, ParallelExecutor};
+        use tokio::task::JoinSet;
+
+        if steps.is_empty() {
+            return Err(anyhow::anyhow!("Cannot race with empty step list"));
+        }
+
+        let parallel_group_id = Uuid::new_v4();
+
+        info!(
+            "Racing {} steps in group '{}' ({})",
+            steps.len(),
+            group_name,
+            parallel_group_id
+        );
+
+        // Check cache first - if any step is cached, return it immediately
+        let step_ids: Vec<String> = steps.iter().map(|(id, _)| id.clone()).collect();
+        let cached_steps = queries::bulk_check_step_cache(
+            self.db.pool(),
+            self.workflow_run_id,
+            &step_ids,
+        )
+        .await?;
+
+        if let Some(step_run) = cached_steps.first() {
+            if let Some(output) = &step_run.output {
+                let result: T = serde_json::from_value(output.clone())?;
+                info!(
+                    "Race winner (cached): '{}' in group '{}'",
+                    step_run.step_id, group_name
+                );
+                return Ok((step_run.step_id.clone(), result));
+            }
+        }
+
+        // No cached results - race the steps
+        let mut join_set = JoinSet::new();
+
+        for (step_id, future) in steps {
+            let step_id_clone = step_id.clone();
+            let ctx_clone = self.clone();
+            let pg_id = parallel_group_id;
+            let parent = Some(group_name.to_string());
+
+            join_set.spawn(async move {
+                let exec = ParallelExecutor::new(
+                    &ctx_clone,
+                    pg_id,
+                    parent,
+                    ParallelErrorStrategy::FailFast,
+                );
+                let result = exec.execute_step(&step_id_clone, future).await;
+                (step_id_clone, result)
+            });
+        }
+
+        // Wait for the first successful completion
+        let mut errors = Vec::new();
+        while let Some(join_result) = join_set.join_next().await {
+            match join_result {
+                Ok((step_id, Ok(value))) => {
+                    // First successful result - abort others and return
+                    join_set.abort_all();
+                    info!("Race winner: '{}' in group '{}'", step_id, group_name);
+                    return Ok((step_id, value));
+                }
+                Ok((step_id, Err(e))) => {
+                    errors.push((step_id, e));
+                    // Continue waiting for other steps
+                }
+                Err(join_error) => {
+                    errors.push(("unknown".to_string(), anyhow::anyhow!("{}", join_error)));
+                }
+            }
+        }
+
+        // All steps failed
+        Err(anyhow::anyhow!(
+            "All {} steps in race failed: {:?}",
+            errors.len(),
+            errors
+        ))
     }
 }
 

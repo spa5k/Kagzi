@@ -57,6 +57,7 @@ pub struct ParallelExecutor<'a> {
     ctx: &'a WorkflowContext,
     parallel_group_id: Uuid,
     parent_step_id: Option<String>,
+    #[allow(dead_code)]
     error_strategy: ParallelErrorStrategy,
 }
 
@@ -79,20 +80,89 @@ impl<'a> ParallelExecutor<'a> {
     /// Execute a single step within the parallel group
     ///
     /// This checks memoization first, then executes if needed
-    async fn execute_step<Fut, T>(
+    pub async fn execute_step<Fut, T>(
         &self,
-        _step_id: &str,
+        step_id: &str,
         f: Fut,
     ) -> Result<T>
     where
         Fut: Future<Output = Result<T>>,
         T: Serialize + for<'de> Deserialize<'de>,
     {
-        // TODO: Implement step execution with parallel context
-        // - Check memoization cache with parallel_group_id
-        // - Execute if not cached
-        // - Store result with parallel tracking fields
-        f.await
+        use kagzi_core::{queries, CreateStepRun, StepStatus};
+        use tracing::{debug, info};
+
+        // Check if step already exists (memoization)
+        if let Some(step_run) =
+            queries::get_step_run(self.ctx.db.pool(), self.ctx.workflow_run_id, step_id).await?
+        {
+            debug!(
+                "Parallel step '{}' already executed, returning cached result",
+                step_id
+            );
+
+            if let Some(output) = step_run.output {
+                let result: T = serde_json::from_value(output)?;
+                return Ok(result);
+            } else if let Some(error_value) = step_run.error {
+                return Err(anyhow::anyhow!(
+                    "Parallel step previously failed: {}",
+                    error_value
+                ));
+            }
+        }
+
+        info!(
+            "Executing parallel step '{}' in group {}",
+            step_id, self.parallel_group_id
+        );
+
+        // Execute the step
+        let result = f.await;
+
+        // Store the result with parallel tracking fields
+        match result {
+            Ok(ref value) => {
+                let output = serde_json::to_value(value)?;
+                queries::create_step_run(
+                    self.ctx.db.pool(),
+                    CreateStepRun {
+                        workflow_run_id: self.ctx.workflow_run_id,
+                        step_id: step_id.to_string(),
+                        input_hash: None,
+                        output: Some(output),
+                        error: None,
+                        status: StepStatus::Completed,
+                        parent_step_id: self.parent_step_id.clone(),
+                        parallel_group_id: Some(self.parallel_group_id),
+                    },
+                )
+                .await?;
+
+                info!("Parallel step '{}' completed successfully", step_id);
+            }
+            Err(ref e) => {
+                let error_json = serde_json::to_value(e.to_string())?;
+                queries::create_step_run(
+                    self.ctx.db.pool(),
+                    CreateStepRun {
+                        workflow_run_id: self.ctx.workflow_run_id,
+                        step_id: step_id.to_string(),
+                        input_hash: None,
+                        output: None,
+                        error: Some(error_json),
+                        status: StepStatus::Failed,
+                        parent_step_id: self.parent_step_id.clone(),
+                        parallel_group_id: Some(self.parallel_group_id),
+                    },
+                )
+                .await?;
+
+                info!("Parallel step '{}' failed: {}", step_id, e);
+            }
+        }
+
+        result
     }
 }
 
