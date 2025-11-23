@@ -252,4 +252,233 @@ impl WorkflowContext {
 
         Err(anyhow::anyhow!("__SLEEP__"))
     }
+
+    /// Create a step builder for advanced step configuration (retry policies, etc.)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kagzi::{WorkflowContext, RetryPolicy};
+    /// # async fn example(ctx: WorkflowContext) -> anyhow::Result<()> {
+    /// let result: String = ctx.step_builder("fetch-user")
+    ///     .retry_policy(RetryPolicy::exponential())
+    ///     .execute(async {
+    ///         // This will retry automatically on transient failures
+    ///         Ok::<_, anyhow::Error>("user data".to_string())
+    ///     })
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn step_builder<'a>(&'a self, step_id: &'a str) -> StepBuilder<'a> {
+        StepBuilder {
+            ctx: self,
+            step_id,
+            retry_policy: None,
+        }
+    }
+}
+
+/// Builder for configuring and executing workflow steps with advanced options
+pub struct StepBuilder<'a> {
+    ctx: &'a WorkflowContext,
+    step_id: &'a str,
+    retry_policy: Option<kagzi_core::RetryPolicy>,
+}
+
+impl<'a> StepBuilder<'a> {
+    /// Set the retry policy for this step
+    pub fn retry_policy(mut self, policy: kagzi_core::RetryPolicy) -> Self {
+        self.retry_policy = Some(policy);
+        self
+    }
+
+    /// Execute the step with the configured options
+    pub async fn execute<Fut, T>(self, f: Fut) -> Result<T>
+    where
+        Fut: Future<Output = Result<T>>,
+        T: Serialize + for<'de> Deserialize<'de>,
+    {
+        // Check if step already exists (memoization)
+        if let Some(step_run) = queries::get_step_run(
+            self.ctx.db.pool(),
+            self.ctx.workflow_run_id,
+            self.step_id,
+        )
+        .await?
+        {
+            // Check if this step is waiting for retry
+            if step_run.should_retry() {
+                let now = Utc::now();
+
+                if !step_run.is_retry_ready(now) {
+                    // Not ready to retry yet - signal worker to come back later
+                    debug!(
+                        "Step '{}' scheduled for retry at {:?}, workflow will sleep",
+                        self.step_id, step_run.next_retry_at
+                    );
+
+                    if let Some(next_retry_at) = step_run.next_retry_at {
+                        queries::set_workflow_sleep(
+                            self.ctx.db.pool(),
+                            self.ctx.workflow_run_id,
+                            next_retry_at,
+                        )
+                        .await?;
+                    }
+
+                    return Err(anyhow::anyhow!("__RETRY__"));
+                }
+
+                // Ready to retry - fall through to execution
+                info!(
+                    "Retrying step '{}' (attempt {}/{})",
+                    self.step_id,
+                    step_run.attempts + 1,
+                    step_run.get_retry_policy()
+                        .map(|p| p.max_attempts())
+                        .unwrap_or(0)
+                );
+            } else if matches!(step_run.status, StepStatus::Completed) {
+                // Step completed successfully - return cached result
+                debug!(
+                    "Step '{}' already executed for workflow {}, returning cached result",
+                    self.step_id, self.ctx.workflow_run_id
+                );
+
+                if let Some(output) = step_run.output {
+                    let result: T = serde_json::from_value(output)?;
+                    return Ok(result);
+                }
+            } else if matches!(step_run.status, StepStatus::Failed) && !step_run.should_retry() {
+                // Step failed and won't retry - return error
+                if let Some(error_value) = step_run.error {
+                    if let Ok(step_error) = serde_json::from_value::<StepError>(error_value.clone())
+                    {
+                        return Err(anyhow::anyhow!(
+                            "Step permanently failed: {} - {}",
+                            step_error.kind,
+                            step_error.message
+                        ));
+                    }
+                }
+                return Err(anyhow::anyhow!("Step permanently failed"));
+            }
+        }
+
+        info!(
+            "Executing step '{}' for workflow {}",
+            self.step_id, self.ctx.workflow_run_id
+        );
+
+        // Execute the step
+        let result = f.await;
+
+        // Handle the result
+        match result {
+            Ok(ref value) => {
+                // Success - store result and clear any retry schedule
+                let output = serde_json::to_value(value)?;
+
+                // Clear retry schedule if this was a retry
+                let _ = queries::clear_step_retry_schedule(
+                    self.ctx.db.pool(),
+                    self.ctx.workflow_run_id,
+                    self.step_id,
+                )
+                .await;
+
+                queries::create_step_run(
+                    self.ctx.db.pool(),
+                    CreateStepRun {
+                        workflow_run_id: self.ctx.workflow_run_id,
+                        step_id: self.step_id.to_string(),
+                        input_hash: None,
+                        output: Some(output),
+                        error: None,
+                        status: StepStatus::Completed,
+                    },
+                )
+                .await?;
+
+                info!("Step '{}' completed successfully", self.step_id);
+            }
+            Err(ref e) => {
+                // Failure - determine if we should retry
+                let step_error = StepError::new(ErrorKind::Unknown, e.to_string())
+                    .with_source(format!("{:?}", e));
+
+                // Get current attempt count
+                let current_attempts = if let Some(step_run) = queries::get_step_run(
+                    self.ctx.db.pool(),
+                    self.ctx.workflow_run_id,
+                    self.step_id,
+                )
+                .await?
+                {
+                    step_run.attempts
+                } else {
+                    0
+                };
+
+                let error_json = serde_json::to_value(&step_error)?;
+
+                // Check if we should retry
+                if let Some(ref policy) = self.retry_policy {
+                    if step_error.retryable && policy.allows_retry() {
+                        let next_attempt = current_attempts + 1;
+
+                        if let Some(next_retry_at) = policy.next_retry_at(next_attempt as u32, Utc::now()) {
+                            // Schedule retry
+                            info!(
+                                "Step '{}' failed (attempt {}), scheduling retry at {:?}",
+                                self.step_id, next_attempt, next_retry_at
+                            );
+
+                            let policy_json = serde_json::to_value(policy)?;
+
+                            queries::update_step_retry_state(
+                                self.ctx.db.pool(),
+                                self.ctx.workflow_run_id,
+                                self.step_id,
+                                next_attempt,
+                                Some(next_retry_at),
+                                Some(policy_json),
+                                Some(error_json.clone()),
+                            )
+                            .await?;
+
+                            // Set workflow to sleep until retry time
+                            queries::set_workflow_sleep(
+                                self.ctx.db.pool(),
+                                self.ctx.workflow_run_id,
+                                next_retry_at,
+                            )
+                            .await?;
+
+                            return Err(anyhow::anyhow!("__RETRY__"));
+                        }
+                    }
+                }
+
+                // No retry - store as permanent failure
+                info!("Step '{}' failed permanently: {}", self.step_id, e);
+
+                queries::create_step_run(
+                    self.ctx.db.pool(),
+                    CreateStepRun {
+                        workflow_run_id: self.ctx.workflow_run_id,
+                        step_id: self.step_id.to_string(),
+                        input_hash: None,
+                        output: None,
+                        error: Some(error_json),
+                        status: StepStatus::Failed,
+                    },
+                )
+                .await?;
+            }
+        }
+
+        result
+    }
 }

@@ -95,6 +95,7 @@ impl WorkflowRun {
 /// A step run represents the memoized result of a single step in a workflow
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct StepRun {
+    pub id: Option<i64>,
     pub workflow_run_id: Uuid,
     pub step_id: String,
     pub input_hash: Option<String>,
@@ -102,6 +103,8 @@ pub struct StepRun {
     pub error: Option<serde_json::Value>,
     pub status: StepStatus,
     pub attempts: i32,
+    pub next_retry_at: Option<DateTime<Utc>>,
+    pub retry_policy: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }
@@ -124,6 +127,61 @@ impl StepRun {
                 e.as_str().map(|s| s.to_string())
             }
         })
+    }
+
+    /// Get the retry policy as a structured RetryPolicy if available
+    pub fn get_retry_policy(&self) -> Option<crate::retry::RetryPolicy> {
+        self.retry_policy
+            .as_ref()
+            .and_then(|p| serde_json::from_value(p.clone()).ok())
+    }
+
+    /// Check if this step should be retried
+    pub fn should_retry(&self) -> bool {
+        self.next_retry_at.is_some()
+    }
+
+    /// Check if retry is ready (next_retry_at has passed)
+    pub fn is_retry_ready(&self, now: DateTime<Utc>) -> bool {
+        self.next_retry_at
+            .map(|retry_at| retry_at <= now)
+            .unwrap_or(false)
+    }
+}
+
+/// A step attempt represents a single retry attempt for a step
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct StepAttempt {
+    pub id: i64,
+    pub step_run_id: i64,
+    pub attempt_number: i32,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub error: Option<serde_json::Value>,
+    pub status: String,
+}
+
+impl StepAttempt {
+    /// Get the error as a structured StepError if available
+    pub fn get_step_error(&self) -> Option<crate::error::StepError> {
+        self.error
+            .as_ref()
+            .and_then(|e| serde_json::from_value(e.clone()).ok())
+    }
+
+    /// Check if this attempt is still running
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    /// Check if this attempt succeeded
+    pub fn is_succeeded(&self) -> bool {
+        self.status == "succeeded"
+    }
+
+    /// Check if this attempt failed
+    pub fn is_failed(&self) -> bool {
+        self.status == "failed"
     }
 }
 
