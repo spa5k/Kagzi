@@ -173,8 +173,14 @@ pub async fn create_step_run(pool: &PgPool, create: CreateStepRun) -> Result<Ste
 
     let step = sqlx::query_as::<_, StepRun>(
         r#"
-        INSERT INTO step_runs (workflow_run_id, step_id, input_hash, output, error, status, completed_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO step_runs (workflow_run_id, step_id, input_hash, output, error, status, completed_at, parent_step_id, parallel_group_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (workflow_run_id, step_id)
+        DO UPDATE SET
+            output = EXCLUDED.output,
+            error = EXCLUDED.error,
+            status = EXCLUDED.status,
+            completed_at = EXCLUDED.completed_at
         RETURNING *
         "#,
     )
@@ -185,12 +191,14 @@ pub async fn create_step_run(pool: &PgPool, create: CreateStepRun) -> Result<Ste
     .bind(create.error)
     .bind(create.status)
     .bind(completed_at)
+    .bind(create.parent_step_id)
+    .bind(create.parallel_group_id)
     .fetch_one(pool)
     .await?;
 
     debug!(
-        "Created step run: workflow={}, step={}",
-        create.workflow_run_id, create.step_id
+        "Created step run: workflow={}, step={}, parallel_group={:?}",
+        create.workflow_run_id, create.step_id, create.parallel_group_id
     );
     Ok(step)
 }
@@ -440,4 +448,116 @@ pub async fn get_step_run_by_id(pool: &PgPool, step_run_id: i64) -> Result<Optio
     .await?;
 
     Ok(step)
+}
+
+// ============================================================================
+// Parallel execution queries
+// ============================================================================
+
+/// Get all steps in a parallel group
+pub async fn get_parallel_group_steps(
+    pool: &PgPool,
+    parallel_group_id: Uuid,
+) -> Result<Vec<StepRun>> {
+    let steps = sqlx::query_as::<_, StepRun>(
+        "SELECT * FROM step_runs WHERE parallel_group_id = $1 ORDER BY created_at ASC",
+    )
+    .bind(parallel_group_id)
+    .fetch_all(pool)
+    .await?;
+
+    debug!(
+        "Found {} steps in parallel group {}",
+        steps.len(),
+        parallel_group_id
+    );
+
+    Ok(steps)
+}
+
+/// Check if all steps in a parallel group have completed
+pub async fn is_parallel_group_complete(pool: &PgPool, parallel_group_id: Uuid) -> Result<bool> {
+    let incomplete_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM step_runs
+        WHERE parallel_group_id = $1
+          AND status != 'COMPLETED'
+        "#,
+    )
+    .bind(parallel_group_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(incomplete_count == 0)
+}
+
+/// Get all failed steps in a parallel group
+pub async fn get_parallel_group_failures(
+    pool: &PgPool,
+    parallel_group_id: Uuid,
+) -> Result<Vec<StepRun>> {
+    let failed_steps = sqlx::query_as::<_, StepRun>(
+        "SELECT * FROM step_runs WHERE parallel_group_id = $1 AND status = 'FAILED'",
+    )
+    .bind(parallel_group_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(failed_steps)
+}
+
+/// Bulk check for cached steps
+/// Returns a map of step_id -> cached StepRun for any steps that exist in cache
+pub async fn bulk_check_step_cache(
+    pool: &PgPool,
+    workflow_run_id: Uuid,
+    step_ids: &[String],
+) -> Result<Vec<StepRun>> {
+    if step_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let steps = sqlx::query_as::<_, StepRun>(
+        r#"
+        SELECT * FROM step_runs
+        WHERE workflow_run_id = $1
+          AND step_id = ANY($2)
+        "#,
+    )
+    .bind(workflow_run_id)
+    .bind(step_ids)
+    .fetch_all(pool)
+    .await?;
+
+    debug!(
+        "Bulk cache check: workflow={}, requested={}, found={}",
+        workflow_run_id,
+        step_ids.len(),
+        steps.len()
+    );
+
+    Ok(steps)
+}
+
+/// Get child steps of a parent step (for nested parallelism)
+pub async fn get_child_steps(
+    pool: &PgPool,
+    workflow_run_id: Uuid,
+    parent_step_id: &str,
+) -> Result<Vec<StepRun>> {
+    let steps = sqlx::query_as::<_, StepRun>(
+        r#"
+        SELECT * FROM step_runs
+        WHERE workflow_run_id = $1
+          AND parent_step_id = $2
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(workflow_run_id)
+    .bind(parent_step_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(steps)
 }

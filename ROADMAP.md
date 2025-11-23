@@ -122,39 +122,44 @@ This roadmap outlines the implementation plan for Kagzi V2, focusing on 5 core f
 
 **Tasks**:
 
-**Week 3: Foundation & Database**
-- [ ] Create migration `migrations/003_add_parallel_support.sql`
-  - [ ] Add `parent_step_id` and `parallel_group_id` columns
-  - [ ] Add indexes for parallel queries
-- [ ] Update `crates/kagzi-core/src/models.rs`
-  - [ ] Add parallel tracking fields to StepRun
-  - [ ] Add methods for parallel step handling
-- [ ] Design parallel execution API
-  - [ ] Determine tuple vs vec approach
-  - [ ] Plan error handling strategies (FailFast vs CollectAll)
-  - [ ] Design race() semantics
+**Week 3: Foundation & Database** ✅ **COMPLETE**
+- [x] Create migration `migrations/004_add_parallel_support.sql`
+  - [x] Add `parent_step_id` and `parallel_group_id` columns
+  - [x] Add indexes for parallel queries
+- [x] Update `crates/kagzi-core/src/models.rs`
+  - [x] Add parallel tracking fields to StepRun
+  - [x] Add methods for parallel step handling
+- [x] Design parallel execution API
+  - [x] Determine tuple vs vec approach
+  - [x] Plan error handling strategies (FailFast vs CollectAll)
+  - [x] Design race() semantics
 
-**Week 4: Core Implementation**
-- [ ] Create `crates/kagzi/src/parallel.rs`
+**Week 4: Core Implementation** (In Progress)
+- [x] Create `crates/kagzi/src/parallel.rs`
+  - [x] Add `ParallelErrorStrategy` enum
+  - [x] Add `ParallelResult` struct
+  - [x] Create `ParallelExecutor` struct
   - [ ] Implement `parallel()` for tuples (up to 10-tuple)
   - [ ] Implement `parallel_vec()` for dynamic lists
   - [ ] Implement `race()` for first-to-complete
-  - [ ] Add `ParallelErrorStrategy` enum
   - [ ] Handle memoization cache checks for all parallel steps
   - [ ] Spawn tokio tasks for uncached steps
   - [ ] Collect and merge results
-- [ ] Update `crates/kagzi/src/context.rs`
-  - [ ] Add `parallel()` method
-  - [ ] Add `parallel_vec()` method
+- [x] Update `crates/kagzi/src/context.rs`
+  - [x] Add `parallel_vec()` method (stub)
+  - [ ] Implement full `parallel_vec()` logic
+  - [ ] Add `parallel()` method for tuples
   - [ ] Add `race()` method
   - [ ] Generate unique parallel_group_id
   - [ ] Integrate with step memoization
 
-**Week 5: Safety & Testing**
-- [ ] Update `crates/kagzi-core/src/queries.rs`
-  - [ ] Parallel-safe step caching (ON CONFLICT handling)
-  - [ ] Bulk step cache checks
-  - [ ] Query parallel step groups
+**Week 5: Safety & Testing** (In Progress)
+- [x] Update `crates/kagzi-core/src/queries.rs`
+  - [x] Parallel-safe step caching (ON CONFLICT handling)
+  - [x] Bulk step cache checks
+  - [x] Query parallel step groups
+  - [x] Get parallel group failures
+  - [x] Get child steps for nested parallelism
 - [ ] Handle edge cases
   - [ ] Race condition on cache insert (two workers caching same step)
   - [ ] Partial failure handling (some parallel steps succeed, some fail)
@@ -168,13 +173,17 @@ This roadmap outlines the implementation plan for Kagzi V2, focusing on 5 core f
   - [ ] Test: race condition handling
   - [ ] Performance test: measure speedup vs sequential
 
-**Deliverables**:
-- ✅ Migration 003 created
-- ✅ Parallel execution working for tuples and vecs
-- ✅ Race condition safety verified
-- ✅ Memoization works correctly with parallelism
-- ✅ Comprehensive tests passing
-- ✅ Performance benchmarks showing speedup
+**Deliverables** (In Progress):
+- ✅ Migration 004 created
+- ✅ Database schema updated with parallel tracking fields
+- ✅ Parallel execution API designed
+- ✅ Parallel-safe queries implemented
+- ✅ Basic parallel infrastructure in place
+- ⏳ Parallel execution logic (in progress)
+- ⏳ Race condition safety verification (pending)
+- ⏳ Memoization integration with parallelism (pending)
+- ⏳ Comprehensive tests (pending)
+- ⏳ Performance benchmarks (pending)
 
 ---
 
@@ -371,10 +380,11 @@ This roadmap outlines the implementation plan for Kagzi V2, focusing on 5 core f
 
 | # | Migration | Tables | Columns | Purpose |
 |---|-----------|--------|---------|---------|
-| 002 | Retry Support | step_attempts (new) | attempts, last_error, next_retry_at, retry_policy | Track retry state and history |
-| 003 | Parallel Support | - | parent_step_id, parallel_group_id | Enable parallel step execution |
-| 004 | Versioning | workflow_versions (new) | workflow_version | Support multiple workflow versions |
-| 005 | Worker Management | workers (new), worker_events (new) | worker_name (in leases) | Production-ready worker lifecycle |
+| 002 | Error Handling | - | error (changed to JSONB) | Structured error storage |
+| 003 | Retry Support | step_attempts (new) | attempts, next_retry_at, retry_policy, id | Track retry state and history |
+| 004 | Parallel Support | - | parent_step_id, parallel_group_id | Enable parallel step execution |
+| 005 | Versioning | workflow_versions (new) | workflow_version | Support multiple workflow versions |
+| 006 | Worker Management | workers (new), worker_events (new) | worker_name (in leases) | Production-ready worker lifecycle |
 
 ### New Rust Files
 
@@ -472,10 +482,16 @@ This roadmap outlines the implementation plan for Kagzi V2, focusing on 5 core f
 - [x] StepBuilder API functional
 - [x] Migration 003 created
 
-### Week 5 Checkpoint
-- [ ] Parallel execution working
-- [ ] Memoization safety verified
-- [ ] Performance improvement measured
+### Week 3 Checkpoint ✅
+- [x] Migration 004 created
+- [x] Database schema updated for parallel execution
+- [x] Parallel execution API designed
+- [x] Parallel-safe queries implemented
+
+### Week 5 Checkpoint (In Progress)
+- ⏳ Parallel execution working (foundation complete)
+- ⏳ Memoization safety verified (pending)
+- ⏳ Performance improvement measured (pending)
 
 ### Week 6 Checkpoint
 - [ ] Workflow versioning complete

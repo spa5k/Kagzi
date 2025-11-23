@@ -107,6 +107,8 @@ pub struct StepRun {
     pub retry_policy: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub parent_step_id: Option<String>,
+    pub parallel_group_id: Option<Uuid>,
 }
 
 impl StepRun {
@@ -146,6 +148,21 @@ impl StepRun {
         self.next_retry_at
             .map(|retry_at| retry_at <= now)
             .unwrap_or(false)
+    }
+
+    /// Check if this step is part of a parallel group
+    pub fn is_parallel(&self) -> bool {
+        self.parallel_group_id.is_some()
+    }
+
+    /// Check if this step has a parent (nested parallel)
+    pub fn has_parent(&self) -> bool {
+        self.parent_step_id.is_some()
+    }
+
+    /// Check if this is a top-level step (no parent)
+    pub fn is_top_level(&self) -> bool {
+        self.parent_step_id.is_none()
     }
 }
 
@@ -212,6 +229,8 @@ pub struct CreateStepRun {
     pub output: Option<serde_json::Value>,
     pub error: Option<serde_json::Value>,
     pub status: StepStatus,
+    pub parent_step_id: Option<String>,
+    pub parallel_group_id: Option<Uuid>,
 }
 
 #[cfg(test)]
@@ -288,6 +307,8 @@ mod tests {
             output: Some(output.clone()),
             error: None,
             status: StepStatus::Completed,
+            parent_step_id: None,
+            parallel_group_id: None,
         };
 
         assert_eq!(create_step.workflow_run_id, run_id);
@@ -296,5 +317,7 @@ mod tests {
         assert_eq!(create_step.output, Some(output));
         assert_eq!(create_step.error, None);
         assert_eq!(create_step.status, StepStatus::Completed);
+        assert_eq!(create_step.parent_step_id, None);
+        assert_eq!(create_step.parallel_group_id, None);
     }
 }
