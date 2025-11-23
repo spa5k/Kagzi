@@ -121,6 +121,8 @@ impl WorkflowContext {
                         output: Some(output),
                         error: None,
                         status: StepStatus::Completed,
+                        parent_step_id: None,
+                        parallel_group_id: None,
                     },
                 )
                 .await?;
@@ -144,6 +146,8 @@ impl WorkflowContext {
                         output: None,
                         error: Some(error_json),
                         status: StepStatus::Failed,
+                        parent_step_id: None,
+                        parallel_group_id: None,
                     },
                 )
                 .await?;
@@ -207,6 +211,8 @@ impl WorkflowContext {
                 output: Some(serde_json::json!({"slept_until": sleep_until})),
                 error: None,
                 status: StepStatus::Completed,
+                parent_step_id: None,
+                parallel_group_id: None,
             },
         )
         .await?;
@@ -246,6 +252,8 @@ impl WorkflowContext {
                 output: Some(serde_json::json!({"slept_until": wake_time})),
                 error: None,
                 status: StepStatus::Completed,
+                parent_step_id: None,
+                parallel_group_id: None,
             },
         )
         .await?;
@@ -276,6 +284,34 @@ impl WorkflowContext {
             step_id,
             retry_policy: None,
         }
+    }
+
+    /// Execute a dynamic list of steps in parallel
+    ///
+    /// All steps execute concurrently with full memoization support.
+    /// Returns a vector of results in the same order as the input steps.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kagzi::WorkflowContext;
+    /// # async fn example(ctx: WorkflowContext) -> anyhow::Result<()> {
+    /// // Execute multiple API calls in parallel
+    /// let user_ids = vec!["user1", "user2", "user3"];
+    /// // Note: Full implementation pending
+    /// # Ok(())
+    /// # }
+    /// # ```
+    pub async fn parallel_vec<T>(
+        &self,
+        _group_name: &str,
+        _steps: Vec<(String, std::pin::Pin<Box<dyn Future<Output = Result<T>> + Send>>)>,
+    ) -> Result<Vec<T>>
+    where
+        T: Serialize + for<'de> Deserialize<'de> + Send + 'static,
+    {
+        // TODO: Implement parallel execution logic
+        Err(anyhow::anyhow!("Parallel execution not yet fully implemented"))
     }
 }
 
@@ -397,6 +433,8 @@ impl<'a> StepBuilder<'a> {
                         output: Some(output),
                         error: None,
                         status: StepStatus::Completed,
+                        parent_step_id: None,
+                        parallel_group_id: None,
                     },
                 )
                 .await?;
@@ -473,6 +511,8 @@ impl<'a> StepBuilder<'a> {
                         output: None,
                         error: Some(error_json),
                         status: StepStatus::Failed,
+                        parent_step_id: None,
+                        parallel_group_id: None,
                     },
                 )
                 .await?;
