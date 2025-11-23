@@ -31,3 +31,8 @@ chrono = { version = "0.4", features = ["serde"] }
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "parallel_performance"
+harness = false
