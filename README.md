@@ -6,6 +6,7 @@ Kagzi allows you to build resilient, long-running workflows that can survive cra
 
 ## Features
 
+### Core Features
 - ✅ **Durable Execution**: Workflows survive crashes and restarts
 - ✅ **Step Memoization**: Completed steps are cached and never re-executed
 - ✅ **Durable Sleep**: Sleep for seconds or months without holding resources
@@ -13,6 +14,14 @@ Kagzi allows you to build resilient, long-running workflows that can survive cra
 - ✅ **PostgreSQL Backend**: Simple, reliable persistence
 - ✅ **Automatic Migrations**: Database schema managed automatically
 - ✅ **Worker Pool**: Scale horizontally with multiple workers
+
+### V2 Features (New!)
+- ✅ **Retry Policies**: Exponential backoff and fixed interval retries with configurable error handling
+- ✅ **Parallel Execution**: Execute multiple workflow steps concurrently with different error strategies
+- ✅ **Workflow Versioning**: Manage multiple versions of workflows simultaneously
+- ✅ **Production-Ready Workers**: Graceful shutdown, heartbeat monitoring, and concurrent workflow limiting
+- ✅ **Health Monitoring**: Worker health checks and system observability
+- ✅ **Advanced Error Handling**: Rich error classification and retry predicates
 
 ## Quick Start
 
@@ -128,6 +137,151 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+## V2 Features Guide
+
+### Retry Policies
+
+Configure automatic retries for workflow steps with exponential backoff or fixed intervals:
+
+```rust
+use kagzi::{StepBuilder, RetryPolicy, RetryPredicate};
+
+// Exponential backoff with jitter
+StepBuilder::new("api-call")
+    .retry_policy(RetryPolicy::exponential_with(
+        1000,    // 1s initial delay
+        30000,   // 30s max delay
+        2.0,     // Double each retry
+        5,       // Max 5 attempts
+        true,    // Use jitter
+    ))
+    .retry_predicate(RetryPredicate::OnRetryableError)
+    .execute(&ctx, async {
+        // Your step logic here
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?;
+
+// Fixed interval retries
+StepBuilder::new("db-operation")
+    .retry_policy(RetryPolicy::fixed_with(2000, 3)) // 2s delay, 3 attempts
+    .execute(&ctx, async { Ok::<_, anyhow::Error>(()) })
+    .await?;
+```
+
+See `examples/step_retry_policies.rs` for a complete example.
+
+### Parallel Execution
+
+Execute multiple workflow steps concurrently with memoization support:
+
+```rust
+use kagzi::{ParallelExecutor, ParallelErrorStrategy};
+use uuid::Uuid;
+
+// Create a parallel executor
+let parallel_group = Uuid::new_v4();
+let executor = ParallelExecutor::new(
+    &ctx,
+    parallel_group,
+    None,
+    ParallelErrorStrategy::CollectAll, // Or FailFast
+);
+
+// Execute steps in parallel
+let handles = vec![
+    tokio::spawn(executor.execute_step("step-1", async { /* ... */ })),
+    tokio::spawn(executor.execute_step("step-2", async { /* ... */ })),
+    tokio::spawn(executor.execute_step("step-3", async { /* ... */ })),
+];
+
+let results = futures::future::join_all(handles).await;
+```
+
+See `examples/advanced_parallel.rs` and `examples/parallel_execution.rs` for complete examples.
+
+### Workflow Versioning
+
+Manage multiple versions of workflows and roll out changes gradually:
+
+```rust
+// Register multiple versions
+kagzi.register_workflow_version("process-order", 1, process_order_v1).await?;
+kagzi.register_workflow_version("process-order", 2, process_order_v2).await?;
+kagzi.register_workflow_version("process-order", 3, process_order_v3).await?;
+
+// Set default version for new workflows
+kagzi.set_default_workflow_version("process-order", 3).await?;
+
+// Start a workflow with a specific version
+let handle = kagzi.start_workflow_version("process-order", 2, input).await?;
+
+// Or use the default version
+let handle = kagzi.start_workflow("process-order", input).await?;
+```
+
+See `examples/workflow_versioning.rs` for a complete example.
+
+### Production-Ready Workers
+
+Configure workers with custom settings for production deployments:
+
+```rust
+use kagzi::WorkerBuilder;
+
+let worker = kagzi
+    .create_worker_builder()
+    .worker_id("my-worker-1".to_string())
+    .max_concurrent_workflows(10)     // Process up to 10 workflows concurrently
+    .heartbeat_interval_secs(30)      // Send heartbeat every 30 seconds
+    .poll_interval_ms(500)            // Poll for new workflows every 500ms
+    .graceful_shutdown_timeout_secs(300) // Wait up to 5 minutes on shutdown
+    .build();
+
+worker.start().await?;
+```
+
+Workers automatically handle:
+- Graceful shutdown (SIGTERM/SIGINT)
+- Heartbeat monitoring
+- Concurrent workflow limiting
+- Automatic worker registration
+
+See `examples/worker_management.rs` for a complete example.
+
+### Health Monitoring
+
+Monitor worker health and system status:
+
+```rust
+use kagzi::{HealthChecker, HealthCheckConfig};
+
+let config = HealthCheckConfig {
+    heartbeat_timeout_secs: 120,  // Unhealthy after 2 minutes
+    heartbeat_warning_secs: 60,   // Warn after 1 minute
+};
+
+let health_checker = HealthChecker::with_config(kagzi.db_handle(), config);
+
+// Check database health
+health_checker.check_database_health().await?;
+
+// Check worker health
+let workers = kagzi_core::queries::get_active_workers(kagzi.db_handle().pool()).await?;
+for worker in workers {
+    let health = health_checker.check_worker_health(&worker, 0).await;
+    println!("Worker {} status: {}", worker.worker_name, health.status);
+}
+
+// Comprehensive health check
+let result = health_checker.comprehensive_check().await;
+if result.is_healthy() {
+    println!("System is healthy!");
+}
+```
+
+See `examples/health_monitoring.rs` for a complete example.
+
 ## Architecture
 
 ```
@@ -141,17 +295,20 @@ async fn main() -> anyhow::Result<()> {
              ▼
 ┌─────────────────────────────────────────────────┐
 │           Kagzi SDK (Rust)                      │
-│  - WorkflowContext                              │
-│  - Step memoization                             │
-│  - Client & Worker                              │
+│  - WorkflowContext & StepBuilder                │
+│  - Step memoization & retry policies            │
+│  - Parallel execution                           │
+│  - Workflow versioning                          │
+│  - Client & Worker (with health monitoring)     │
 └────────────┬────────────────────────────────────┘
              │ talks to
              ▼
 ┌─────────────────────────────────────────────────┐
 │          PostgreSQL                             │
 │  - workflow_runs                                │
-│  - step_runs (memoization)                      │
+│  - step_runs (memoization + parallel tracking)  │
 │  - worker_leases (coordination)                 │
+│  - workers (heartbeat + health)                 │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -178,9 +335,35 @@ Kagzi/
 └── docker-compose.yml  # PostgreSQL setup
 ```
 
+## Examples
+
+Kagzi includes comprehensive examples demonstrating all features:
+
+### Basic Examples
+- `simple.rs` - Minimal workflow example
+- `welcome_email.rs` - Multi-step workflow with sleep
+- `data_pipeline.rs` - Data processing workflow
+- `scheduled_reminder.rs` - Scheduled task example
+
+### V2 Feature Examples
+- `retry_pattern.rs` - Retry patterns and error handling
+- `step_retry_policies.rs` - Step-level retry configuration
+- `parallel_execution.rs` - Basic parallel execution
+- `advanced_parallel.rs` - Advanced parallel patterns with error strategies
+- `workflow_versioning.rs` - Managing multiple workflow versions
+- `worker_management.rs` - Production worker configuration
+- `health_monitoring.rs` - Worker health and system monitoring
+- `batch_processing.rs` - Batch processing with parallel steps
+- `order_fulfillment.rs` - Complex order processing workflow
+
+Run any example with:
+```bash
+cargo run --example <example_name>
+```
+
 ## Roadmap
 
-### Phase 1 (Current) ✅
+### Phase 1 ✅
 - [x] PostgreSQL backend
 - [x] Basic workflow execution
 - [x] Step memoization
@@ -188,16 +371,23 @@ Kagzi/
 - [x] Worker polling
 - [x] Automatic migrations
 
-### Phase 2
-- [ ] Retry policies and exponential backoff
-- [ ] Parallel step execution
-- [ ] Workflow versioning
-- [ ] Observability and metrics
-- [ ] Web dashboard
-- [ ] SQLite backend
-- [ ] Redis backend
+### Phase 2 (V2) ✅
+- [x] Retry policies and exponential backoff
+- [x] Parallel step execution
+- [x] Workflow versioning
+- [x] Production-ready workers
+- [x] Health monitoring
+- [x] Advanced error handling
 
 ### Phase 3
+- [ ] Observability and metrics (Prometheus/OpenTelemetry)
+- [ ] Web dashboard for monitoring
+- [ ] SQLite backend
+- [ ] Redis backend
+- [ ] Workflow cancellation and timeouts
+- [ ] Child workflows and signals
+
+### Phase 4
 - [ ] gRPC server for multi-language support
 - [ ] Python SDK
 - [ ] TypeScript SDK
