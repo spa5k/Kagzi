@@ -12,6 +12,7 @@ use kagzi_core::{queries, Database, ErrorKind, StepError, WorkflowStatus};
 
 use crate::client::WorkflowFn;
 use crate::context::WorkflowContext;
+use crate::versioning::WorkflowRegistry;
 
 /// Worker configuration
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ impl Default for WorkerConfig {
 pub struct Worker {
     db: Arc<Database>,
     workflows: Arc<RwLock<HashMap<String, WorkflowFn<serde_json::Value>>>>,
+    registry: Arc<WorkflowRegistry>,
     config: WorkerConfig,
     worker_id: String,
     running: Arc<RwLock<bool>>,
@@ -48,14 +50,16 @@ impl Worker {
     pub fn new(
         db: Arc<Database>,
         workflows: Arc<RwLock<HashMap<String, WorkflowFn<serde_json::Value>>>>,
+        registry: Arc<WorkflowRegistry>,
     ) -> Self {
-        Self::with_config(db, workflows, WorkerConfig::default())
+        Self::with_config(db, workflows, registry, WorkerConfig::default())
     }
 
     /// Create a new worker with custom configuration
     pub fn with_config(
         db: Arc<Database>,
         workflows: Arc<RwLock<HashMap<String, WorkflowFn<serde_json::Value>>>>,
+        registry: Arc<WorkflowRegistry>,
         config: WorkerConfig,
     ) -> Self {
         let worker_id = config
@@ -68,6 +72,7 @@ impl Worker {
         Self {
             db,
             workflows,
+            registry,
             config,
             worker_id,
             running: Arc::new(RwLock::new(false)),
@@ -181,17 +186,19 @@ impl Worker {
         )
         .await?;
 
-        // Look up workflow function
-        let workflows = self.workflows.read().await;
-        let workflow_fn = workflows.get(&workflow_run.workflow_name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Workflow function not registered: {}",
-                workflow_run.workflow_name
-            )
-        })?;
+        // Look up workflow function from version registry
+        let workflow_fn = self.registry
+            .get_workflow(&workflow_run.workflow_name, workflow_run.workflow_version)
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Workflow function not registered: {} version {}",
+                    workflow_run.workflow_name,
+                    workflow_run.workflow_version
+                )
+            })?;
 
         let workflow_fn = workflow_fn.clone();
-        drop(workflows); // Release lock
 
         // Create workflow context
         let ctx = WorkflowContext::new(
@@ -201,7 +208,7 @@ impl Worker {
         );
 
         // Execute workflow
-        let result = workflow_fn(ctx, workflow_run.input.clone()).await;
+        let result = workflow_fn.call(ctx, workflow_run.input.clone()).await;
 
         // Handle result
         match result {

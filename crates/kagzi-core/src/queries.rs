@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 /// Create a new workflow run
 pub async fn create_workflow_run(pool: &PgPool, create: CreateWorkflowRun) -> Result<WorkflowRun> {
-    let workflow_version = create.workflow_version.unwrap_or_else(|| "v1".to_string());
+    let workflow_version = create.workflow_version.unwrap_or(1);
 
     let run = sqlx::query_as::<_, WorkflowRun>(
         r#"
@@ -19,7 +19,7 @@ pub async fn create_workflow_run(pool: &PgPool, create: CreateWorkflowRun) -> Re
         "#,
     )
     .bind(&create.workflow_name)
-    .bind(&workflow_version)
+    .bind(workflow_version)
     .bind(&create.input)
     .fetch_one(pool)
     .await?;
@@ -269,8 +269,8 @@ pub async fn release_worker_lease(pool: &PgPool, workflow_run_id: Uuid) -> Resul
     Ok(())
 }
 
-/// Update worker heartbeat
-pub async fn update_worker_heartbeat(pool: &PgPool, workflow_run_id: Uuid) -> Result<()> {
+/// Update worker lease heartbeat
+pub async fn update_lease_heartbeat(pool: &PgPool, workflow_run_id: Uuid) -> Result<()> {
     sqlx::query("UPDATE worker_leases SET heartbeat_at = NOW() WHERE workflow_run_id = $1")
         .bind(workflow_run_id)
         .execute(pool)
@@ -560,4 +560,402 @@ pub async fn get_child_steps(
     .await?;
 
     Ok(steps)
+}
+
+// ============================================================================
+// Workflow Version Management Queries
+// ============================================================================
+
+/// Register a new workflow version
+pub async fn create_workflow_version(
+    pool: &PgPool,
+    workflow_name: &str,
+    version: i32,
+    is_default: bool,
+    description: Option<String>,
+) -> Result<WorkflowVersion> {
+    let workflow_version = sqlx::query_as::<_, WorkflowVersion>(
+        r#"
+        INSERT INTO workflow_versions (workflow_name, version, is_default, description)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (workflow_name, version)
+        DO UPDATE SET
+            is_default = EXCLUDED.is_default,
+            description = EXCLUDED.description
+        RETURNING *
+        "#,
+    )
+    .bind(workflow_name)
+    .bind(version)
+    .bind(is_default)
+    .bind(description)
+    .fetch_one(pool)
+    .await?;
+
+    debug!("Created/updated workflow version: {} v{}", workflow_name, version);
+    Ok(workflow_version)
+}
+
+/// Get the default version for a workflow
+pub async fn get_default_version(
+    pool: &PgPool,
+    workflow_name: &str,
+) -> Result<Option<WorkflowVersion>> {
+    let version = sqlx::query_as::<_, WorkflowVersion>(
+        "SELECT * FROM workflow_versions WHERE workflow_name = $1 AND is_default = TRUE"
+    )
+    .bind(workflow_name)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(version)
+}
+
+/// Set a version as the default for a workflow
+/// This will unset any existing default
+pub async fn set_default_version(
+    pool: &PgPool,
+    workflow_name: &str,
+    version: i32,
+) -> Result<WorkflowVersion> {
+    // First, unset any existing default
+    sqlx::query(
+        "UPDATE workflow_versions SET is_default = FALSE WHERE workflow_name = $1 AND is_default = TRUE"
+    )
+    .bind(workflow_name)
+    .execute(pool)
+    .await?;
+
+    // Then set the new default
+    let workflow_version = sqlx::query_as::<_, WorkflowVersion>(
+        r#"
+        UPDATE workflow_versions
+        SET is_default = TRUE
+        WHERE workflow_name = $1 AND version = $2
+        RETURNING *
+        "#,
+    )
+    .bind(workflow_name)
+    .bind(version)
+    .fetch_one(pool)
+    .await?;
+
+    debug!("Set default version for {} to v{}", workflow_name, version);
+    Ok(workflow_version)
+}
+
+/// Get all versions for a workflow
+pub async fn get_workflow_versions(
+    pool: &PgPool,
+    workflow_name: &str,
+) -> Result<Vec<WorkflowVersion>> {
+    let versions = sqlx::query_as::<_, WorkflowVersion>(
+        "SELECT * FROM workflow_versions WHERE workflow_name = $1 ORDER BY version ASC"
+    )
+    .bind(workflow_name)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(versions)
+}
+
+/// Get a specific workflow version
+pub async fn get_workflow_version(
+    pool: &PgPool,
+    workflow_name: &str,
+    version: i32,
+) -> Result<Option<WorkflowVersion>> {
+    let workflow_version = sqlx::query_as::<_, WorkflowVersion>(
+        "SELECT * FROM workflow_versions WHERE workflow_name = $1 AND version = $2"
+    )
+    .bind(workflow_name)
+    .bind(version)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(workflow_version)
+}
+
+/// Deprecate a workflow version
+pub async fn deprecate_workflow_version(
+    pool: &PgPool,
+    workflow_name: &str,
+    version: i32,
+) -> Result<WorkflowVersion> {
+    let workflow_version = sqlx::query_as::<_, WorkflowVersion>(
+        r#"
+        UPDATE workflow_versions
+        SET deprecated_at = NOW()
+        WHERE workflow_name = $1 AND version = $2
+        RETURNING *
+        "#,
+    )
+    .bind(workflow_name)
+    .bind(version)
+    .fetch_one(pool)
+    .await?;
+
+    debug!("Deprecated workflow version: {} v{}", workflow_name, version);
+    Ok(workflow_version)
+}
+
+/// Count workflow runs by name and version
+pub async fn count_workflow_runs_by_version(
+    pool: &PgPool,
+    workflow_name: &str,
+    version: i32,
+    status: Option<WorkflowStatus>,
+) -> Result<i64> {
+    let count: (i64,) = if let Some(status) = status {
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM workflow_runs WHERE workflow_name = $1 AND workflow_version = $2 AND status = $3"
+        )
+        .bind(workflow_name)
+        .bind(version)
+        .bind(status)
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM workflow_runs WHERE workflow_name = $1 AND workflow_version = $2"
+        )
+        .bind(workflow_name)
+        .bind(version)
+        .fetch_one(pool)
+        .await?
+    };
+
+    Ok(count.0)
+}
+
+/// Get all workflow runs for a specific version
+pub async fn get_workflow_runs_by_version(
+    pool: &PgPool,
+    workflow_name: &str,
+    version: i32,
+    limit: Option<i64>,
+) -> Result<Vec<WorkflowRun>> {
+    let limit = limit.unwrap_or(100);
+
+    let runs = sqlx::query_as::<_, WorkflowRun>(
+        r#"
+        SELECT * FROM workflow_runs
+        WHERE workflow_name = $1 AND workflow_version = $2
+        ORDER BY created_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(workflow_name)
+    .bind(version)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(runs)
+}
+
+// ============================================================================
+// Worker Management Queries
+// ============================================================================
+
+/// Register a new worker
+pub async fn register_worker(
+    pool: &PgPool,
+    worker_name: &str,
+    hostname: Option<String>,
+    process_id: Option<i32>,
+    config: Option<serde_json::Value>,
+    metadata: Option<serde_json::Value>,
+) -> Result<crate::models::Worker> {
+    let worker = sqlx::query_as::<_, crate::models::Worker>(
+        r#"
+        INSERT INTO workers (worker_name, hostname, process_id, status, config, metadata)
+        VALUES ($1, $2, $3, 'RUNNING', $4, $5)
+        ON CONFLICT (worker_name)
+        DO UPDATE SET
+            hostname = EXCLUDED.hostname,
+            process_id = EXCLUDED.process_id,
+            started_at = NOW(),
+            last_heartbeat = NOW(),
+            status = 'RUNNING',
+            config = EXCLUDED.config,
+            metadata = EXCLUDED.metadata,
+            stopped_at = NULL
+        RETURNING *
+        "#,
+    )
+    .bind(worker_name)
+    .bind(hostname)
+    .bind(process_id)
+    .bind(config)
+    .bind(metadata)
+    .fetch_one(pool)
+    .await?;
+
+    debug!("Registered worker: {}", worker_name);
+    Ok(worker)
+}
+
+/// Update worker heartbeat
+pub async fn update_worker_heartbeat(pool: &PgPool, worker_id: Uuid) -> Result<()> {
+    sqlx::query("UPDATE workers SET last_heartbeat = NOW() WHERE id = $1")
+        .bind(worker_id)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+/// Update worker status
+pub async fn update_worker_status(
+    pool: &PgPool,
+    worker_id: Uuid,
+    status: crate::models::WorkerStatus,
+) -> Result<crate::models::Worker> {
+    let stopped_at = if matches!(status, crate::models::WorkerStatus::Stopped) {
+        Some("NOW()")
+    } else {
+        None
+    };
+
+    let query = if let Some(_) = stopped_at {
+        r#"
+        UPDATE workers
+        SET status = $2, stopped_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        "#
+    } else {
+        r#"
+        UPDATE workers
+        SET status = $2
+        WHERE id = $1
+        RETURNING *
+        "#
+    };
+
+    let worker = sqlx::query_as::<_, crate::models::Worker>(query)
+        .bind(worker_id)
+        .bind(status)
+        .fetch_one(pool)
+        .await?;
+
+    debug!("Updated worker {} status to {}", worker_id, worker.status);
+    Ok(worker)
+}
+
+/// Get a worker by ID
+pub async fn get_worker(pool: &PgPool, worker_id: Uuid) -> Result<Option<crate::models::Worker>> {
+    let worker = sqlx::query_as::<_, crate::models::Worker>(
+        "SELECT * FROM workers WHERE id = $1"
+    )
+    .bind(worker_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(worker)
+}
+
+/// Get a worker by name
+pub async fn get_worker_by_name(pool: &PgPool, worker_name: &str) -> Result<Option<crate::models::Worker>> {
+    let worker = sqlx::query_as::<_, crate::models::Worker>(
+        "SELECT * FROM workers WHERE worker_name = $1"
+    )
+    .bind(worker_name)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(worker)
+}
+
+/// Get all active workers
+pub async fn get_active_workers(pool: &PgPool) -> Result<Vec<crate::models::Worker>> {
+    let workers = sqlx::query_as::<_, crate::models::Worker>(
+        "SELECT * FROM workers WHERE status = 'RUNNING' ORDER BY started_at DESC"
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(workers)
+}
+
+/// Cleanup stale workers (no heartbeat for N seconds)
+pub async fn cleanup_stale_workers(pool: &PgPool, stale_threshold_secs: i64) -> Result<i64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE workers
+        SET status = 'STOPPED', stopped_at = NOW()
+        WHERE status != 'STOPPED'
+          AND last_heartbeat < NOW() - INTERVAL '1 second' * $1
+        "#,
+    )
+    .bind(stale_threshold_secs)
+    .execute(pool)
+    .await?;
+
+    let rows_affected = result.rows_affected() as i64;
+    if rows_affected > 0 {
+        warn!("Cleaned up {} stale workers", rows_affected);
+    }
+
+    Ok(rows_affected)
+}
+
+/// Record a worker event
+pub async fn record_worker_event(
+    pool: &PgPool,
+    worker_id: Uuid,
+    event_type: crate::models::WorkerEventType,
+    event_data: Option<serde_json::Value>,
+) -> Result<crate::models::WorkerEvent> {
+    let event = sqlx::query_as::<_, crate::models::WorkerEvent>(
+        r#"
+        INSERT INTO worker_events (worker_id, event_type, event_data)
+        VALUES ($1, $2, $3)
+        RETURNING *
+        "#,
+    )
+    .bind(worker_id)
+    .bind(event_type)
+    .bind(event_data)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(event)
+}
+
+/// Get worker events
+pub async fn get_worker_events(
+    pool: &PgPool,
+    worker_id: Uuid,
+    limit: Option<i64>,
+) -> Result<Vec<crate::models::WorkerEvent>> {
+    let limit = limit.unwrap_or(100);
+
+    let events = sqlx::query_as::<_, crate::models::WorkerEvent>(
+        "SELECT * FROM worker_events WHERE worker_id = $1 ORDER BY created_at DESC LIMIT $2"
+    )
+    .bind(worker_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(events)
+}
+
+/// Update worker lease with worker name
+pub async fn update_worker_lease_name(
+    pool: &PgPool,
+    workflow_run_id: Uuid,
+    worker_name: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE worker_leases SET worker_name = $2 WHERE workflow_run_id = $1"
+    )
+    .bind(workflow_run_id)
+    .bind(worker_name)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }

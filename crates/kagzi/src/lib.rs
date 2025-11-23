@@ -27,12 +27,14 @@
 pub mod client;
 pub mod context;
 pub mod parallel;
+pub mod versioning;
 pub mod worker;
 
 // Re-exports
 pub use client::Kagzi;
 pub use context::{StepBuilder, WorkflowContext};
 pub use parallel::{ParallelErrorStrategy, ParallelExecutor, ParallelResult};
+pub use versioning::WorkflowRegistry;
 pub use worker::Worker;
 
 // Re-export common types from kagzi-core
