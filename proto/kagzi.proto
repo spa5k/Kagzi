@@ -1,0 +1,83 @@
+syntax = "proto3";
+package kagzi;
+
+service WorkflowService {
+  // --- Client/Trigger Facing API ---
+  rpc StartWorkflow (StartWorkflowRequest) returns (StartWorkflowResponse);
+
+  // --- Worker Facing API ---
+  // Worker calls this to ask for work. Blocks until work is available or timeout.
+  rpc PollActivity (PollActivityRequest) returns (PollActivityResponse);
+
+  // Worker asks: "Has this step run before?"
+  rpc BeginStep (BeginStepRequest) returns (BeginStepResponse);
+
+  // Worker says: "Step finished successfully"
+  rpc CompleteStep (CompleteStepRequest) returns (Empty);
+
+  // Worker says: "Step failed"
+  rpc FailStep (FailStepRequest) returns (Empty);
+
+  // Worker says: "Workflow finished"
+  rpc CompleteWorkflow (CompleteWorkflowRequest) returns (Empty);
+
+  // Worker says: "I need to sleep"
+  rpc ScheduleSleep (ScheduleSleepRequest) returns (Empty);
+}
+
+message StartWorkflowRequest {
+  string workflow_id = 1;    // Business ID (e.g., "order-123")
+  string task_queue = 2;     // Who handles this?
+  string workflow_type = 3;  // Which function?
+  bytes input = 4;           // JSON payload as bytes
+}
+
+message StartWorkflowResponse {
+  string run_id = 1;
+}
+
+message PollActivityRequest {
+  string task_queue = 1;
+  string worker_id = 2;
+}
+
+message PollActivityResponse {
+  string run_id = 1;
+  string workflow_type = 2;
+  bytes workflow_input = 3;
+}
+
+message BeginStepRequest {
+  string run_id = 1;
+  string step_id = 2;
+}
+
+message BeginStepResponse {
+  bool should_execute = 1; // If false, use cached_result
+  bytes cached_result = 2;
+}
+
+message CompleteStepRequest {
+  string run_id = 1;
+  string step_id = 2;
+  bytes output = 3;
+}
+
+message FailStepRequest {
+  string run_id = 1;
+  string step_id = 2;
+  string error = 3;
+}
+
+message CompleteWorkflowRequest {
+  string run_id = 1;
+  bytes output = 2;
+}
+
+message ScheduleSleepRequest {
+  string run_id = 1;
+  uint64 duration_seconds = 2;
+}
+
+// Standard empty message
+message Empty {}
