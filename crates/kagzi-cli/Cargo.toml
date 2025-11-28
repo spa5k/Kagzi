@@ -1,7 +1,0 @@
-[package]
-name = "kagzi-cli"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-kagzi-core = { path = "../kagzi-core" }
