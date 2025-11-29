@@ -1,0 +1,23 @@
+type: grpc_request
+model: grpc_request
+id: gr_3YGJsn9Hc2
+createdAt: 2025-11-29T09:44:09.999057
+updatedAt: 2025-11-29T09:44:38.506987
+workspaceId: wk_MsumMBozAo
+folderId: null
+authenticationType: null
+authentication: {}
+description: ''
+message: |-
+  {
+    "workflow_id": "test-workflow-1",
+    "task_queue": "default",
+    "workflow_type": "TestWorkflow",
+    "input": "aaaa"
+  }
+metadata: []
+method: StartWorkflow
+name: ''
+service: kagzi.WorkflowService
+sortPriority: -1764409449998.0
+url: localhost:50051
