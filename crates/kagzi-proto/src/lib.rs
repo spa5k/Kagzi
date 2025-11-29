@@ -1,1 +1,1 @@
-// TODO: Add protobuf generated code
+tonic::include_proto!("kagzi");

@@ -11,4 +11,4 @@ prost.workspace = true
 serde.workspace = true
 
 [build-dependencies]
-tonic-prost-build = "0.14.2"
+tonic-build = "0.12"
