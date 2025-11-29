@@ -1,4 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_build::compile_protos("../../proto/kagzi.proto")?;
+    tonic_build::configure()
+        .file_descriptor_set_path("src/descriptor.bin")
+        .compile_protos(&["../../proto/kagzi.proto"], &["../../proto"])?;
     Ok(())
 }

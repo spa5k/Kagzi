@@ -28,14 +28,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Connected to database successfully.");
 
-    // 3. Setup Server
+    // 3. Run Migrations
+    info!("Running migrations...");
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+    info!("Migrations applied successfully.");
+
+    // 4. Setup Server
     let addr = "0.0.0.0:50051".parse()?;
     let service = MyWorkflowService { pool };
 
     info!("Kagzi Server listening on {}", addr);
 
+    // Setup reflection service
+    let reflection_service = tonic_reflection::server::Builder::configure()
+        .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
+        .build_v1()?;
+
     Server::builder()
         .add_service(WorkflowServiceServer::new(service))
+        .add_service(reflection_service)
         .serve(addr)
         .await?;
 

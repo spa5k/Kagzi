@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 kagzi-proto = { path = "../kagzi-proto" }
 tonic.workspace = true
+tonic-reflection.workspace = true
 prost.workspace = true
 tokio.workspace = true
 sqlx.workspace = true
