@@ -11,9 +11,10 @@ authors = ["Kagzi Contributors"]
 
 [workspace.dependencies]
 # gRPC / Protobuf
-tonic = "0.12"
-tonic-reflection = "0.12"
-prost = "0.13"
+tonic = "0.14.2"
+tonic-prost = "0.14.2"
+tonic-reflection = "0.14.2"
+prost = "0.14.1"
 tokio = { version = "1", features = ["full"] }
 
 # Serialization
@@ -22,7 +23,7 @@ serde_json = "1.0"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0.17"
 
 # Tracing
 tracing = "0.1"
