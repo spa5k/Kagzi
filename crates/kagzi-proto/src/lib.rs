@@ -1,1 +1,3 @@
-tonic::include_proto!("kagzi");
+pub mod kagzi {
+    tonic::include_proto!("kagzi");
+}
