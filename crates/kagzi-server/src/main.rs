@@ -4,20 +4,20 @@ use std::env;
 use tonic::transport::Server;
 use tracing::info;
 
+mod reaper;
 mod service;
 use service::MyWorkflowService;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Setup tracing
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
 
     // 2. Setup Database
-    // Load .env file if it exists (useful for local dev)
-    // We don't use dotenv crate here explicitly as we rely on the environment or the user loading it
-    // But for convenience in this setup we can assume env vars are set or use dotenvy if added.
-    // Since dotenv isn't in Cargo.toml, we assume the user runs with `just` which loads .env
-    // or we can just expect DATABASE_URL.
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
     info!("Connecting to database...");
@@ -36,7 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to run migrations");
     info!("Migrations applied successfully.");
 
-    // 4. Setup Server
+    // 4. Start Background Reaper
+    let reaper_pool = pool.clone();
+    tokio::spawn(async move {
+        reaper::run_reaper(reaper_pool).await;
+    });
+
+    // 5. Setup Server
     let addr = "0.0.0.0:50051".parse()?;
     let service = MyWorkflowService { pool };
 

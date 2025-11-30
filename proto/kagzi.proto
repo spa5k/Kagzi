@@ -1,13 +1,21 @@
 syntax = "proto3";
 package kagzi;
 
+import "google/protobuf/timestamp.proto";
+
 service WorkflowService {
   // --- Client/Trigger Facing API ---
   rpc StartWorkflow (StartWorkflowRequest) returns (StartWorkflowResponse);
+  rpc GetWorkflowRun (GetWorkflowRunRequest) returns (GetWorkflowRunResponse);
+  rpc ListWorkflowRuns (ListWorkflowRunsRequest) returns (ListWorkflowRunsResponse);
+  rpc CancelWorkflowRun (CancelWorkflowRunRequest) returns (Empty);
 
   // --- Worker Facing API ---
   // Worker calls this to ask for work. Blocks until work is available or timeout.
   rpc PollActivity (PollActivityRequest) returns (PollActivityResponse);
+  
+  // Worker sends this periodically to keep the lock on the workflow run
+  rpc RecordHeartbeat (RecordHeartbeatRequest) returns (Empty);
 
   // Worker asks: "Has this step run before?"
   rpc BeginStep (BeginStepRequest) returns (BeginStepResponse);
@@ -20,10 +28,52 @@ service WorkflowService {
 
   // Worker says: "Workflow finished"
   rpc CompleteWorkflow (CompleteWorkflowRequest) returns (Empty);
+  
+  // Worker says: "Workflow failed explicitly"
+  rpc FailWorkflow (FailWorkflowRequest) returns (Empty);
 
   // Worker says: "I need to sleep"
   rpc ScheduleSleep (ScheduleSleepRequest) returns (Empty);
 }
+
+// --- Enums ---
+
+enum WorkflowStatus {
+  WORKFLOW_STATUS_UNSPECIFIED = 0;
+  WORKFLOW_STATUS_PENDING = 1;
+  WORKFLOW_STATUS_RUNNING = 2;
+  WORKFLOW_STATUS_SLEEPING = 3;
+  WORKFLOW_STATUS_COMPLETED = 4;
+  WORKFLOW_STATUS_FAILED = 5;
+  WORKFLOW_STATUS_CANCELLED = 6;
+}
+
+// --- Core Objects ---
+
+message WorkflowRun {
+  string run_id = 1;
+  string business_id = 2;
+  string task_queue = 3;
+  string workflow_type = 4;
+  WorkflowStatus status = 5;
+  
+  // Inputs and Outputs
+  // We use bytes to allow raw JSON or other serialization formats
+  bytes input = 6;
+  bytes output = 7;
+  string error = 8;
+  
+  // Metadata
+  int32 attempts = 9;
+  
+  // Timestamps
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp started_at = 11;
+  google.protobuf.Timestamp finished_at = 12;
+  google.protobuf.Timestamp wake_up_at = 13;
+}
+
+// --- Requests / Responses ---
 
 message StartWorkflowRequest {
   string workflow_id = 1;    // Business ID (e.g., "order-123")
@@ -36,6 +86,29 @@ message StartWorkflowResponse {
   string run_id = 1;
 }
 
+message GetWorkflowRunRequest {
+  string run_id = 1;
+}
+
+message GetWorkflowRunResponse {
+  WorkflowRun workflow_run = 1;
+}
+
+message ListWorkflowRunsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  string filter_status = 3; // Optional: Filter by status string (e.g. "RUNNING")
+}
+
+message ListWorkflowRunsResponse {
+  repeated WorkflowRun workflow_runs = 1;
+  string next_page_token = 2;
+}
+
+message CancelWorkflowRunRequest {
+  string run_id = 1;
+}
+
 message PollActivityRequest {
   string task_queue = 1;
   string worker_id = 2;
@@ -45,6 +118,11 @@ message PollActivityResponse {
   string run_id = 1;
   string workflow_type = 2;
   bytes workflow_input = 3;
+}
+
+message RecordHeartbeatRequest {
+  string run_id = 1;
+  string worker_id = 2;
 }
 
 message BeginStepRequest {
@@ -72,6 +150,11 @@ message FailStepRequest {
 message CompleteWorkflowRequest {
   string run_id = 1;
   bytes output = 2;
+}
+
+message FailWorkflowRequest {
+  string run_id = 1;
+  string error = 2;
 }
 
 message ScheduleSleepRequest {

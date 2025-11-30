@@ -56,3 +56,7 @@ grpcui:
 # Setup the environment from scratch
 setup: db-reset build
     echo "Setup complete!"
+
+# Run the simple example
+run-example:
+    cargo run -p kagzi --example simple
