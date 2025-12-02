@@ -9,8 +9,8 @@ use kagzi_proto::kagzi::{
     BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, FailStepRequest,
     FailWorkflowRequest, PollActivityRequest, ScheduleSleepRequest, StartWorkflowRequest,
 };
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tonic::transport::Channel;
 use tracing::{error, info};
 
@@ -152,6 +152,7 @@ impl Worker {
                 .poll_activity(PollActivityRequest {
                     task_queue: self.task_queue.clone(),
                     worker_id: self.worker_id.clone(),
+                    namespace_id: "default".to_string(),
                 })
                 .await;
 
@@ -207,6 +208,23 @@ impl Worker {
     }
 }
 
+/// Optional parameters for starting a workflow
+#[derive(Default)]
+pub struct StartWorkflowOptions {
+    /// Namespace for the workflow (defaults to "default")
+    pub namespace_id: Option<String>,
+    /// Idempotency key to prevent duplicate workflow executions
+    /// If provided, calling StartWorkflow multiple times with the same key
+    /// will return the same workflow run ID instead of creating duplicates
+    pub idempotency_key: Option<String>,
+    /// Additional context metadata as JSON (stored with the workflow)
+    pub context: Option<serde_json::Value>,
+    /// Deadline for workflow execution (will be cancelled if not completed by this time)
+    pub deadline_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Workflow version for compatibility and routing
+    pub version: Option<String>,
+}
+
 // Client for starting workflows
 pub struct Client {
     client: WorkflowServiceClient<Channel>,
@@ -218,6 +236,16 @@ impl Client {
         Ok(Self { client })
     }
 
+    /// Start a workflow with default options
+    /// 
+    /// # Arguments
+    /// * `workflow_id` - Business identifier for this workflow instance (e.g., "order-123")
+    /// * `task_queue` - Which queue should handle this workflow (e.g., "email", "critical")
+    /// * `workflow_type` - Name of the workflow function to execute
+    /// * `input` - Serializable input data for the workflow
+    /// 
+    /// # Returns
+    /// The generated run_id for tracking this workflow execution
     pub async fn start_workflow(
         &mut self,
         workflow_id: String,
@@ -225,7 +253,28 @@ impl Client {
         workflow_type: String,
         input: impl Serialize,
     ) -> anyhow::Result<String> {
+        self.start_workflow_with_options(workflow_id, task_queue, workflow_type, input, StartWorkflowOptions::default()).await
+    }
+
+    /// Start a workflow with custom options
+    /// 
+    /// Use this when you need idempotency, custom deadlines, versioning, or additional context.
+    /// See `StartWorkflowOptions` for available parameters.
+    pub async fn start_workflow_with_options(
+        &mut self,
+        workflow_id: String,
+        task_queue: String,
+        workflow_type: String,
+        input: impl Serialize,
+        options: StartWorkflowOptions,
+    ) -> anyhow::Result<String> {
         let input_bytes = serde_json::to_vec(&input)?;
+        let context_bytes = if let Some(ctx) = options.context {
+            serde_json::to_vec(&ctx)?
+        } else {
+            vec![]
+        };
+
         let resp = self
             .client
             .start_workflow(StartWorkflowRequest {
@@ -233,6 +282,14 @@ impl Client {
                 task_queue,
                 workflow_type,
                 input: input_bytes,
+                namespace_id: options.namespace_id.unwrap_or_else(|| "default".to_string()),
+                idempotency_key: options.idempotency_key.unwrap_or_default(),
+                context: context_bytes,
+                deadline_at: options.deadline_at.map(|dt| prost_types::Timestamp {
+                    seconds: dt.timestamp(),
+                    nanos: dt.timestamp_subsec_nanos() as i32,
+                }),
+                version: options.version.unwrap_or_default(),
             })
             .await?;
         Ok(resp.into_inner().run_id)

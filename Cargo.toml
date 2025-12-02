@@ -1,11 +1,11 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/kagzi-proto", "crates/kagzi-server", "crates/kagzi"]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+edition = "2024"
+license = "Apache-2.0"
 repository = "https://github.com/spa5k/kagzi"
 authors = ["Kagzi Contributors"]
 
@@ -15,6 +15,7 @@ tonic = "0.14.2"
 tonic-prost = "0.14.2"
 tonic-reflection = "0.14.2"
 prost = "0.14.1"
+prost-types = "0.14.1"
 tokio = { version = "1", features = ["full"] }
 
 # Serialization

@@ -10,6 +10,10 @@ service WorkflowService {
   rpc ListWorkflowRuns (ListWorkflowRunsRequest) returns (ListWorkflowRunsResponse);
   rpc CancelWorkflowRun (CancelWorkflowRunRequest) returns (Empty);
 
+  // --- Step Attempt API ---
+  rpc GetStepAttempt (GetStepAttemptRequest) returns (GetStepAttemptResponse);
+  rpc ListStepAttempts (ListStepAttemptsRequest) returns (ListStepAttemptsResponse);
+
   // --- Worker Facing API ---
   // Worker calls this to ask for work. Blocks until work is available or timeout.
   rpc PollActivity (PollActivityRequest) returns (PollActivityResponse);
@@ -48,6 +52,28 @@ enum WorkflowStatus {
   WORKFLOW_STATUS_CANCELLED = 6;
 }
 
+enum StepKind {
+  STEP_KIND_UNSPECIFIED = 0;
+  STEP_KIND_FUNCTION = 1;
+  STEP_KIND_SLEEP = 2;
+}
+
+enum StepAttemptStatus {
+  STEP_ATTEMPT_STATUS_UNSPECIFIED = 0;
+  STEP_ATTEMPT_STATUS_PENDING = 1;
+  STEP_ATTEMPT_STATUS_RUNNING = 2;
+  STEP_ATTEMPT_STATUS_COMPLETED = 3;
+  STEP_ATTEMPT_STATUS_FAILED = 4;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_WORKFLOW_NOT_FOUND = 1;
+  ERROR_CODE_STEP_ALREADY_COMPLETED = 2;
+  ERROR_CODE_INVALID_ARGUMENT = 3;
+  ERROR_CODE_INTERNAL = 4;
+}
+
 // --- Core Objects ---
 
 message WorkflowRun {
@@ -71,6 +97,32 @@ message WorkflowRun {
   google.protobuf.Timestamp started_at = 11;
   google.protobuf.Timestamp finished_at = 12;
   google.protobuf.Timestamp wake_up_at = 13;
+
+  // New fields
+  string namespace_id = 14;
+  bytes context = 15;
+  google.protobuf.Timestamp deadline_at = 16;
+  string worker_id = 17; // Read-only, from server
+  string version = 18;
+  string parent_step_attempt_id = 19;
+}
+
+message StepAttempt {
+  string step_attempt_id = 1;
+  string workflow_run_id = 2;
+  string step_id = 3;
+  StepKind kind = 4;
+  StepAttemptStatus status = 5;
+  bytes config = 6;
+  bytes context = 7;
+  bytes output = 8;
+  bytes error = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp finished_at = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  string child_workflow_run_id = 14;
+  string namespace_id = 15;
 }
 
 // --- Requests / Responses ---
@@ -80,6 +132,13 @@ message StartWorkflowRequest {
   string task_queue = 2;     // Who handles this?
   string workflow_type = 3;  // Which function?
   bytes input = 4;           // JSON payload as bytes
+  
+  // New fields
+  string namespace_id = 5;
+  string idempotency_key = 6;
+  bytes context = 7;
+  google.protobuf.Timestamp deadline_at = 8;
+  string version = 9;
 }
 
 message StartWorkflowResponse {
@@ -88,6 +147,7 @@ message StartWorkflowResponse {
 
 message GetWorkflowRunRequest {
   string run_id = 1;
+  string namespace_id = 2;
 }
 
 message GetWorkflowRunResponse {
@@ -98,20 +158,47 @@ message ListWorkflowRunsRequest {
   int32 page_size = 1;
   string page_token = 2;
   string filter_status = 3; // Optional: Filter by status string (e.g. "RUNNING")
+  string namespace_id = 4;
 }
 
 message ListWorkflowRunsResponse {
   repeated WorkflowRun workflow_runs = 1;
   string next_page_token = 2;
+  string prev_page_token = 3;
+  bool has_more = 4;
 }
 
 message CancelWorkflowRunRequest {
   string run_id = 1;
+  string namespace_id = 2;
+}
+
+message GetStepAttemptRequest {
+  string step_attempt_id = 1;
+  string namespace_id = 2;
+}
+
+message GetStepAttemptResponse {
+  StepAttempt step_attempt = 1;
+}
+
+message ListStepAttemptsRequest {
+  string workflow_run_id = 1;
+  string step_id = 2; // Optional
+  int32 page_size = 3;
+  string page_token = 4;
+  string namespace_id = 5;
+}
+
+message ListStepAttemptsResponse {
+  repeated StepAttempt step_attempts = 1;
+  string next_page_token = 2;
 }
 
 message PollActivityRequest {
   string task_queue = 1;
   string worker_id = 2;
+  string namespace_id = 3;
 }
 
 message PollActivityResponse {

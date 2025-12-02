@@ -1,4 +1,4 @@
-use kagzi::{Client, Worker, WorkflowContext};
+use kagzi::{Client, Worker, WorkflowContext, StartWorkflowOptions};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::info;
@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Start Workflow
+    // Start Workflow (simple version)
     let mut client = Client::new("http://localhost:50051".to_string()).await?;
     let run_id = client
         .start_workflow(
@@ -73,7 +73,30 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    info!("Started workflow: {}", run_id);
+    // Start Workflow with options (showing advanced usage)
+    let run_id_with_options = client
+        .start_workflow_with_options(
+            format!("test-workflow-advanced-{}", uuid::Uuid::new_v4()),
+            "default".to_string(),
+            "my_workflow".to_string(),
+            MyInput {
+                name: "Advanced Kagzi".to_string(),
+            },
+            StartWorkflowOptions {
+                idempotency_key: Some(format!("workflow-{}", uuid::Uuid::new_v4())),
+                version: Some("1.0.0".to_string()),
+                context: Some(serde_json::json!({
+                    "user_id": "user-123",
+                    "source": "api_v1"
+                })),
+                deadline_at: Some(chrono::Utc::now() + chrono::Duration::minutes(30)),
+                namespace_id: Some("production".to_string()),
+            },
+        )
+        .await?;
+
+    info!("Started simple workflow: {}", run_id);
+    info!("Started advanced workflow: {}", run_id_with_options);
 
     // Keep main alive
     tokio::time::sleep(Duration::from_secs(10)).await;

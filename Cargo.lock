@@ -877,9 +877,11 @@ name = "kagzi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "futures",
  "kagzi-proto",
  "prost",
+ "prost-types",
  "serde",
  "serde_json",
  "thiserror",
@@ -910,6 +912,7 @@ dependencies = [
  "chrono",
  "kagzi-proto",
  "prost",
+ "prost-types",
  "serde",
  "serde_json",
  "sqlx",
