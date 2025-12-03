@@ -60,3 +60,6 @@ setup: db-reset build
 # Run the simple example
 run-example:
     cargo run -p kagzi --example simple
+
+lint:
+    cargo clippy --all-targets --all-features -- -D warnings

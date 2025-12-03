@@ -5,11 +5,104 @@ use kagzi_proto::kagzi::{
     GetStepAttemptResponse, GetWorkflowRunRequest, GetWorkflowRunResponse, ListStepAttemptsRequest,
     ListStepAttemptsResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
     PollActivityRequest, PollActivityResponse, RecordHeartbeatRequest, ScheduleSleepRequest,
-    StartWorkflowRequest, StartWorkflowResponse, StepAttempt,
+    StartWorkflowRequest, StartWorkflowResponse, StepAttempt, StepAttemptStatus, StepKind,
+    WorkflowRun, WorkflowStatus,
 };
 use sqlx::PgPool;
 use tonic::{Request, Response, Status};
 use tracing::info;
+
+/// Database row for workflow_runs table
+#[derive(sqlx::FromRow)]
+struct WorkflowRunRow {
+    run_id: uuid::Uuid,
+    namespace_id: String,
+    business_id: String,
+    task_queue: String,
+    workflow_type: String,
+    status: String,
+    input: serde_json::Value,
+    output: Option<serde_json::Value>,
+    context: Option<serde_json::Value>,
+    locked_by: Option<String>,
+    attempts: i32,
+    error: Option<String>,
+    created_at: Option<chrono::DateTime<chrono::Utc>>,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    wake_up_at: Option<chrono::DateTime<chrono::Utc>>,
+    deadline_at: Option<chrono::DateTime<chrono::Utc>>,
+    version: Option<String>,
+    parent_step_attempt_id: Option<String>,
+}
+
+impl WorkflowRunRow {
+    fn into_proto(self) -> WorkflowRun {
+        let status = match self.status.as_str() {
+            "PENDING" => WorkflowStatus::Pending,
+            "RUNNING" => WorkflowStatus::Running,
+            "SLEEPING" => WorkflowStatus::Sleeping,
+            "COMPLETED" => WorkflowStatus::Completed,
+            "FAILED" => WorkflowStatus::Failed,
+            "CANCELLED" => WorkflowStatus::Cancelled,
+            _ => WorkflowStatus::Unspecified,
+        };
+
+        WorkflowRun {
+            run_id: self.run_id.to_string(),
+            business_id: self.business_id,
+            task_queue: self.task_queue,
+            workflow_type: self.workflow_type,
+            status: status.into(),
+            input: serde_json::to_vec(&self.input).unwrap_or_default(),
+            output: self
+                .output
+                .map(|o| serde_json::to_vec(&o).unwrap_or_default())
+                .unwrap_or_default(),
+            error: self.error.unwrap_or_default(),
+            attempts: self.attempts,
+            created_at: self.created_at.map(|t| prost_types::Timestamp {
+                seconds: t.timestamp(),
+                nanos: t.timestamp_subsec_nanos() as i32,
+            }),
+            started_at: self.started_at.map(|t| prost_types::Timestamp {
+                seconds: t.timestamp(),
+                nanos: t.timestamp_subsec_nanos() as i32,
+            }),
+            finished_at: self.finished_at.map(|t| prost_types::Timestamp {
+                seconds: t.timestamp(),
+                nanos: t.timestamp_subsec_nanos() as i32,
+            }),
+            wake_up_at: self.wake_up_at.map(|t| prost_types::Timestamp {
+                seconds: t.timestamp(),
+                nanos: t.timestamp_subsec_nanos() as i32,
+            }),
+            namespace_id: self.namespace_id,
+            context: self
+                .context
+                .map(|c| serde_json::to_vec(&c).unwrap_or_default())
+                .unwrap_or_default(),
+            deadline_at: self.deadline_at.map(|t| prost_types::Timestamp {
+                seconds: t.timestamp(),
+                nanos: t.timestamp_subsec_nanos() as i32,
+            }),
+            worker_id: self.locked_by.unwrap_or_default(),
+            version: self.version.unwrap_or_default(),
+            parent_step_attempt_id: self.parent_step_attempt_id.unwrap_or_default(),
+        }
+    }
+}
+
+/// Map database step status string to StepAttemptStatus enum
+fn map_step_status(status: &str) -> StepAttemptStatus {
+    match status {
+        "PENDING" => StepAttemptStatus::Pending,
+        "RUNNING" => StepAttemptStatus::Running,
+        "COMPLETED" => StepAttemptStatus::Completed,
+        "FAILED" => StepAttemptStatus::Failed,
+        _ => StepAttemptStatus::Unspecified,
+    }
+}
 
 pub struct MyWorkflowService {
     pub pool: PgPool,
@@ -112,20 +205,273 @@ impl WorkflowService for MyWorkflowService {
         &self,
         request: Request<GetWorkflowRunRequest>,
     ) -> Result<Response<GetWorkflowRunResponse>, Status> {
-        info!("GetWorkflowRun request: {:?}", request);
-        Err(Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        info!("GetWorkflowRun request: {:?}", req);
+
+        // Validate UUID format
+        let run_id = uuid::Uuid::parse_str(&req.run_id)
+            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        // Query the workflow_runs table
+        let row = sqlx::query!(
+            r#"
+            SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
+                   input, output, context, locked_by, attempts, error,
+                   created_at, started_at, finished_at, wake_up_at, deadline_at,
+                   version, parent_step_attempt_id
+            FROM kagzi.workflow_runs
+            WHERE run_id = $1 AND namespace_id = $2
+            "#,
+            run_id,
+            namespace_id
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get workflow run: {:?}", e);
+            Status::internal("Failed to get workflow run")
+        })?;
+
+        match row {
+            Some(r) => {
+                let status = match r.status.as_str() {
+                    "PENDING" => WorkflowStatus::Pending,
+                    "RUNNING" => WorkflowStatus::Running,
+                    "SLEEPING" => WorkflowStatus::Sleeping,
+                    "COMPLETED" => WorkflowStatus::Completed,
+                    "FAILED" => WorkflowStatus::Failed,
+                    "CANCELLED" => WorkflowStatus::Cancelled,
+                    _ => WorkflowStatus::Unspecified,
+                };
+
+                let workflow_run = WorkflowRun {
+                    run_id: r.run_id.to_string(),
+                    business_id: r.business_id,
+                    task_queue: r.task_queue,
+                    workflow_type: r.workflow_type,
+                    status: status.into(),
+                    input: serde_json::to_vec(&r.input).unwrap_or_default(),
+                    output: r
+                        .output
+                        .map(|o| serde_json::to_vec(&o).unwrap_or_default())
+                        .unwrap_or_default(),
+                    error: r.error.unwrap_or_default(),
+                    attempts: r.attempts,
+                    created_at: r.created_at.map(|t| prost_types::Timestamp {
+                        seconds: t.timestamp(),
+                        nanos: t.timestamp_subsec_nanos() as i32,
+                    }),
+                    started_at: r.started_at.map(|t| prost_types::Timestamp {
+                        seconds: t.timestamp(),
+                        nanos: t.timestamp_subsec_nanos() as i32,
+                    }),
+                    finished_at: r.finished_at.map(|t| prost_types::Timestamp {
+                        seconds: t.timestamp(),
+                        nanos: t.timestamp_subsec_nanos() as i32,
+                    }),
+                    wake_up_at: r.wake_up_at.map(|t| prost_types::Timestamp {
+                        seconds: t.timestamp(),
+                        nanos: t.timestamp_subsec_nanos() as i32,
+                    }),
+                    namespace_id: r.namespace_id,
+                    context: r
+                        .context
+                        .map(|c| serde_json::to_vec(&c).unwrap_or_default())
+                        .unwrap_or_default(),
+                    deadline_at: r.deadline_at.map(|t| prost_types::Timestamp {
+                        seconds: t.timestamp(),
+                        nanos: t.timestamp_subsec_nanos() as i32,
+                    }),
+                    worker_id: r.locked_by.unwrap_or_default(),
+                    version: r.version.unwrap_or_default(),
+                    parent_step_attempt_id: r.parent_step_attempt_id.unwrap_or_default(),
+                };
+
+                Ok(Response::new(GetWorkflowRunResponse {
+                    workflow_run: Some(workflow_run),
+                }))
+            }
+            None => Err(Status::not_found(format!(
+                "Workflow run not found: run_id={}, namespace_id={}",
+                run_id, namespace_id
+            ))),
+        }
     }
 
     async fn list_workflow_runs(
         &self,
         request: Request<ListWorkflowRunsRequest>,
     ) -> Result<Response<ListWorkflowRunsResponse>, Status> {
-        info!("ListWorkflowRuns request: {:?}", request);
+        use base64::Engine;
+
+        let req = request.into_inner();
+        info!("ListWorkflowRuns request: {:?}", req);
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        // Validate and set page size (default: 20, max: 100)
+        let page_size = if req.page_size <= 0 {
+            20
+        } else if req.page_size > 100 {
+            100
+        } else {
+            req.page_size
+        };
+
+        // Parse cursor from page_token (format: "created_at_millis:run_id")
+        let cursor: Option<(chrono::DateTime<chrono::Utc>, uuid::Uuid)> =
+            if req.page_token.is_empty() {
+                None
+            } else {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(&req.page_token)
+                    .map_err(|_| Status::invalid_argument("Invalid page_token"))?;
+                let cursor_str = String::from_utf8(decoded)
+                    .map_err(|_| Status::invalid_argument("Invalid page_token encoding"))?;
+                let parts: Vec<&str> = cursor_str.splitn(2, ':').collect();
+                if parts.len() != 2 {
+                    return Err(Status::invalid_argument("Invalid page_token format"));
+                }
+                let millis: i64 = parts[0]
+                    .parse()
+                    .map_err(|_| Status::invalid_argument("Invalid page_token timestamp"))?;
+                let run_id = uuid::Uuid::parse_str(parts[1])
+                    .map_err(|_| Status::invalid_argument("Invalid page_token run_id"))?;
+                let cursor_time = chrono::DateTime::from_timestamp_millis(millis)
+                    .ok_or_else(|| Status::invalid_argument("Invalid cursor timestamp"))?;
+                Some((cursor_time, run_id))
+            };
+
+        // Build query dynamically
+        let limit = (page_size + 1) as i64;
+        let rows: Vec<WorkflowRunRow> = match (&cursor, req.filter_status.is_empty()) {
+            (None, true) => {
+                // No cursor, no status filter
+                sqlx::query_as::<_, WorkflowRunRow>(
+                    r#"
+                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
+                           input, output, context, locked_by, attempts, error,
+                           created_at, started_at, finished_at, wake_up_at, deadline_at,
+                           version, parent_step_attempt_id
+                    FROM kagzi.workflow_runs
+                    WHERE namespace_id = $1
+                    ORDER BY created_at DESC, run_id DESC
+                    LIMIT $2
+                    "#,
+                )
+                .bind(&namespace_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (None, false) => {
+                // No cursor, with status filter
+                sqlx::query_as::<_, WorkflowRunRow>(
+                    r#"
+                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
+                           input, output, context, locked_by, attempts, error,
+                           created_at, started_at, finished_at, wake_up_at, deadline_at,
+                           version, parent_step_attempt_id
+                    FROM kagzi.workflow_runs
+                    WHERE namespace_id = $1 AND status = $2
+                    ORDER BY created_at DESC, run_id DESC
+                    LIMIT $3
+                    "#,
+                )
+                .bind(&namespace_id)
+                .bind(&req.filter_status)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (Some((cursor_time, cursor_run_id)), true) => {
+                // With cursor, no status filter
+                sqlx::query_as::<_, WorkflowRunRow>(
+                    r#"
+                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
+                           input, output, context, locked_by, attempts, error,
+                           created_at, started_at, finished_at, wake_up_at, deadline_at,
+                           version, parent_step_attempt_id
+                    FROM kagzi.workflow_runs
+                    WHERE namespace_id = $1 AND (created_at, run_id) < ($2, $3)
+                    ORDER BY created_at DESC, run_id DESC
+                    LIMIT $4
+                    "#,
+                )
+                .bind(&namespace_id)
+                .bind(cursor_time)
+                .bind(cursor_run_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (Some((cursor_time, cursor_run_id)), false) => {
+                // With cursor and status filter
+                sqlx::query_as::<_, WorkflowRunRow>(
+                    r#"
+                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
+                           input, output, context, locked_by, attempts, error,
+                           created_at, started_at, finished_at, wake_up_at, deadline_at,
+                           version, parent_step_attempt_id
+                    FROM kagzi.workflow_runs
+                    WHERE namespace_id = $1 AND status = $2 AND (created_at, run_id) < ($3, $4)
+                    ORDER BY created_at DESC, run_id DESC
+                    LIMIT $5
+                    "#,
+                )
+                .bind(&namespace_id)
+                .bind(&req.filter_status)
+                .bind(cursor_time)
+                .bind(cursor_run_id)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await
+            }
+        }
+        .map_err(|e| {
+            tracing::error!("Failed to list workflow runs: {:?}", e);
+            Status::internal("Failed to list workflow runs")
+        })?;
+
+        // Determine if there are more results
+        let has_more = rows.len() > page_size as usize;
+        let result_rows: Vec<_> = rows.into_iter().take(page_size as usize).collect();
+
+        // Generate next page token from last result
+        let next_page_token = if has_more {
+            if let Some(last) = result_rows.last() {
+                if let Some(created_at) = last.created_at {
+                    let cursor_str = format!("{}:{}", created_at.timestamp_millis(), last.run_id);
+                    base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        // Map database rows to WorkflowRun messages
+        let workflow_runs: Vec<WorkflowRun> =
+            result_rows.into_iter().map(|r| r.into_proto()).collect();
+
         Ok(Response::new(ListWorkflowRunsResponse {
-            workflow_runs: vec![],
-            next_page_token: "".to_string(),
-            prev_page_token: "".to_string(),
-            has_more: false,
+            workflow_runs,
+            next_page_token,
+            prev_page_token: String::new(), // Backward pagination not implemented yet
+            has_more,
         }))
     }
 
@@ -133,8 +479,77 @@ impl WorkflowService for MyWorkflowService {
         &self,
         request: Request<CancelWorkflowRunRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("CancelWorkflowRun request: {:?}", request);
-        Ok(Response::new(Empty {}))
+        let req = request.into_inner();
+        info!("CancelWorkflowRun request: {:?}", req);
+
+        // Validate UUID format
+        let run_id = uuid::Uuid::parse_str(&req.run_id)
+            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        // Check current status and update to CANCELLED if allowed
+        // Only PENDING, RUNNING, or SLEEPING workflows can be cancelled
+        let result = sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET status = 'CANCELLED',
+                finished_at = NOW(),
+                locked_by = NULL,
+                locked_until = NULL
+            WHERE run_id = $1 
+              AND namespace_id = $2
+              AND status IN ('PENDING', 'RUNNING', 'SLEEPING')
+            RETURNING run_id
+            "#,
+            run_id,
+            namespace_id
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to cancel workflow run: {:?}", e);
+            Status::internal("Failed to cancel workflow run")
+        })?;
+
+        match result {
+            Some(_) => {
+                info!("Workflow {} cancelled successfully", run_id);
+                Ok(Response::new(Empty {}))
+            }
+            None => {
+                // Check if workflow exists to provide better error message
+                let exists = sqlx::query!(
+                    r#"
+                    SELECT status FROM kagzi.workflow_runs
+                    WHERE run_id = $1 AND namespace_id = $2
+                    "#,
+                    run_id,
+                    namespace_id
+                )
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to check workflow existence: {:?}", e);
+                    Status::internal("Failed to check workflow existence")
+                })?;
+
+                match exists {
+                    Some(row) => Err(Status::failed_precondition(format!(
+                        "Cannot cancel workflow with status '{}'. Only PENDING, RUNNING, or SLEEPING workflows can be cancelled.",
+                        row.status
+                    ))),
+                    None => Err(Status::not_found(format!(
+                        "Workflow run not found: run_id={}, namespace_id={}",
+                        run_id, namespace_id
+                    ))),
+                }
+            }
+        }
     }
 
     async fn poll_activity(
@@ -209,8 +624,84 @@ impl WorkflowService for MyWorkflowService {
         &self,
         request: Request<RecordHeartbeatRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("RecordHeartbeat request: {:?}", request);
-        Ok(Response::new(Empty {}))
+        let req = request.into_inner();
+        info!("RecordHeartbeat request: {:?}", req);
+
+        // Validate UUID format
+        let run_id = uuid::Uuid::parse_str(&req.run_id)
+            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
+
+        if req.worker_id.is_empty() {
+            return Err(Status::invalid_argument("worker_id is required"));
+        }
+
+        // Extend lock only if worker still owns it
+        let result = sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET locked_until = NOW() + INTERVAL '30 seconds'
+            WHERE run_id = $1
+              AND locked_by = $2
+              AND status = 'RUNNING'
+            RETURNING run_id
+            "#,
+            run_id,
+            req.worker_id
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to record heartbeat: {:?}", e);
+            Status::internal("Failed to record heartbeat")
+        })?;
+
+        match result {
+            Some(_) => {
+                info!(
+                    "Heartbeat recorded for workflow {} by worker {}",
+                    run_id, req.worker_id
+                );
+                Ok(Response::new(Empty {}))
+            }
+            None => {
+                // Check why the update failed
+                let workflow = sqlx::query!(
+                    r#"
+                    SELECT status, locked_by FROM kagzi.workflow_runs
+                    WHERE run_id = $1
+                    "#,
+                    run_id
+                )
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to check workflow: {:?}", e);
+                    Status::internal("Failed to check workflow")
+                })?;
+
+                match workflow {
+                    Some(row) => {
+                        if row.status != "RUNNING" {
+                            Err(Status::failed_precondition(format!(
+                                "Workflow is not running (status: {})",
+                                row.status
+                            )))
+                        } else if row.locked_by.as_deref() != Some(&req.worker_id) {
+                            Err(Status::failed_precondition(format!(
+                                "Lock stolen by another worker: {:?}",
+                                row.locked_by
+                            )))
+                        } else {
+                            Err(Status::internal("Unexpected heartbeat failure"))
+                        }
+                    }
+                    None => Err(Status::not_found(format!(
+                        "Workflow run not found: {}",
+                        run_id
+                    ))),
+                }
+            }
+        }
     }
 
     async fn get_step_attempt(
@@ -239,16 +730,25 @@ impl WorkflowService for MyWorkflowService {
         })?;
 
         if let Some(r) = row {
+            // Determine step kind from step_id patterns or other logic
+            let kind = if r.step_id.contains("sleep") || r.step_id.contains("wait") {
+                StepKind::Sleep
+            } else if r.step_id.contains("function") || r.step_id.contains("task") {
+                StepKind::Function
+            } else {
+                StepKind::Unspecified
+            };
+
             let attempt = StepAttempt {
                 step_attempt_id: r.attempt_id.to_string(),
                 workflow_run_id: r.workflow_run_id.to_string(),
                 step_id: r.step_id,
-                kind: 0,   // TODO: Store kind
-                status: 0, // TODO: Map status string to enum
-                config: vec![], // TODO: Store config if needed
-                context: vec![], // TODO: Store context if needed
+                kind: kind.into(),
+                status: map_step_status(&r.status).into(),
+                config: vec![],  // Config not stored in DB yet
+                context: vec![], // Context not stored in DB yet
                 output: serde_json::to_vec(&r.output).unwrap_or_default(),
-                error: serde_json::to_vec(&r.error).unwrap_or_default(),
+                error: r.error.map(|e| e.into_bytes()).unwrap_or_default(),
                 started_at: r.started_at.map(|t| prost_types::Timestamp {
                     seconds: t.timestamp(),
                     nanos: t.timestamp_subsec_nanos() as i32,
@@ -261,10 +761,13 @@ impl WorkflowService for MyWorkflowService {
                     seconds: t.timestamp(),
                     nanos: t.timestamp_subsec_nanos() as i32,
                 }),
-                updated_at: r.created_at.map(|t| prost_types::Timestamp { // Use created_at as updated_at for now
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
+                updated_at: r
+                    .finished_at
+                    .or(r.created_at)
+                    .map(|t| prost_types::Timestamp {
+                        seconds: t.timestamp(),
+                        nanos: t.timestamp_subsec_nanos() as i32,
+                    }),
                 child_workflow_run_id: r
                     .child_workflow_run_id
                     .map(|u| u.to_string())
@@ -287,65 +790,127 @@ impl WorkflowService for MyWorkflowService {
         let run_id = uuid::Uuid::parse_str(&req.workflow_run_id)
             .map_err(|_| Status::invalid_argument("Invalid workflow_run_id"))?;
 
-        let rows = sqlx::query!(
-            r#"
-            SELECT attempt_id, run_id as workflow_run_id, step_id, attempt_number, status,
-                   input, output, error, child_workflow_run_id,
-                   started_at, finished_at, created_at, namespace_id
-            FROM kagzi.step_runs
-            WHERE run_id = $1
-            ORDER BY attempt_number ASC
-            LIMIT $2
-            "#,
-            run_id,
-            req.page_size as i64
-        )
-        .fetch_all(&self.pool)
-        .await
+        // Default page size
+        let page_size = if req.page_size <= 0 {
+            50
+        } else if req.page_size > 100 {
+            100
+        } else {
+            req.page_size
+        };
+
+        // Define a struct to hold the query result
+        #[derive(sqlx::FromRow)]
+        struct StepRunRow {
+            attempt_id: uuid::Uuid,
+            workflow_run_id: uuid::Uuid,
+            step_id: String,
+            #[allow(dead_code)]
+            attempt_number: i32,
+            status: String,
+            #[allow(dead_code)]
+            input: Option<serde_json::Value>,
+            output: Option<serde_json::Value>,
+            error: Option<String>,
+            child_workflow_run_id: Option<uuid::Uuid>,
+            started_at: Option<chrono::DateTime<chrono::Utc>>,
+            finished_at: Option<chrono::DateTime<chrono::Utc>>,
+            created_at: Option<chrono::DateTime<chrono::Utc>>,
+            namespace_id: String,
+        }
+
+        // Query with optional step_id filter
+        let rows: Vec<StepRunRow> = if req.step_id.is_empty() {
+            sqlx::query_as(
+                r#"
+                SELECT attempt_id, run_id as workflow_run_id, step_id, attempt_number, status,
+                       input, output, error, child_workflow_run_id,
+                       started_at, finished_at, created_at, namespace_id
+                FROM kagzi.step_runs
+                WHERE run_id = $1
+                ORDER BY created_at ASC, attempt_number ASC
+                LIMIT $2
+                "#,
+            )
+            .bind(run_id)
+            .bind(page_size as i64)
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query_as(
+                r#"
+                SELECT attempt_id, run_id as workflow_run_id, step_id, attempt_number, status,
+                       input, output, error, child_workflow_run_id,
+                       started_at, finished_at, created_at, namespace_id
+                FROM kagzi.step_runs
+                WHERE run_id = $1 AND step_id = $2
+                ORDER BY attempt_number ASC
+                LIMIT $3
+                "#,
+            )
+            .bind(run_id)
+            .bind(&req.step_id)
+            .bind(page_size as i64)
+            .fetch_all(&self.pool)
+            .await
+        }
         .map_err(|e| {
             tracing::error!("Failed to list step attempts: {:?}", e);
             Status::internal("Failed to list step attempts")
         })?;
 
-        let attempts = rows
-            .into_iter()
-            .map(|r| StepAttempt {
-                step_attempt_id: r.attempt_id.to_string(),
-                workflow_run_id: r.workflow_run_id.to_string(),
-                step_id: r.step_id,
-                kind: 0,
-                status: 0,
-                config: vec![], // TODO: Store config if needed
-                context: vec![], // TODO: Store context if needed
-                output: serde_json::to_vec(&r.output).unwrap_or_default(),
-                error: serde_json::to_vec(&r.error).unwrap_or_default(),
-                started_at: r.started_at.map(|t| prost_types::Timestamp {
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
-                finished_at: r.finished_at.map(|t| prost_types::Timestamp {
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
-                created_at: r.created_at.map(|t| prost_types::Timestamp {
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
-                updated_at: r.created_at.map(|t| prost_types::Timestamp { // Use created_at as updated_at for now
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
-                child_workflow_run_id: r
-                    .child_workflow_run_id
-                    .map(|u| u.to_string())
-                    .unwrap_or_default(),
-                namespace_id: r.namespace_id,
-            })
-            .collect();
+        let attempts =
+            rows.into_iter()
+                .map(|r| {
+                    // Determine step kind from step_id patterns or other logic
+                    let kind = if r.step_id.contains("sleep") || r.step_id.contains("wait") {
+                        StepKind::Sleep
+                    } else if r.step_id.contains("function") || r.step_id.contains("task") {
+                        StepKind::Function
+                    } else {
+                        StepKind::Unspecified
+                    };
+
+                    StepAttempt {
+                        step_attempt_id: r.attempt_id.to_string(),
+                        workflow_run_id: r.workflow_run_id.to_string(),
+                        step_id: r.step_id,
+                        kind: kind.into(),
+                        status: map_step_status(&r.status).into(),
+                        config: vec![],  // Config not stored in DB yet
+                        context: vec![], // Context not stored in DB yet
+                        output: serde_json::to_vec(&r.output).unwrap_or_default(),
+                        error: r.error.map(|e| e.into_bytes()).unwrap_or_default(),
+                        started_at: r.started_at.map(|t| prost_types::Timestamp {
+                            seconds: t.timestamp(),
+                            nanos: t.timestamp_subsec_nanos() as i32,
+                        }),
+                        finished_at: r.finished_at.map(|t| prost_types::Timestamp {
+                            seconds: t.timestamp(),
+                            nanos: t.timestamp_subsec_nanos() as i32,
+                        }),
+                        created_at: r.created_at.map(|t| prost_types::Timestamp {
+                            seconds: t.timestamp(),
+                            nanos: t.timestamp_subsec_nanos() as i32,
+                        }),
+                        updated_at: r.finished_at.or(r.created_at).map(|t| {
+                            prost_types::Timestamp {
+                                seconds: t.timestamp(),
+                                nanos: t.timestamp_subsec_nanos() as i32,
+                            }
+                        }),
+                        child_workflow_run_id: r
+                            .child_workflow_run_id
+                            .map(|u| u.to_string())
+                            .unwrap_or_default(),
+                        namespace_id: r.namespace_id,
+                    }
+                })
+                .collect();
 
         Ok(Response::new(ListStepAttemptsResponse {
             step_attempts: attempts,
-            next_page_token: "".to_string(),
+            next_page_token: String::new(), // Pagination not implemented yet
         }))
     }
 
@@ -375,14 +940,14 @@ impl WorkflowService for MyWorkflowService {
             Status::internal("Failed to check step status")
         })?;
 
-        if let Some(s) = step {
-            if s.status == "COMPLETED" {
-                let cached_bytes = serde_json::to_vec(&s.output).unwrap_or_default();
-                return Ok(Response::new(BeginStepResponse {
-                    should_execute: false,
-                    cached_result: cached_bytes,
-                }));
-            }
+        if let Some(s) = step
+            && s.status == "COMPLETED"
+        {
+            let cached_bytes = serde_json::to_vec(&s.output).unwrap_or_default();
+            return Ok(Response::new(BeginStepResponse {
+                should_execute: false,
+                cached_result: cached_bytes,
+            }));
         }
 
         Ok(Response::new(BeginStepResponse {
@@ -404,8 +969,7 @@ impl WorkflowService for MyWorkflowService {
         let output_json: serde_json::Value = serde_json::from_slice(&req.output)
             .map_err(|e| Status::invalid_argument(format!("Output must be valid JSON: {}", e)))?;
 
-        // For new schema, we need to create a new attempt and mark previous as not latest
-        // First, mark previous attempts as not latest
+        // Mark previous attempts as not latest
         sqlx::query!(
             "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
             run_id,
@@ -443,7 +1007,53 @@ impl WorkflowService for MyWorkflowService {
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<Empty>, Status> {
-        info!("FailStep request: {:?}", request);
+        let req = request.into_inner();
+        info!("FailStep request: {:?}", req);
+
+        // Validate UUID format
+        let run_id = uuid::Uuid::parse_str(&req.run_id)
+            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
+
+        if req.step_id.is_empty() {
+            return Err(Status::invalid_argument("step_id is required"));
+        }
+
+        // Mark previous attempts as not latest
+        sqlx::query!(
+            "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
+            run_id,
+            req.step_id
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to update previous attempts: {:?}", e);
+            Status::internal("Failed to update previous attempts")
+        })?;
+
+        // Insert new failed attempt
+        sqlx::query!(
+            r#"
+            INSERT INTO kagzi.step_runs (run_id, step_id, status, error, finished_at, is_latest, attempt_number, namespace_id)
+            VALUES ($1, $2, 'FAILED', $3, NOW(), true, 
+                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
+                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+            "#,
+            run_id,
+            req.step_id,
+            req.error
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to record step failure: {:?}", e);
+            Status::internal("Failed to record step failure")
+        })?;
+
+        info!(
+            "Step {} failed for workflow {}: {}",
+            req.step_id, run_id, req.error
+        );
         Ok(Response::new(Empty {}))
     }
 
@@ -526,8 +1136,6 @@ impl WorkflowService for MyWorkflowService {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
 
-        // Convert duration to i64 for interval calculation (Postgres interval takes double precision for seconds but let's be safe)
-        // We'll use make_interval in SQL or just multiply
         let duration = req.duration_seconds as f64;
 
         sqlx::query!(

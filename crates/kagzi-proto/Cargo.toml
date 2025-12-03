@@ -6,11 +6,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tonic.workspace = true
 prost.workspace = true
-serde.workspace = true
-tonic-prost.workspace = true
 prost-types = "0.14.1"
+serde.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"

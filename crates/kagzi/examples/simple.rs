@@ -1,4 +1,4 @@
-use kagzi::{Client, Worker, WorkflowContext, StartWorkflowOptions};
+use kagzi::{Client, StartWorkflowOptions, Worker, WorkflowContext};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::info;

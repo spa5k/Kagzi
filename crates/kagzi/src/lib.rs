@@ -237,13 +237,13 @@ impl Client {
     }
 
     /// Start a workflow with default options
-    /// 
+    ///
     /// # Arguments
     /// * `workflow_id` - Business identifier for this workflow instance (e.g., "order-123")
     /// * `task_queue` - Which queue should handle this workflow (e.g., "email", "critical")
     /// * `workflow_type` - Name of the workflow function to execute
     /// * `input` - Serializable input data for the workflow
-    /// 
+    ///
     /// # Returns
     /// The generated run_id for tracking this workflow execution
     pub async fn start_workflow(
@@ -253,11 +253,18 @@ impl Client {
         workflow_type: String,
         input: impl Serialize,
     ) -> anyhow::Result<String> {
-        self.start_workflow_with_options(workflow_id, task_queue, workflow_type, input, StartWorkflowOptions::default()).await
+        self.start_workflow_with_options(
+            workflow_id,
+            task_queue,
+            workflow_type,
+            input,
+            StartWorkflowOptions::default(),
+        )
+        .await
     }
 
     /// Start a workflow with custom options
-    /// 
+    ///
     /// Use this when you need idempotency, custom deadlines, versioning, or additional context.
     /// See `StartWorkflowOptions` for available parameters.
     pub async fn start_workflow_with_options(
@@ -282,7 +289,9 @@ impl Client {
                 task_queue,
                 workflow_type,
                 input: input_bytes,
-                namespace_id: options.namespace_id.unwrap_or_else(|| "default".to_string()),
+                namespace_id: options
+                    .namespace_id
+                    .unwrap_or_else(|| "default".to_string()),
                 idempotency_key: options.idempotency_key.unwrap_or_default(),
                 context: context_bytes,
                 deadline_at: options.deadline_at.map(|dt| prost_types::Timestamp {

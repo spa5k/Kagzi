@@ -7,7 +7,7 @@ workspaceId: wk_MsumMBozAo
 folderId: null
 authenticationType: null
 authentication: {}
-description: ''
+description: ""
 message: |-
   {
     "workflow_id": "test-workflow-1",
@@ -17,7 +17,7 @@ message: |-
   }
 metadata: []
 method: StartWorkflow
-name: ''
+name: ""
 service: kagzi.WorkflowService
 sortPriority: -1764409449998.0
 url: localhost:50051
