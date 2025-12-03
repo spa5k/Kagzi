@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tonic = { workspace = true, features = ["transport"] }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
 uuid = { workspace = true }
 
 [dev-dependencies]

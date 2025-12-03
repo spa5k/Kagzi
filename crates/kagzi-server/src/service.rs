@@ -1,16 +1,20 @@
+use crate::tracing_utils::{
+    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
+    log_grpc_response,
+};
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CancelWorkflowRunRequest, CompleteStepRequest,
     CompleteWorkflowRequest, Empty, FailStepRequest, FailWorkflowRequest, GetStepAttemptRequest,
-    GetStepAttemptResponse, GetWorkflowRunRequest, GetWorkflowRunResponse, ListStepAttemptsRequest,
-    ListStepAttemptsResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
-    PollActivityRequest, PollActivityResponse, RecordHeartbeatRequest, ScheduleSleepRequest,
-    StartWorkflowRequest, StartWorkflowResponse, StepAttempt, StepAttemptStatus, StepKind,
-    WorkflowRun, WorkflowStatus,
+    GetStepAttemptResponse, GetWorkflowRunRequest, GetWorkflowRunResponse, HealthCheckRequest,
+    HealthCheckResponse, ListStepAttemptsRequest, ListStepAttemptsResponse,
+    ListWorkflowRunsRequest, ListWorkflowRunsResponse, PollActivityRequest, PollActivityResponse,
+    RecordHeartbeatRequest, ScheduleSleepRequest, StartWorkflowRequest, StartWorkflowResponse,
+    StepAttempt, StepAttemptStatus, StepKind, WorkflowRun, WorkflowStatus,
 };
 use sqlx::PgPool;
 use tonic::{Request, Response, Status};
-use tracing::info;
+use tracing::{error, info, instrument, warn};
 
 /// Database row for workflow_runs table
 #[derive(sqlx::FromRow)]
@@ -37,7 +41,7 @@ struct WorkflowRunRow {
 }
 
 impl WorkflowRunRow {
-    fn into_proto(self) -> WorkflowRun {
+    fn into_proto(self) -> Result<WorkflowRun, Status> {
         let status = match self.status.as_str() {
             "PENDING" => WorkflowStatus::Pending,
             "RUNNING" => WorkflowStatus::Running,
@@ -48,16 +52,25 @@ impl WorkflowRunRow {
             _ => WorkflowStatus::Unspecified,
         };
 
-        WorkflowRun {
+        Ok(WorkflowRun {
             run_id: self.run_id.to_string(),
             business_id: self.business_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
             status: status.into(),
-            input: serde_json::to_vec(&self.input).unwrap_or_default(),
+            input: serde_json::to_vec(&self.input).map_err(|e| {
+                tracing::error!("Failed to serialize workflow input: {:?}", e);
+                Status::internal("Failed to serialize workflow input")
+            })?,
             output: self
                 .output
-                .map(|o| serde_json::to_vec(&o).unwrap_or_default())
+                .map(|o| {
+                    serde_json::to_vec(&o).map_err(|e| {
+                        tracing::error!("Failed to serialize workflow output: {:?}", e);
+                        Status::internal("Failed to serialize workflow output")
+                    })
+                })
+                .transpose()?
                 .unwrap_or_default(),
             error: self.error.unwrap_or_default(),
             attempts: self.attempts,
@@ -80,16 +93,31 @@ impl WorkflowRunRow {
             namespace_id: self.namespace_id,
             context: self
                 .context
-                .map(|c| serde_json::to_vec(&c).unwrap_or_default())
+                .map(|c| {
+                    serde_json::to_vec(&c).map_err(|e| {
+                        tracing::error!("Failed to serialize workflow context: {:?}", e);
+                        Status::internal("Failed to serialize workflow context")
+                    })
+                })
+                .transpose()?
                 .unwrap_or_default(),
             deadline_at: self.deadline_at.map(|t| prost_types::Timestamp {
                 seconds: t.timestamp(),
                 nanos: t.timestamp_subsec_nanos() as i32,
             }),
-            worker_id: self.locked_by.unwrap_or_default(),
-            version: self.version.unwrap_or_default(),
-            parent_step_attempt_id: self.parent_step_attempt_id.unwrap_or_default(),
-        }
+            worker_id: self.locked_by.unwrap_or_else(|| {
+                tracing::warn!("Workflow run has no worker_id, using default");
+                String::new()
+            }),
+            version: self.version.unwrap_or_else(|| {
+                tracing::warn!("Workflow run has no version, using default");
+                String::new()
+            }),
+            parent_step_attempt_id: self.parent_step_attempt_id.unwrap_or_else(|| {
+                tracing::warn!("Workflow run has no parent_step_attempt_id, using default");
+                String::new()
+            }),
+        })
     }
 }
 
@@ -110,12 +138,23 @@ pub struct MyWorkflowService {
 
 #[tonic::async_trait]
 impl WorkflowService for MyWorkflowService {
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        workflow_id = %request.get_ref().workflow_id,
+        task_queue = %request.get_ref().task_queue,
+        workflow_type = %request.get_ref().workflow_type
+    ))]
     async fn start_workflow(
         &self,
         request: Request<StartWorkflowRequest>,
     ) -> Result<Response<StartWorkflowResponse>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("StartWorkflow", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("StartWorkflow request: {:?}", req);
 
         let input_json: serde_json::Value = if req.input.is_empty() {
             serde_json::json!(null)
@@ -196,17 +235,35 @@ impl WorkflowService for MyWorkflowService {
         })?
         .run_id;
 
+        log_grpc_response(
+            "StartWorkflow",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
         Ok(Response::new(StartWorkflowResponse {
             run_id: run_id.to_string(),
         }))
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id,
+        namespace_id = %request.get_ref().namespace_id
+    ))]
     async fn get_workflow_run(
         &self,
         request: Request<GetWorkflowRunRequest>,
     ) -> Result<Response<GetWorkflowRunResponse>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("GetWorkflowRun", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("GetWorkflowRun request: {:?}", req);
 
         // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
@@ -250,17 +307,41 @@ impl WorkflowService for MyWorkflowService {
                     _ => WorkflowStatus::Unspecified,
                 };
 
+                let input_bytes = serde_json::to_vec(&r.input).map_err(|e| {
+                    tracing::error!("Failed to serialize workflow input: {:?}", e);
+                    Status::internal("Failed to serialize workflow input")
+                })?;
+
+                let output_bytes = r
+                    .output
+                    .map(|o| {
+                        serde_json::to_vec(&o).map_err(|e| {
+                            tracing::error!("Failed to serialize workflow output: {:?}", e);
+                            Status::internal("Failed to serialize workflow output")
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+
+                let context_bytes = r
+                    .context
+                    .map(|c| {
+                        serde_json::to_vec(&c).map_err(|e| {
+                            tracing::error!("Failed to serialize workflow context: {:?}", e);
+                            Status::internal("Failed to serialize workflow context")
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+
                 let workflow_run = WorkflowRun {
                     run_id: r.run_id.to_string(),
                     business_id: r.business_id,
                     task_queue: r.task_queue,
                     workflow_type: r.workflow_type,
                     status: status.into(),
-                    input: serde_json::to_vec(&r.input).unwrap_or_default(),
-                    output: r
-                        .output
-                        .map(|o| serde_json::to_vec(&o).unwrap_or_default())
-                        .unwrap_or_default(),
+                    input: input_bytes,
+                    output: output_bytes,
                     error: r.error.unwrap_or_default(),
                     attempts: r.attempts,
                     created_at: r.created_at.map(|t| prost_types::Timestamp {
@@ -280,38 +361,77 @@ impl WorkflowService for MyWorkflowService {
                         nanos: t.timestamp_subsec_nanos() as i32,
                     }),
                     namespace_id: r.namespace_id,
-                    context: r
-                        .context
-                        .map(|c| serde_json::to_vec(&c).unwrap_or_default())
-                        .unwrap_or_default(),
+                    context: context_bytes,
                     deadline_at: r.deadline_at.map(|t| prost_types::Timestamp {
                         seconds: t.timestamp(),
                         nanos: t.timestamp_subsec_nanos() as i32,
                     }),
-                    worker_id: r.locked_by.unwrap_or_default(),
-                    version: r.version.unwrap_or_default(),
-                    parent_step_attempt_id: r.parent_step_attempt_id.unwrap_or_default(),
+                    worker_id: r.locked_by.unwrap_or_else(|| {
+                        tracing::warn!("Workflow run has no worker_id, using default");
+                        String::new()
+                    }),
+                    version: r.version.unwrap_or_else(|| {
+                        tracing::warn!("Workflow run has no version, using default");
+                        String::new()
+                    }),
+                    parent_step_attempt_id: r.parent_step_attempt_id.unwrap_or_else(|| {
+                        tracing::warn!("Workflow run has no parent_step_attempt_id, using default");
+                        String::new()
+                    }),
                 };
 
-                Ok(Response::new(GetWorkflowRunResponse {
+                let response = Response::new(GetWorkflowRunResponse {
                     workflow_run: Some(workflow_run),
-                }))
+                });
+
+                log_grpc_response(
+                    "GetWorkflowRun",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&Status::ok("")),
+                    None,
+                );
+
+                Ok(response)
             }
-            None => Err(Status::not_found(format!(
-                "Workflow run not found: run_id={}, namespace_id={}",
-                run_id, namespace_id
-            ))),
+            None => {
+                let status = Status::not_found(format!(
+                    "Workflow run not found: run_id={}, namespace_id={}",
+                    run_id, namespace_id
+                ));
+
+                log_grpc_response(
+                    "GetWorkflowRun",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&status),
+                    Some("Workflow run not found"),
+                );
+
+                Err(status)
+            }
         }
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        namespace_id = %request.get_ref().namespace_id,
+        page_size = %request.get_ref().page_size,
+        filter_status = %request.get_ref().filter_status
+    ))]
     async fn list_workflow_runs(
         &self,
         request: Request<ListWorkflowRunsRequest>,
     ) -> Result<Response<ListWorkflowRunsResponse>, Status> {
         use base64::Engine;
 
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("ListWorkflowRuns", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("ListWorkflowRuns request: {:?}", req);
 
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
@@ -464,23 +584,47 @@ impl WorkflowService for MyWorkflowService {
         };
 
         // Map database rows to WorkflowRun messages
-        let workflow_runs: Vec<WorkflowRun> =
+        let workflow_runs: Result<Vec<_>, Status> =
             result_rows.into_iter().map(|r| r.into_proto()).collect();
+        let workflow_runs = workflow_runs.map_err(|e| {
+            tracing::error!("Failed to convert workflow runs to proto: {:?}", e);
+            e
+        })?;
 
-        Ok(Response::new(ListWorkflowRunsResponse {
+        let response = Response::new(ListWorkflowRunsResponse {
             workflow_runs,
             next_page_token,
             prev_page_token: String::new(), // Backward pagination not implemented yet
             has_more,
-        }))
+        });
+
+        log_grpc_response(
+            "ListWorkflowRuns",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id,
+        namespace_id = %request.get_ref().namespace_id
+    ))]
     async fn cancel_workflow_run(
         &self,
         request: Request<CancelWorkflowRunRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("CancelWorkflowRun", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("CancelWorkflowRun request: {:?}", req);
 
         // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
@@ -519,7 +663,18 @@ impl WorkflowService for MyWorkflowService {
         match result {
             Some(_) => {
                 info!("Workflow {} cancelled successfully", run_id);
-                Ok(Response::new(Empty {}))
+
+                let response = Response::new(Empty {});
+
+                log_grpc_response(
+                    "CancelWorkflowRun",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&Status::ok("")),
+                    None,
+                );
+
+                Ok(response)
             }
             None => {
                 // Check if workflow exists to provide better error message
@@ -538,32 +693,52 @@ impl WorkflowService for MyWorkflowService {
                     Status::internal("Failed to check workflow existence")
                 })?;
 
-                match exists {
-                    Some(row) => Err(Status::failed_precondition(format!(
+                let status = match exists {
+                    Some(row) => Status::failed_precondition(format!(
                         "Cannot cancel workflow with status '{}'. Only PENDING, RUNNING, or SLEEPING workflows can be cancelled.",
                         row.status
-                    ))),
-                    None => Err(Status::not_found(format!(
+                    )),
+                    None => Status::not_found(format!(
                         "Workflow run not found: run_id={}, namespace_id={}",
                         run_id, namespace_id
-                    ))),
-                }
+                    )),
+                };
+
+                log_grpc_response(
+                    "CancelWorkflowRun",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&status),
+                    Some("Workflow cancellation failed"),
+                );
+
+                Err(status)
             }
         }
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        task_queue = %request.get_ref().task_queue,
+        worker_id = %request.get_ref().worker_id
+    ))]
     async fn poll_activity(
         &self,
         request: Request<PollActivityRequest>,
     ) -> Result<Response<PollActivityResponse>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("PollActivity", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("PollActivity request: {:?}", req);
 
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_secs(60); // 60s long poll
 
         loop {
-            // Try to claim a task
+            // Try to claim a task (PENDING or SLEEPING with wake_up_at passed)
             let work = sqlx::query!(
                 r#"
                 UPDATE kagzi.workflow_runs
@@ -576,9 +751,11 @@ impl WorkflowService for MyWorkflowService {
                     FROM kagzi.workflow_runs
                     WHERE task_queue = $2
                       AND namespace_id = $3
-                      AND status = 'PENDING'
-                      AND (wake_up_at IS NULL OR wake_up_at <= NOW())
-                    ORDER BY created_at ASC
+                      AND (
+                        (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
+                        OR (status = 'SLEEPING' AND wake_up_at <= NOW())
+                      )
+                    ORDER BY COALESCE(wake_up_at, created_at) ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
@@ -600,9 +777,27 @@ impl WorkflowService for MyWorkflowService {
             })?;
 
             if let Some(w) = work {
-                info!("Worker {} claimed workflow {}", req.worker_id, w.run_id);
-                // Convert JSONB input back to bytes
-                let input_bytes = serde_json::to_vec(&w.input).unwrap_or_default();
+                let input_bytes = serde_json::to_vec(&w.input).map_err(|e| {
+                    tracing::error!("Failed to serialize workflow input: {:?}", e);
+                    Status::internal("Failed to serialize workflow input")
+                })?;
+
+                info!(
+                    correlation_id = correlation_id,
+                    trace_id = trace_id,
+                    run_id = %w.run_id,
+                    workflow_type = %w.workflow_type,
+                    worker_id = %req.worker_id,
+                    "Worker claimed workflow"
+                );
+
+                log_grpc_response(
+                    "PollActivity",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&Status::ok("")),
+                    None,
+                );
 
                 return Ok(Response::new(PollActivityResponse {
                     run_id: w.run_id.to_string(),
@@ -612,6 +807,22 @@ impl WorkflowService for MyWorkflowService {
             }
 
             if start.elapsed() > timeout {
+                warn!(
+                    correlation_id = correlation_id,
+                    trace_id = trace_id,
+                    worker_id = %req.worker_id,
+                    task_queue = %req.task_queue,
+                    "PollActivity timeout - no work available"
+                );
+
+                log_grpc_response(
+                    "PollActivity",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&Status::deadline_exceeded("No work available")),
+                    None,
+                );
+
                 return Err(Status::deadline_exceeded("No work available"));
             }
 
@@ -620,12 +831,22 @@ impl WorkflowService for MyWorkflowService {
         }
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id,
+        worker_id = %request.get_ref().worker_id
+    ))]
     async fn record_heartbeat(
         &self,
         request: Request<RecordHeartbeatRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("RecordHeartbeat", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("RecordHeartbeat request: {:?}", req);
 
         // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
@@ -661,7 +882,18 @@ impl WorkflowService for MyWorkflowService {
                     "Heartbeat recorded for workflow {} by worker {}",
                     run_id, req.worker_id
                 );
-                Ok(Response::new(Empty {}))
+
+                let response = Response::new(Empty {});
+
+                log_grpc_response(
+                    "RecordHeartbeat",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&Status::ok("")),
+                    None,
+                );
+
+                Ok(response)
             }
             None => {
                 // Check why the update failed
@@ -679,35 +911,52 @@ impl WorkflowService for MyWorkflowService {
                     Status::internal("Failed to check workflow")
                 })?;
 
-                match workflow {
+                let status = match workflow {
                     Some(row) => {
                         if row.status != "RUNNING" {
-                            Err(Status::failed_precondition(format!(
+                            Status::failed_precondition(format!(
                                 "Workflow is not running (status: {})",
                                 row.status
-                            )))
+                            ))
                         } else if row.locked_by.as_deref() != Some(&req.worker_id) {
-                            Err(Status::failed_precondition(format!(
+                            Status::failed_precondition(format!(
                                 "Lock stolen by another worker: {:?}",
                                 row.locked_by
-                            )))
+                            ))
                         } else {
-                            Err(Status::internal("Unexpected heartbeat failure"))
+                            Status::internal("Unexpected heartbeat failure")
                         }
                     }
-                    None => Err(Status::not_found(format!(
-                        "Workflow run not found: {}",
-                        run_id
-                    ))),
-                }
+                    None => Status::not_found(format!("Workflow run not found: {}", run_id)),
+                };
+
+                log_grpc_response(
+                    "RecordHeartbeat",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&status),
+                    Some("Heartbeat recording failed"),
+                );
+
+                Err(status)
             }
         }
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        step_attempt_id = %request.get_ref().step_attempt_id
+    ))]
     async fn get_step_attempt(
         &self,
         request: Request<GetStepAttemptRequest>,
     ) -> Result<Response<GetStepAttemptResponse>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("GetStepAttempt", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
         let attempt_id = uuid::Uuid::parse_str(&req.step_attempt_id)
             .map_err(|_| Status::invalid_argument("Invalid step_attempt_id"))?;
@@ -739,6 +988,11 @@ impl WorkflowService for MyWorkflowService {
                 StepKind::Unspecified
             };
 
+            let output_bytes = serde_json::to_vec(&r.output).map_err(|e| {
+                tracing::error!("Failed to serialize step output: {:?}", e);
+                Status::internal("Failed to serialize step output")
+            })?;
+
             let attempt = StepAttempt {
                 step_attempt_id: r.attempt_id.to_string(),
                 workflow_run_id: r.workflow_run_id.to_string(),
@@ -747,7 +1001,7 @@ impl WorkflowService for MyWorkflowService {
                 status: map_step_status(&r.status).into(),
                 config: vec![],  // Config not stored in DB yet
                 context: vec![], // Context not stored in DB yet
-                output: serde_json::to_vec(&r.output).unwrap_or_default(),
+                output: output_bytes,
                 error: r.error.map(|e| e.into_bytes()).unwrap_or_default(),
                 started_at: r.started_at.map(|t| prost_types::Timestamp {
                     seconds: t.timestamp(),
@@ -771,21 +1025,56 @@ impl WorkflowService for MyWorkflowService {
                 child_workflow_run_id: r
                     .child_workflow_run_id
                     .map(|u| u.to_string())
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| {
+                        tracing::warn!("Step attempt has no child_workflow_run_id, using default");
+                        String::new()
+                    }),
                 namespace_id: r.namespace_id,
             };
-            Ok(Response::new(GetStepAttemptResponse {
+            let response = Response::new(GetStepAttemptResponse {
                 step_attempt: Some(attempt),
-            }))
+            });
+
+            log_grpc_response(
+                "GetStepAttempt",
+                &correlation_id,
+                &trace_id,
+                Status::code(&Status::ok("")),
+                None,
+            );
+
+            Ok(response)
         } else {
-            Err(Status::not_found("Step attempt not found"))
+            let status = Status::not_found("Step attempt not found");
+
+            log_grpc_response(
+                "GetStepAttempt",
+                &correlation_id,
+                &trace_id,
+                Status::code(&status),
+                Some("Step attempt not found"),
+            );
+
+            Err(status)
         }
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        workflow_run_id = %request.get_ref().workflow_run_id,
+        step_id = %request.get_ref().step_id,
+        page_size = %request.get_ref().page_size
+    ))]
     async fn list_step_attempts(
         &self,
         request: Request<ListStepAttemptsRequest>,
     ) -> Result<Response<ListStepAttemptsResponse>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("ListStepAttempts", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
         let run_id = uuid::Uuid::parse_str(&req.workflow_run_id)
             .map_err(|_| Status::invalid_argument("Invalid workflow_run_id"))?;
@@ -859,7 +1148,7 @@ impl WorkflowService for MyWorkflowService {
             Status::internal("Failed to list step attempts")
         })?;
 
-        let attempts =
+        let attempts: Result<Vec<_>, Status> =
             rows.into_iter()
                 .map(|r| {
                     // Determine step kind from step_id patterns or other logic
@@ -871,7 +1160,7 @@ impl WorkflowService for MyWorkflowService {
                         StepKind::Unspecified
                     };
 
-                    StepAttempt {
+                    Ok(StepAttempt {
                         step_attempt_id: r.attempt_id.to_string(),
                         workflow_run_id: r.workflow_run_id.to_string(),
                         step_id: r.step_id,
@@ -879,7 +1168,10 @@ impl WorkflowService for MyWorkflowService {
                         status: map_step_status(&r.status).into(),
                         config: vec![],  // Config not stored in DB yet
                         context: vec![], // Context not stored in DB yet
-                        output: serde_json::to_vec(&r.output).unwrap_or_default(),
+                        output: serde_json::to_vec(&r.output).map_err(|e| {
+                            tracing::error!("Failed to serialize step output: {:?}", e);
+                            Status::internal("Failed to serialize step output")
+                        })?,
                         error: r.error.map(|e| e.into_bytes()).unwrap_or_default(),
                         started_at: r.started_at.map(|t| prost_types::Timestamp {
                             seconds: t.timestamp(),
@@ -902,24 +1194,54 @@ impl WorkflowService for MyWorkflowService {
                         child_workflow_run_id: r
                             .child_workflow_run_id
                             .map(|u| u.to_string())
-                            .unwrap_or_default(),
+                            .unwrap_or_else(|| {
+                                tracing::warn!(
+                                    "Step attempt has no child_workflow_run_id, using default"
+                                );
+                                String::new()
+                            }),
                         namespace_id: r.namespace_id,
-                    }
+                    })
                 })
                 .collect();
 
-        Ok(Response::new(ListStepAttemptsResponse {
+        let attempts = attempts.map_err(|e| {
+            tracing::error!("Failed to convert step attempts to proto: {:?}", e);
+            e
+        })?;
+
+        let response = Response::new(ListStepAttemptsResponse {
             step_attempts: attempts,
             next_page_token: String::new(), // Pagination not implemented yet
-        }))
+        });
+
+        log_grpc_response(
+            "ListStepAttempts",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id,
+        step_id = %request.get_ref().step_id
+    ))]
     async fn begin_step(
         &self,
         request: Request<BeginStepRequest>,
     ) -> Result<Response<BeginStepResponse>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("BeginStep", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("BeginStep request: {:?}", req);
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
@@ -943,25 +1265,59 @@ impl WorkflowService for MyWorkflowService {
         if let Some(s) = step
             && s.status == "COMPLETED"
         {
-            let cached_bytes = serde_json::to_vec(&s.output).unwrap_or_default();
-            return Ok(Response::new(BeginStepResponse {
+            let cached_bytes = serde_json::to_vec(&s.output).map_err(|e| {
+                tracing::error!("Failed to serialize cached step output: {:?}", e);
+                Status::internal("Failed to serialize cached step output")
+            })?;
+
+            let response = Response::new(BeginStepResponse {
                 should_execute: false,
                 cached_result: cached_bytes,
-            }));
+            });
+
+            log_grpc_response(
+                "BeginStep",
+                &correlation_id,
+                &trace_id,
+                Status::code(&Status::ok("")),
+                None,
+            );
+
+            return Ok(response);
         }
 
-        Ok(Response::new(BeginStepResponse {
+        let response = Response::new(BeginStepResponse {
             should_execute: true,
             cached_result: vec![],
-        }))
+        });
+
+        log_grpc_response(
+            "BeginStep",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id,
+        step_id = %request.get_ref().step_id
+    ))]
     async fn complete_step(
         &self,
         request: Request<CompleteStepRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("CompleteStep", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("CompleteStep request: {:?}", req);
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
@@ -985,9 +1341,10 @@ impl WorkflowService for MyWorkflowService {
         // Then insert new attempt
         sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (run_id, step_id, status, output, finished_at, is_latest, attempt_number)
+            INSERT INTO kagzi.step_runs (run_id, step_id, status, output, finished_at, is_latest, attempt_number, namespace_id)
             VALUES ($1, $2, 'COMPLETED', $3, NOW(), true, 
-                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1)
+                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
+                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
             "#,
             run_id,
             req.step_id,
@@ -1000,15 +1357,35 @@ impl WorkflowService for MyWorkflowService {
             Status::internal("Failed to complete step")
         })?;
 
-        Ok(Response::new(Empty {}))
+        let response = Response::new(Empty {});
+
+        log_grpc_response(
+            "CompleteStep",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id,
+        step_id = %request.get_ref().step_id
+    ))]
     async fn fail_step(
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("FailStep", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("FailStep request: {:?}", req);
 
         // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
@@ -1054,15 +1431,35 @@ impl WorkflowService for MyWorkflowService {
             "Step {} failed for workflow {}: {}",
             req.step_id, run_id, req.error
         );
-        Ok(Response::new(Empty {}))
+
+        let response = Response::new(Empty {});
+
+        log_grpc_response(
+            "FailStep",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id
+    ))]
     async fn complete_workflow(
         &self,
         request: Request<CompleteWorkflowRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("CompleteWorkflow", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("CompleteWorkflow request: {:?}", req);
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
@@ -1090,15 +1487,34 @@ impl WorkflowService for MyWorkflowService {
             Status::internal("Failed to complete workflow")
         })?;
 
-        Ok(Response::new(Empty {}))
+        let response = Response::new(Empty {});
+
+        log_grpc_response(
+            "CompleteWorkflow",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id
+    ))]
     async fn fail_workflow(
         &self,
         request: Request<FailWorkflowRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("FailWorkflow", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("FailWorkflow request: {:?}", req);
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
@@ -1123,15 +1539,35 @@ impl WorkflowService for MyWorkflowService {
             Status::internal("Failed to fail workflow")
         })?;
 
-        Ok(Response::new(Empty {}))
+        let response = Response::new(Empty {});
+
+        log_grpc_response(
+            "FailWorkflow",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %extract_or_generate_correlation_id(&request),
+        trace_id = %extract_or_generate_trace_id(&request),
+        run_id = %request.get_ref().run_id,
+        duration_seconds = %request.get_ref().duration_seconds
+    ))]
     async fn schedule_sleep(
         &self,
         request: Request<ScheduleSleepRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("ScheduleSleep", &correlation_id, &trace_id, None);
+
         let req = request.into_inner();
-        info!("ScheduleSleep request: {:?}", req);
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
@@ -1157,6 +1593,77 @@ impl WorkflowService for MyWorkflowService {
             Status::internal("Failed to schedule sleep")
         })?;
 
-        Ok(Response::new(Empty {}))
+        let response = Response::new(Empty {});
+
+        log_grpc_response(
+            "ScheduleSleep",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(response)
+    }
+
+    async fn health_check(
+        &self,
+        request: Request<HealthCheckRequest>,
+    ) -> Result<Response<HealthCheckResponse>, Status> {
+        let correlation_id = extract_or_generate_correlation_id(&request);
+        let trace_id = extract_or_generate_trace_id(&request);
+
+        log_grpc_request("HealthCheck", &correlation_id, &trace_id, None);
+
+        let _req = request.into_inner();
+        let db_status = match sqlx::query("SELECT 1").fetch_one(&self.pool).await {
+            Ok(_) => {
+                info!(
+                    correlation_id = correlation_id,
+                    trace_id = trace_id,
+                    "Database health check passed"
+                );
+                kagzi_proto::kagzi::health_check_response::ServingStatus::Serving
+            }
+            Err(e) => {
+                error!(
+                    correlation_id = correlation_id,
+                    trace_id = trace_id,
+                    error = %e,
+                    "Database health check failed"
+                );
+                kagzi_proto::kagzi::health_check_response::ServingStatus::NotServing
+            }
+        };
+
+        let response = HealthCheckResponse {
+            status: db_status as i32,
+            message: match db_status {
+                kagzi_proto::kagzi::health_check_response::ServingStatus::Serving => {
+                    "Service is healthy and serving requests".to_string()
+                }
+                kagzi_proto::kagzi::health_check_response::ServingStatus::NotServing => {
+                    "Service is not healthy - database connection failed".to_string()
+                }
+                _ => "Unknown status".to_string(),
+            },
+            timestamp: Some(prost_types::Timestamp {
+                seconds: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+                nanos: 0,
+            }),
+        };
+
+        log_grpc_response(
+            "HealthCheck",
+            &correlation_id,
+            &trace_id,
+            Status::code(&Status::ok("")),
+            None,
+        );
+
+        Ok(Response::new(response))
     }
 }

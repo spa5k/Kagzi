@@ -38,6 +38,9 @@ service WorkflowService {
 
   // Worker says: "I need to sleep"
   rpc ScheduleSleep (ScheduleSleepRequest) returns (Empty);
+
+  // --- Health & Monitoring API ---
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
 }
 
 // --- Enums ---
@@ -247,6 +250,24 @@ message FailWorkflowRequest {
 message ScheduleSleepRequest {
   string run_id = 1;
   uint64 duration_seconds = 2;
+}
+
+// --- Health Check Messages ---
+
+message HealthCheckRequest {
+  string service = 1; // Optional service name to check
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    SERVING_STATUS_UNSPECIFIED = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;  // Used only by the Watch method.
+  }
+  ServingStatus status = 1;
+  string message = 2; // Optional details about the status
+  google.protobuf.Timestamp timestamp = 3;
 }
 
 // Standard empty message

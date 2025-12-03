@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::future::Future;
+use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,89 +7,129 @@ use std::time::Duration;
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{
     BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, FailStepRequest,
-    FailWorkflowRequest, PollActivityRequest, ScheduleSleepRequest, StartWorkflowRequest,
+    FailWorkflowRequest, PollActivityRequest, RecordHeartbeatRequest, ScheduleSleepRequest,
+    StartWorkflowRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tonic::Request;
 use tonic::transport::Channel;
-use tracing::{error, info};
+use tracing::{error, info, instrument};
+use tracing_utils::{
+    add_tracing_metadata, get_or_generate_correlation_id, get_or_generate_trace_id,
+};
+
+pub mod tracing_utils;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Error indicating the workflow should pause (e.g., for sleep)
+#[derive(Debug)]
+pub struct WorkflowPaused;
+
+impl std::fmt::Display for WorkflowPaused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Workflow paused")
+    }
+}
+
+impl std::error::Error for WorkflowPaused {}
 
 pub struct WorkflowContext {
     client: WorkflowServiceClient<Channel>,
     run_id: String,
+    sleep_counter: u32,
 }
 
 impl WorkflowContext {
-    pub async fn step<R, F, Fut>(&mut self, step_id: &str, func: F) -> anyhow::Result<R>
+    #[instrument(skip(self, fut), fields(
+        correlation_id = %get_or_generate_correlation_id(),
+        trace_id = %get_or_generate_trace_id(),
+        run_id = %self.run_id,
+        step_id = %step_id
+    ))]
+    pub async fn run<R, Fut>(&mut self, step_id: &str, fut: Fut) -> anyhow::Result<R>
     where
         R: Serialize + DeserializeOwned + Send + 'static,
-        F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<R>> + Send,
     {
-        // 1. Check if step already ran
-        let begin_resp = self
-            .client
-            .begin_step(BeginStepRequest {
-                run_id: self.run_id.clone(),
-                step_id: step_id.to_string(),
-            })
-            .await?
-            .into_inner();
+        let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
+            run_id: self.run_id.clone(),
+            step_id: step_id.to_string(),
+        }));
+
+        let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
 
         if !begin_resp.should_execute {
             let result: R = serde_json::from_slice(&begin_resp.cached_result)?;
             return Ok(result);
         }
 
-        // 2. Run the step
-        let result = func().await;
+        let result = fut.await;
 
         match result {
             Ok(val) => {
                 let output_bytes = serde_json::to_vec(&val)?;
-                self.client
-                    .complete_step(CompleteStepRequest {
-                        run_id: self.run_id.clone(),
-                        step_id: step_id.to_string(),
-                        output: output_bytes,
-                    })
-                    .await?;
+                let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
+                    run_id: self.run_id.clone(),
+                    step_id: step_id.to_string(),
+                    output: output_bytes,
+                }));
+
+                self.client.complete_step(complete_request).await?;
                 Ok(val)
             }
             Err(e) => {
-                self.client
-                    .fail_step(FailStepRequest {
-                        run_id: self.run_id.clone(),
-                        step_id: step_id.to_string(),
-                        error: e.to_string(),
-                    })
-                    .await?;
+                error!(error = %e, "Step {} failed", step_id);
+
+                let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
+                    run_id: self.run_id.clone(),
+                    step_id: step_id.to_string(),
+                    error: e.to_string(),
+                }));
+
+                self.client.fail_step(fail_request).await?;
                 Err(e)
             }
         }
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %get_or_generate_correlation_id(),
+        trace_id = %get_or_generate_trace_id(),
+        run_id = %self.run_id,
+        duration_seconds = duration.as_secs()
+    ))]
     pub async fn sleep(&mut self, duration: Duration) -> anyhow::Result<()> {
-        self.client
-            .schedule_sleep(ScheduleSleepRequest {
-                run_id: self.run_id.clone(),
-                duration_seconds: duration.as_secs(),
-            })
-            .await?;
+        let step_id = format!("__sleep_{}", self.sleep_counter);
+        self.sleep_counter += 1;
 
-        // We return a special error to unwind the stack, or we could handle control flow differently.
-        // For now, let's assume the worker loop handles the "Sleep" state by checking the DB,
-        // but here we just return Ok and expect the user code to return.
-        // Actually, to stop execution, we should probably return a specific error or panic?
-        // Or better, the user code awaits this, and we block? No, we can't block.
-        // We need to signal the runner to stop.
-        // For this MVP, we'll just return Ok, but the server has already set status to SLEEPING.
-        // If the workflow continues, it might try to execute more steps, which is fine,
-        // but ideally it should stop.
-        // Let's use a special error for now to interrupt flow if needed, or just let it finish current scope.
-        Ok(())
+        let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
+            run_id: self.run_id.clone(),
+            step_id: step_id.clone(),
+        }));
+
+        let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
+
+        if !begin_resp.should_execute {
+            return Ok(());
+        }
+
+        let sleep_request = add_tracing_metadata(Request::new(ScheduleSleepRequest {
+            run_id: self.run_id.clone(),
+            duration_seconds: duration.as_secs(),
+        }));
+
+        self.client.schedule_sleep(sleep_request).await?;
+
+        let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
+            run_id: self.run_id.clone(),
+            step_id,
+            output: serde_json::to_vec(&())?,
+        }));
+        self.client.complete_step(complete_request).await?;
+
+        Err(WorkflowPaused.into())
     }
 }
 
@@ -110,17 +150,24 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub async fn new(addr: String, task_queue: String) -> anyhow::Result<Self> {
-        let client = WorkflowServiceClient::connect(addr).await?;
+    #[instrument(fields(
+        correlation_id = %get_or_generate_correlation_id(),
+        trace_id = %get_or_generate_trace_id(),
+        task_queue = %task_queue
+    ))]
+    pub async fn new(addr: &str, task_queue: &str) -> anyhow::Result<Self> {
+        let client = WorkflowServiceClient::connect(addr.to_string()).await?;
+        let worker_id = uuid::Uuid::new_v4().to_string();
+
         Ok(Self {
             client,
-            task_queue,
+            task_queue: task_queue.to_string(),
             workflows: HashMap::new(),
-            worker_id: uuid::Uuid::new_v4().to_string(),
+            worker_id,
         })
     }
 
-    pub fn register_workflow<F, Fut, I, O>(&mut self, name: &str, func: F)
+    pub fn register<F, Fut, I, O>(&mut self, name: &str, func: F)
     where
         F: Fn(WorkflowContext, I) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = anyhow::Result<O>> + Send + 'static,
@@ -130,7 +177,7 @@ impl Worker {
         let wrapped = move |ctx: WorkflowContext,
                             input_val: serde_json::Value|
               -> BoxFuture<'static, anyhow::Result<serde_json::Value>> {
-            let input: I = serde_json::from_value(input_val).unwrap(); // Handle error better
+            let input: I = serde_json::from_value(input_val).unwrap();
             let fut = func(ctx, input);
             Box::pin(async move {
                 let output = fut.await?;
@@ -141,56 +188,128 @@ impl Worker {
             .insert(name.to_string(), Arc::new(Box::new(wrapped)));
     }
 
+    #[instrument(skip(self), fields(
+        correlation_id = %get_or_generate_correlation_id(),
+        trace_id = %get_or_generate_trace_id(),
+        worker_id = %self.worker_id,
+        task_queue = %self.task_queue
+    ))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!(
             "Worker {} started on queue {}",
             self.worker_id, self.task_queue
         );
         loop {
-            let resp = self
-                .client
-                .poll_activity(PollActivityRequest {
-                    task_queue: self.task_queue.clone(),
-                    worker_id: self.worker_id.clone(),
-                    namespace_id: "default".to_string(),
-                })
-                .await;
+            let poll_request = add_tracing_metadata(Request::new(PollActivityRequest {
+                task_queue: self.task_queue.clone(),
+                worker_id: self.worker_id.clone(),
+                namespace_id: "default".to_string(),
+            }));
+
+            let resp = self.client.poll_activity(poll_request).await;
 
             match resp {
                 Ok(r) => {
                     let task = r.into_inner();
-                    info!("Received task: {}", task.run_id);
+                    info!(
+                        run_id = %task.run_id,
+                        workflow_type = %task.workflow_type,
+                        "Received task"
+                    );
 
                     if let Some(handler) = self.workflows.get(&task.workflow_type) {
                         let handler = handler.clone();
                         let mut client = self.client.clone();
                         let run_id = task.run_id.clone();
+                        let worker_id = self.worker_id.clone();
                         let input: serde_json::Value = serde_json::from_slice(&task.workflow_input)
                             .unwrap_or(serde_json::Value::Null);
 
                         tokio::spawn(async move {
+                            let correlation_id = get_or_generate_correlation_id();
+                            let trace_id = get_or_generate_trace_id();
+
+                            // Start background heartbeat task
+                            let heartbeat_handle = {
+                                let mut heartbeat_client = client.clone();
+                                let heartbeat_run_id = run_id.clone();
+                                let heartbeat_worker_id = worker_id.clone();
+
+                                tokio::spawn(async move {
+                                    let mut interval =
+                                        tokio::time::interval(Duration::from_secs(10));
+                                    loop {
+                                        interval.tick().await;
+                                        let request = add_tracing_metadata(Request::new(
+                                            RecordHeartbeatRequest {
+                                                run_id: heartbeat_run_id.clone(),
+                                                worker_id: heartbeat_worker_id.clone(),
+                                            },
+                                        ));
+                                        if let Err(e) =
+                                            heartbeat_client.record_heartbeat(request).await
+                                        {
+                                            // Log but don't fail - heartbeat errors are non-fatal
+                                            // The workflow might have been completed/failed already
+                                            tracing::debug!(
+                                                run_id = %heartbeat_run_id,
+                                                error = %e,
+                                                "Heartbeat failed (workflow may have completed)"
+                                            );
+                                            break;
+                                        }
+                                    }
+                                })
+                            };
+
                             let ctx = WorkflowContext {
                                 client: client.clone(),
                                 run_id: run_id.clone(),
+                                sleep_counter: 0,
                             };
 
-                            match handler(ctx, input).await {
+                            let result = handler(ctx, input).await;
+
+                            // Stop heartbeat task
+                            heartbeat_handle.abort();
+
+                            match result {
                                 Ok(output) => {
-                                    let output_bytes = serde_json::to_vec(&output).unwrap();
-                                    let _ = client
-                                        .complete_workflow(CompleteWorkflowRequest {
+                                    let complete_request = add_tracing_metadata(Request::new(
+                                        CompleteWorkflowRequest {
                                             run_id,
-                                            output: output_bytes,
-                                        })
-                                        .await;
+                                            output: serde_json::to_vec(&output).unwrap(),
+                                        },
+                                    ));
+
+                                    let _ = client.complete_workflow(complete_request).await;
                                 }
                                 Err(e) => {
-                                    let _ = client
-                                        .fail_workflow(FailWorkflowRequest {
+                                    if e.downcast_ref::<WorkflowPaused>().is_some() {
+                                        info!(
+                                            correlation_id = correlation_id,
+                                            trace_id = trace_id,
+                                            run_id = %run_id,
+                                            "Workflow paused (sleeping)"
+                                        );
+                                        return;
+                                    }
+
+                                    error!(
+                                        correlation_id = correlation_id,
+                                        trace_id = trace_id,
+                                        run_id = %run_id,
+                                        error = %e,
+                                        "Workflow failed"
+                                    );
+
+                                    let fail_request =
+                                        add_tracing_metadata(Request::new(FailWorkflowRequest {
                                             run_id,
                                             error: e.to_string(),
-                                        })
-                                        .await;
+                                        }));
+
+                                    let _ = client.fail_workflow(fail_request).await;
                                 }
                             }
                         });
@@ -208,99 +327,116 @@ impl Worker {
     }
 }
 
-/// Optional parameters for starting a workflow
-#[derive(Default)]
-pub struct StartWorkflowOptions {
-    /// Namespace for the workflow (defaults to "default")
-    pub namespace_id: Option<String>,
-    /// Idempotency key to prevent duplicate workflow executions
-    /// If provided, calling StartWorkflow multiple times with the same key
-    /// will return the same workflow run ID instead of creating duplicates
-    pub idempotency_key: Option<String>,
-    /// Additional context metadata as JSON (stored with the workflow)
-    pub context: Option<serde_json::Value>,
-    /// Deadline for workflow execution (will be cancelled if not completed by this time)
-    pub deadline_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Workflow version for compatibility and routing
-    pub version: Option<String>,
-}
-
-// Client for starting workflows
 pub struct Client {
     client: WorkflowServiceClient<Channel>,
 }
 
 impl Client {
-    pub async fn new(addr: String) -> anyhow::Result<Self> {
-        let client = WorkflowServiceClient::connect(addr).await?;
+    pub async fn connect(addr: &str) -> anyhow::Result<Self> {
+        let client = WorkflowServiceClient::connect(addr.to_string()).await?;
         Ok(Self { client })
     }
 
-    /// Start a workflow with default options
-    ///
-    /// # Arguments
-    /// * `workflow_id` - Business identifier for this workflow instance (e.g., "order-123")
-    /// * `task_queue` - Which queue should handle this workflow (e.g., "email", "critical")
-    /// * `workflow_type` - Name of the workflow function to execute
-    /// * `input` - Serializable input data for the workflow
-    ///
-    /// # Returns
-    /// The generated run_id for tracking this workflow execution
-    pub async fn start_workflow(
+    pub fn workflow<I: Serialize>(
         &mut self,
-        workflow_id: String,
-        task_queue: String,
-        workflow_type: String,
-        input: impl Serialize,
-    ) -> anyhow::Result<String> {
-        self.start_workflow_with_options(
-            workflow_id,
-            task_queue,
-            workflow_type,
+        workflow_type: &str,
+        task_queue: &str,
+        input: I,
+    ) -> WorkflowBuilder<'_, I> {
+        WorkflowBuilder::new(self, workflow_type, task_queue, input)
+    }
+}
+
+pub struct WorkflowBuilder<'a, I> {
+    client: &'a mut Client,
+    workflow_type: String,
+    task_queue: String,
+    input: I,
+    workflow_id: Option<String>,
+    idempotency_key: Option<String>,
+    context: Option<serde_json::Value>,
+    deadline_at: Option<chrono::DateTime<chrono::Utc>>,
+    version: Option<String>,
+}
+
+impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
+    fn new(client: &'a mut Client, workflow_type: &str, task_queue: &str, input: I) -> Self {
+        Self {
+            client,
+            workflow_type: workflow_type.to_string(),
+            task_queue: task_queue.to_string(),
             input,
-            StartWorkflowOptions::default(),
-        )
-        .await
+            workflow_id: None,
+            idempotency_key: None,
+            context: None,
+            deadline_at: None,
+            version: None,
+        }
     }
 
-    /// Start a workflow with custom options
-    ///
-    /// Use this when you need idempotency, custom deadlines, versioning, or additional context.
-    /// See `StartWorkflowOptions` for available parameters.
-    pub async fn start_workflow_with_options(
-        &mut self,
-        workflow_id: String,
-        task_queue: String,
-        workflow_type: String,
-        input: impl Serialize,
-        options: StartWorkflowOptions,
-    ) -> anyhow::Result<String> {
-        let input_bytes = serde_json::to_vec(&input)?;
-        let context_bytes = if let Some(ctx) = options.context {
-            serde_json::to_vec(&ctx)?
-        } else {
-            vec![]
-        };
+    pub fn id(mut self, workflow_id: impl Into<String>) -> Self {
+        self.workflow_id = Some(workflow_id.into());
+        self
+    }
+
+    pub fn idempotent(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+
+    pub fn context(mut self, ctx: serde_json::Value) -> Self {
+        self.context = Some(ctx);
+        self
+    }
+
+    pub fn deadline(mut self, deadline: chrono::DateTime<chrono::Utc>) -> Self {
+        self.deadline_at = Some(deadline);
+        self
+    }
+
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    async fn execute(self) -> anyhow::Result<String> {
+        let input_bytes = serde_json::to_vec(&self.input)?;
+        let context_bytes = self
+            .context
+            .map(|c| serde_json::to_vec(&c))
+            .transpose()?
+            .unwrap_or_default();
 
         let resp = self
             .client
+            .client
             .start_workflow(StartWorkflowRequest {
-                workflow_id,
-                task_queue,
-                workflow_type,
+                workflow_id: self
+                    .workflow_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                task_queue: self.task_queue,
+                workflow_type: self.workflow_type,
                 input: input_bytes,
-                namespace_id: options
-                    .namespace_id
-                    .unwrap_or_else(|| "default".to_string()),
-                idempotency_key: options.idempotency_key.unwrap_or_default(),
+                namespace_id: "default".to_string(),
+                idempotency_key: self.idempotency_key.unwrap_or_default(),
                 context: context_bytes,
-                deadline_at: options.deadline_at.map(|dt| prost_types::Timestamp {
+                deadline_at: self.deadline_at.map(|dt| prost_types::Timestamp {
                     seconds: dt.timestamp(),
                     nanos: dt.timestamp_subsec_nanos() as i32,
                 }),
-                version: options.version.unwrap_or_default(),
+                version: self.version.unwrap_or_default(),
             })
             .await?;
+
         Ok(resp.into_inner().run_id)
+    }
+}
+
+impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowBuilder<'a, I> {
+    type Output = anyhow::Result<String>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + 'a>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.execute())
     }
 }
