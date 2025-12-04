@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kagzi", "crates/kagzi-proto", "crates/kagzi-server"]
+members = ["crates/kagzi", "crates/kagzi-proto", "crates/kagzi-server", "crates/kagzi-store"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,9 @@ license = "Apache-2.0"
 repository = "https://github.com/spa5k/kagzi"
 
 [workspace.dependencies]
+# Async traits
+async-trait = "0.1"
+
 # gRPC / Protobuf
 prost = "0.14.1"
 prost-types = "0.14.1"

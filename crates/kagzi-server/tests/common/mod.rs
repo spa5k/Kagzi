@@ -1,6 +1,7 @@
 //! Common test utilities and PostgreSQL testcontainer setup
 
 use kagzi_server::MyWorkflowService;
+use kagzi_store::PgStore;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use testcontainers::{ContainerAsync, runners::AsyncRunner};
@@ -60,7 +61,9 @@ impl TestHarness {
             .await
             .expect("Failed to run migrations");
 
-        let service = MyWorkflowService { pool: pool.clone() };
+        // Create the store
+        let store = PgStore::new(pool.clone());
+        let service = MyWorkflowService::new(store.clone());
 
         TestHarness {
             pool,

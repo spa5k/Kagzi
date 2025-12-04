@@ -1,5 +1,6 @@
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
-use kagzi_server::{MyWorkflowService, reaper, tracing_utils};
+use kagzi_server::{MyWorkflowService, tracing_utils, watchdog};
+use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use tonic::transport::Server;
@@ -31,12 +32,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         })?;
 
-    let reaper_pool = pool.clone();
+    // Create the store
+    let store = PgStore::new(pool);
+
+    // Start the background watchdog
+    let watchdog_store = store.clone();
     tokio::spawn(async move {
-        reaper::run_reaper(reaper_pool).await;
+        watchdog::run(watchdog_store).await;
     });
+
     let addr = "0.0.0.0:50051".parse()?;
-    let service = MyWorkflowService { pool };
+    let service = MyWorkflowService::new(store);
 
     info!("Kagzi Server listening on {}", addr);
 

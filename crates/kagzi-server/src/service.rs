@@ -12,198 +12,212 @@ use kagzi_proto::kagzi::{
     RecordHeartbeatRequest, RetryPolicy, ScheduleSleepRequest, StartWorkflowRequest,
     StartWorkflowResponse, StepAttempt, StepAttemptStatus, StepKind, WorkflowRun, WorkflowStatus,
 };
-use sqlx::PgPool;
-use std::time::Duration;
+use kagzi_store::{
+    BeginStepParams, CreateWorkflow, FailStepParams, ListWorkflowsParams, PgStore, StepRepository,
+    WorkflowCursor, WorkflowRepository,
+};
 use tonic::{Request, Response, Status};
-use tracing::{error, info, instrument};
+use tracing::{info, instrument};
 
-/// Database row for workflow_runs table
-#[derive(sqlx::FromRow)]
-struct WorkflowRunRow {
-    run_id: uuid::Uuid,
-    namespace_id: String,
-    business_id: String,
-    task_queue: String,
-    workflow_type: String,
-    status: String,
-    input: serde_json::Value,
-    output: Option<serde_json::Value>,
-    context: Option<serde_json::Value>,
-    locked_by: Option<String>,
-    attempts: i32,
-    error: Option<String>,
-    created_at: Option<chrono::DateTime<chrono::Utc>>,
-    started_at: Option<chrono::DateTime<chrono::Utc>>,
-    finished_at: Option<chrono::DateTime<chrono::Utc>>,
-    wake_up_at: Option<chrono::DateTime<chrono::Utc>>,
-    deadline_at: Option<chrono::DateTime<chrono::Utc>>,
-    version: Option<String>,
-    parent_step_attempt_id: Option<String>,
+/// Convert proto RetryPolicy to store RetryPolicy
+fn proto_policy_to_store(p: Option<RetryPolicy>) -> Option<kagzi_store::RetryPolicy> {
+    p.map(|proto| kagzi_store::RetryPolicy {
+        maximum_attempts: if proto.maximum_attempts == 0 {
+            5
+        } else {
+            proto.maximum_attempts
+        },
+        initial_interval_ms: if proto.initial_interval_ms == 0 {
+            1000
+        } else {
+            proto.initial_interval_ms
+        },
+        backoff_coefficient: if proto.backoff_coefficient == 0.0 {
+            2.0
+        } else {
+            proto.backoff_coefficient
+        },
+        maximum_interval_ms: if proto.maximum_interval_ms == 0 {
+            60000
+        } else {
+            proto.maximum_interval_ms
+        },
+        non_retryable_errors: proto.non_retryable_errors,
+    })
 }
 
-impl WorkflowRunRow {
-    fn into_proto(self) -> Result<WorkflowRun, Status> {
-        let status = match self.status.as_str() {
-            "PENDING" => WorkflowStatus::Pending,
-            "RUNNING" => WorkflowStatus::Running,
-            "SLEEPING" => WorkflowStatus::Sleeping,
-            "COMPLETED" => WorkflowStatus::Completed,
-            "FAILED" => WorkflowStatus::Failed,
-            "CANCELLED" => WorkflowStatus::Cancelled,
-            _ => WorkflowStatus::Unspecified,
-        };
-
-        Ok(WorkflowRun {
-            run_id: self.run_id.to_string(),
-            business_id: self.business_id,
-            task_queue: self.task_queue,
-            workflow_type: self.workflow_type,
-            status: status.into(),
-            input: serde_json::to_vec(&self.input).map_err(|e| {
-                tracing::error!("Failed to serialize workflow input: {:?}", e);
-                Status::internal("Failed to serialize workflow input")
-            })?,
-            output: self
-                .output
-                .map(|o| {
-                    serde_json::to_vec(&o).map_err(|e| {
-                        tracing::error!("Failed to serialize workflow output: {:?}", e);
-                        Status::internal("Failed to serialize workflow output")
-                    })
-                })
-                .transpose()?
-                .unwrap_or_default(),
-            error: self.error.unwrap_or_default(),
-            attempts: self.attempts,
-            created_at: self.created_at.map(|t| prost_types::Timestamp {
-                seconds: t.timestamp(),
-                nanos: t.timestamp_subsec_nanos() as i32,
-            }),
-            started_at: self.started_at.map(|t| prost_types::Timestamp {
-                seconds: t.timestamp(),
-                nanos: t.timestamp_subsec_nanos() as i32,
-            }),
-            finished_at: self.finished_at.map(|t| prost_types::Timestamp {
-                seconds: t.timestamp(),
-                nanos: t.timestamp_subsec_nanos() as i32,
-            }),
-            wake_up_at: self.wake_up_at.map(|t| prost_types::Timestamp {
-                seconds: t.timestamp(),
-                nanos: t.timestamp_subsec_nanos() as i32,
-            }),
-            namespace_id: self.namespace_id,
-            context: self
-                .context
-                .map(|c| {
-                    serde_json::to_vec(&c).map_err(|e| {
-                        tracing::error!("Failed to serialize workflow context: {:?}", e);
-                        Status::internal("Failed to serialize workflow context")
-                    })
-                })
-                .transpose()?
-                .unwrap_or_default(),
-            deadline_at: self.deadline_at.map(|t| prost_types::Timestamp {
-                seconds: t.timestamp(),
-                nanos: t.timestamp_subsec_nanos() as i32,
-            }),
-            worker_id: self.locked_by.unwrap_or_else(|| {
-                tracing::warn!("Workflow run has no worker_id, using default");
-                String::new()
-            }),
-            version: self.version.unwrap_or_else(|| {
-                tracing::warn!("Workflow run has no version, using default");
-                String::new()
-            }),
-            parent_step_attempt_id: self.parent_step_attempt_id.unwrap_or_else(|| {
-                tracing::warn!("Workflow run has no parent_step_attempt_id, using default");
-                String::new()
-            }),
-        })
-    }
-}
-
-/// Map database step status string to StepAttemptStatus enum
-fn map_step_status(status: &str) -> StepAttemptStatus {
+/// Map store workflow status to proto status
+fn map_workflow_status(status: kagzi_store::WorkflowStatus) -> WorkflowStatus {
     match status {
-        "PENDING" => StepAttemptStatus::Pending,
-        "RUNNING" => StepAttemptStatus::Running,
-        "COMPLETED" => StepAttemptStatus::Completed,
-        "FAILED" => StepAttemptStatus::Failed,
-        _ => StepAttemptStatus::Unspecified,
+        kagzi_store::WorkflowStatus::Pending => WorkflowStatus::Pending,
+        kagzi_store::WorkflowStatus::Running => WorkflowStatus::Running,
+        kagzi_store::WorkflowStatus::Sleeping => WorkflowStatus::Sleeping,
+        kagzi_store::WorkflowStatus::Completed => WorkflowStatus::Completed,
+        kagzi_store::WorkflowStatus::Failed => WorkflowStatus::Failed,
+        kagzi_store::WorkflowStatus::Cancelled => WorkflowStatus::Cancelled,
     }
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct RetryPolicyConfig {
-    pub maximum_attempts: i32,
-    pub initial_interval_ms: i64,
-    pub backoff_coefficient: f64,
-    pub maximum_interval_ms: i64,
-    #[serde(default)]
-    pub non_retryable_errors: Vec<String>,
+/// Map store step status to proto status
+fn map_step_status(status: kagzi_store::StepStatus) -> StepAttemptStatus {
+    match status {
+        kagzi_store::StepStatus::Pending => StepAttemptStatus::Pending,
+        kagzi_store::StepStatus::Running => StepAttemptStatus::Running,
+        kagzi_store::StepStatus::Completed => StepAttemptStatus::Completed,
+        kagzi_store::StepStatus::Failed => StepAttemptStatus::Failed,
+    }
 }
 
-impl Default for RetryPolicyConfig {
-    fn default() -> Self {
-        Self {
-            maximum_attempts: 5,
-            initial_interval_ms: 1000,
-            backoff_coefficient: 2.0,
-            maximum_interval_ms: 60000,
-            non_retryable_errors: vec![],
+/// Convert store WorkflowRun to proto WorkflowRun
+fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status> {
+    let input_bytes = serde_json::to_vec(&w.input).map_err(|e| {
+        tracing::error!("Failed to serialize workflow input: {:?}", e);
+        Status::internal("Failed to serialize workflow input")
+    })?;
+
+    let output_bytes = w
+        .output
+        .map(|o| {
+            serde_json::to_vec(&o).map_err(|e| {
+                tracing::error!("Failed to serialize workflow output: {:?}", e);
+                Status::internal("Failed to serialize workflow output")
+            })
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    let context_bytes = w
+        .context
+        .map(|c| {
+            serde_json::to_vec(&c).map_err(|e| {
+                tracing::error!("Failed to serialize workflow context: {:?}", e);
+                Status::internal("Failed to serialize workflow context")
+            })
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(WorkflowRun {
+        run_id: w.run_id.to_string(),
+        business_id: w.business_id,
+        task_queue: w.task_queue,
+        workflow_type: w.workflow_type,
+        status: map_workflow_status(w.status).into(),
+        input: input_bytes,
+        output: output_bytes,
+        error: w.error.unwrap_or_default(),
+        attempts: w.attempts,
+        created_at: w.created_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        started_at: w.started_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        finished_at: w.finished_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        wake_up_at: w.wake_up_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        namespace_id: w.namespace_id,
+        context: context_bytes,
+        deadline_at: w.deadline_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        worker_id: w.locked_by.unwrap_or_default(),
+        version: w.version.unwrap_or_default(),
+        parent_step_attempt_id: w.parent_step_attempt_id.unwrap_or_default(),
+    })
+}
+
+/// Convert store StepRun to proto StepAttempt
+fn step_to_proto(s: kagzi_store::StepRun) -> Result<StepAttempt, Status> {
+    // Determine step kind from step_id patterns
+    let kind = if s.step_id.contains("sleep") || s.step_id.contains("wait") {
+        StepKind::Sleep
+    } else if s.step_id.contains("function") || s.step_id.contains("task") {
+        StepKind::Function
+    } else {
+        StepKind::Unspecified
+    };
+
+    let output_bytes = serde_json::to_vec(&s.output).map_err(|e| {
+        tracing::error!("Failed to serialize step output: {:?}", e);
+        Status::internal("Failed to serialize step output")
+    })?;
+
+    Ok(StepAttempt {
+        step_attempt_id: s.attempt_id.to_string(),
+        workflow_run_id: s.run_id.to_string(),
+        step_id: s.step_id,
+        kind: kind.into(),
+        status: map_step_status(s.status).into(),
+        config: vec![],
+        context: vec![],
+        output: output_bytes,
+        error: s.error.map(|e| e.into_bytes()).unwrap_or_default(),
+        started_at: s.started_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        finished_at: s.finished_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        created_at: s.created_at.map(|t| prost_types::Timestamp {
+            seconds: t.timestamp(),
+            nanos: t.timestamp_subsec_nanos() as i32,
+        }),
+        updated_at: s
+            .finished_at
+            .or(s.created_at)
+            .map(|t| prost_types::Timestamp {
+                seconds: t.timestamp(),
+                nanos: t.timestamp_subsec_nanos() as i32,
+            }),
+        child_workflow_run_id: s
+            .child_workflow_run_id
+            .map(|u| u.to_string())
+            .unwrap_or_default(),
+        namespace_id: s.namespace_id,
+    })
+}
+
+/// Map StoreError to gRPC Status
+fn map_store_error(e: kagzi_store::StoreError) -> Status {
+    match e {
+        kagzi_store::StoreError::NotFound { entity, id } => {
+            Status::not_found(format!("{} not found: {}", entity, id))
         }
-    }
-}
-
-impl RetryPolicyConfig {
-    pub fn from_proto(proto: Option<RetryPolicy>) -> Self {
-        match proto {
-            Some(p) => Self {
-                maximum_attempts: if p.maximum_attempts == 0 {
-                    5
-                } else {
-                    p.maximum_attempts
-                },
-                initial_interval_ms: if p.initial_interval_ms == 0 {
-                    1000
-                } else {
-                    p.initial_interval_ms
-                },
-                backoff_coefficient: if p.backoff_coefficient == 0.0 {
-                    2.0
-                } else {
-                    p.backoff_coefficient
-                },
-                maximum_interval_ms: if p.maximum_interval_ms == 0 {
-                    60000
-                } else {
-                    p.maximum_interval_ms
-                },
-                non_retryable_errors: p.non_retryable_errors,
-            },
-            None => Self::default(),
+        kagzi_store::StoreError::InvalidState { message } => Status::invalid_argument(message),
+        kagzi_store::StoreError::LockConflict { message } => Status::failed_precondition(message),
+        kagzi_store::StoreError::PreconditionFailed { message } => {
+            Status::failed_precondition(message)
         }
-    }
-
-    pub fn calculate_delay(&self, attempt: i32) -> Duration {
-        let delay_ms =
-            (self.initial_interval_ms as f64 * self.backoff_coefficient.powi(attempt)) as i64;
-        Duration::from_millis(delay_ms.min(self.maximum_interval_ms) as u64)
-    }
-
-    pub fn is_non_retryable(&self, error: &str) -> bool {
-        self.non_retryable_errors
-            .iter()
-            .any(|e| error.starts_with(e))
-    }
-
-    pub fn should_retry(&self, current_attempt: i32) -> bool {
-        self.maximum_attempts < 0 || current_attempt < self.maximum_attempts
+        kagzi_store::StoreError::Database(e) => {
+            tracing::error!("Database error: {:?}", e);
+            Status::internal("Database error")
+        }
+        kagzi_store::StoreError::Serialization(e) => {
+            tracing::error!("Serialization error: {:?}", e);
+            Status::internal("Serialization error")
+        }
     }
 }
 
 pub struct MyWorkflowService {
-    pub pool: PgPool,
+    pub store: PgStore,
+}
+
+impl MyWorkflowService {
+    pub fn new(store: PgStore) -> Self {
+        Self { store }
+    }
 }
 
 #[tonic::async_trait]
@@ -233,12 +247,12 @@ impl WorkflowService for MyWorkflowService {
                 .map_err(|e| Status::invalid_argument(format!("Input must be valid JSON: {}", e)))?
         };
 
-        let context_json: serde_json::Value = if req.context.is_empty() {
-            serde_json::json!({})
+        let context_json: Option<serde_json::Value> = if req.context.is_empty() {
+            None
         } else {
-            serde_json::from_slice(&req.context).map_err(|e| {
+            Some(serde_json::from_slice(&req.context).map_err(|e| {
                 Status::invalid_argument(format!("Context must be valid JSON: {}", e))
-            })?
+            })?)
         };
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -247,72 +261,47 @@ impl WorkflowService for MyWorkflowService {
             req.namespace_id
         };
 
-        // Check for idempotency
-        if !req.idempotency_key.is_empty() {
-            let existing = sqlx::query!(
-                r#"
-                SELECT run_id FROM kagzi.workflow_runs
-                WHERE namespace_id = $1 AND idempotency_key = $2
-                "#,
-                namespace_id,
-                req.idempotency_key
-            )
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to check idempotency: {:?}", e);
-                Status::internal("Failed to check idempotency")
-            })?;
+        let workflows = self.store.workflows();
 
-            if let Some(row) = existing {
-                return Ok(Response::new(StartWorkflowResponse {
-                    run_id: row.run_id.to_string(),
-                }));
-            }
+        if !req.idempotency_key.is_empty()
+            && let Some(existing_id) = workflows
+                .find_by_idempotency_key(&namespace_id, &req.idempotency_key)
+                .await
+                .map_err(map_store_error)?
+        {
+            return Ok(Response::new(StartWorkflowResponse {
+                run_id: existing_id.to_string(),
+            }));
         }
 
-        // Default version to "1" if not specified
         let version = if req.version.is_empty() {
             "1".to_string()
         } else {
             req.version
         };
 
-        let run_id = sqlx::query!(
-            r#"
-            INSERT INTO kagzi.workflow_runs (
-                business_id, task_queue, workflow_type, status, input,
-                namespace_id, idempotency_key, context, deadline_at, version, retry_policy
-            )
-            VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9, $10)
-            RETURNING run_id
-            "#,
-            req.workflow_id,
-            req.task_queue,
-            req.workflow_type,
-            input_json,
-            namespace_id,
-            if req.idempotency_key.is_empty() {
-                None
-            } else {
-                Some(req.idempotency_key)
-            },
-            context_json,
-            req.deadline_at
-                .map(|ts| std::time::SystemTime::UNIX_EPOCH
-                    + std::time::Duration::new(ts.seconds as u64, ts.nanos as u32))
-                .map(chrono::DateTime::<chrono::Utc>::from),
-            version,
-            serde_json::to_value(RetryPolicyConfig::from_proto(req.retry_policy))
-                .unwrap_or(serde_json::json!(null))
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to insert workflow run: {:?}", e);
-            Status::internal("Failed to start workflow")
-        })?
-        .run_id;
+        let run_id = workflows
+            .create(CreateWorkflow {
+                business_id: req.workflow_id,
+                task_queue: req.task_queue,
+                workflow_type: req.workflow_type,
+                input: input_json,
+                namespace_id,
+                idempotency_key: if req.idempotency_key.is_empty() {
+                    None
+                } else {
+                    Some(req.idempotency_key)
+                },
+                context: context_json,
+                deadline_at: req.deadline_at.map(|ts| {
+                    chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+                        .unwrap_or_default()
+                }),
+                version,
+                retry_policy: proto_policy_to_store(req.retry_policy),
+            })
+            .await
+            .map_err(map_store_error)?;
 
         log_grpc_response(
             "StartWorkflow",
@@ -344,7 +333,6 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
 
@@ -354,114 +342,16 @@ impl WorkflowService for MyWorkflowService {
             req.namespace_id
         };
 
-        // Query the workflow_runs table
-        let row = sqlx::query!(
-            r#"
-            SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
-                   input, output, context, locked_by, attempts, error,
-                   created_at, started_at, finished_at, wake_up_at, deadline_at,
-                   version, parent_step_attempt_id
-            FROM kagzi.workflow_runs
-            WHERE run_id = $1 AND namespace_id = $2
-            "#,
-            run_id,
-            namespace_id
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get workflow run: {:?}", e);
-            Status::internal("Failed to get workflow run")
-        })?;
+        let workflow = self
+            .store
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?;
 
-        match row {
-            Some(r) => {
-                let status = match r.status.as_str() {
-                    "PENDING" => WorkflowStatus::Pending,
-                    "RUNNING" => WorkflowStatus::Running,
-                    "SLEEPING" => WorkflowStatus::Sleeping,
-                    "COMPLETED" => WorkflowStatus::Completed,
-                    "FAILED" => WorkflowStatus::Failed,
-                    "CANCELLED" => WorkflowStatus::Cancelled,
-                    _ => WorkflowStatus::Unspecified,
-                };
-
-                let input_bytes = serde_json::to_vec(&r.input).map_err(|e| {
-                    tracing::error!("Failed to serialize workflow input: {:?}", e);
-                    Status::internal("Failed to serialize workflow input")
-                })?;
-
-                let output_bytes = r
-                    .output
-                    .map(|o| {
-                        serde_json::to_vec(&o).map_err(|e| {
-                            tracing::error!("Failed to serialize workflow output: {:?}", e);
-                            Status::internal("Failed to serialize workflow output")
-                        })
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-
-                let context_bytes = r
-                    .context
-                    .map(|c| {
-                        serde_json::to_vec(&c).map_err(|e| {
-                            tracing::error!("Failed to serialize workflow context: {:?}", e);
-                            Status::internal("Failed to serialize workflow context")
-                        })
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-
-                let workflow_run = WorkflowRun {
-                    run_id: r.run_id.to_string(),
-                    business_id: r.business_id,
-                    task_queue: r.task_queue,
-                    workflow_type: r.workflow_type,
-                    status: status.into(),
-                    input: input_bytes,
-                    output: output_bytes,
-                    error: r.error.unwrap_or_default(),
-                    attempts: r.attempts,
-                    created_at: r.created_at.map(|t| prost_types::Timestamp {
-                        seconds: t.timestamp(),
-                        nanos: t.timestamp_subsec_nanos() as i32,
-                    }),
-                    started_at: r.started_at.map(|t| prost_types::Timestamp {
-                        seconds: t.timestamp(),
-                        nanos: t.timestamp_subsec_nanos() as i32,
-                    }),
-                    finished_at: r.finished_at.map(|t| prost_types::Timestamp {
-                        seconds: t.timestamp(),
-                        nanos: t.timestamp_subsec_nanos() as i32,
-                    }),
-                    wake_up_at: r.wake_up_at.map(|t| prost_types::Timestamp {
-                        seconds: t.timestamp(),
-                        nanos: t.timestamp_subsec_nanos() as i32,
-                    }),
-                    namespace_id: r.namespace_id,
-                    context: context_bytes,
-                    deadline_at: r.deadline_at.map(|t| prost_types::Timestamp {
-                        seconds: t.timestamp(),
-                        nanos: t.timestamp_subsec_nanos() as i32,
-                    }),
-                    worker_id: r.locked_by.unwrap_or_else(|| {
-                        tracing::warn!("Workflow run has no worker_id, using default");
-                        String::new()
-                    }),
-                    version: r.version.unwrap_or_else(|| {
-                        tracing::warn!("Workflow run has no version, using default");
-                        String::new()
-                    }),
-                    parent_step_attempt_id: r.parent_step_attempt_id.unwrap_or_else(|| {
-                        tracing::warn!("Workflow run has no parent_step_attempt_id, using default");
-                        String::new()
-                    }),
-                };
-
-                let response = Response::new(GetWorkflowRunResponse {
-                    workflow_run: Some(workflow_run),
-                });
+        match workflow {
+            Some(w) => {
+                let proto = workflow_to_proto(w)?;
 
                 log_grpc_response(
                     "GetWorkflowRun",
@@ -471,7 +361,9 @@ impl WorkflowService for MyWorkflowService {
                     None,
                 );
 
-                Ok(response)
+                Ok(Response::new(GetWorkflowRunResponse {
+                    workflow_run: Some(proto),
+                }))
             }
             None => {
                 let status = Status::not_found(format!(
@@ -518,7 +410,6 @@ impl WorkflowService for MyWorkflowService {
             req.namespace_id
         };
 
-        // Validate and set page size (default: 20, max: 100)
         let page_size = if req.page_size <= 0 {
             20
         } else if req.page_size > 100 {
@@ -527,154 +418,70 @@ impl WorkflowService for MyWorkflowService {
             req.page_size
         };
 
-        // Parse cursor from page_token (format: "created_at_millis:run_id")
-        let cursor: Option<(chrono::DateTime<chrono::Utc>, uuid::Uuid)> =
-            if req.page_token.is_empty() {
-                None
-            } else {
-                let decoded = base64::engine::general_purpose::STANDARD
-                    .decode(&req.page_token)
-                    .map_err(|_| Status::invalid_argument("Invalid page_token"))?;
-                let cursor_str = String::from_utf8(decoded)
-                    .map_err(|_| Status::invalid_argument("Invalid page_token encoding"))?;
-                let parts: Vec<&str> = cursor_str.splitn(2, ':').collect();
-                if parts.len() != 2 {
-                    return Err(Status::invalid_argument("Invalid page_token format"));
-                }
-                let millis: i64 = parts[0]
-                    .parse()
-                    .map_err(|_| Status::invalid_argument("Invalid page_token timestamp"))?;
-                let run_id = uuid::Uuid::parse_str(parts[1])
-                    .map_err(|_| Status::invalid_argument("Invalid page_token run_id"))?;
-                let cursor_time = chrono::DateTime::from_timestamp_millis(millis)
-                    .ok_or_else(|| Status::invalid_argument("Invalid cursor timestamp"))?;
-                Some((cursor_time, run_id))
-            };
-
-        // Build query dynamically
-        let limit = (page_size + 1) as i64;
-        let rows: Vec<WorkflowRunRow> = match (&cursor, req.filter_status.is_empty()) {
-            (None, true) => {
-                // No cursor, no status filter
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
-                           input, output, context, locked_by, attempts, error,
-                           created_at, started_at, finished_at, wake_up_at, deadline_at,
-                           version, parent_step_attempt_id
-                    FROM kagzi.workflow_runs
-                    WHERE namespace_id = $1
-                    ORDER BY created_at DESC, run_id DESC
-                    LIMIT $2
-                    "#,
-                )
-                .bind(&namespace_id)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-            }
-            (None, false) => {
-                // No cursor, with status filter
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
-                           input, output, context, locked_by, attempts, error,
-                           created_at, started_at, finished_at, wake_up_at, deadline_at,
-                           version, parent_step_attempt_id
-                    FROM kagzi.workflow_runs
-                    WHERE namespace_id = $1 AND status = $2
-                    ORDER BY created_at DESC, run_id DESC
-                    LIMIT $3
-                    "#,
-                )
-                .bind(&namespace_id)
-                .bind(&req.filter_status)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-            }
-            (Some((cursor_time, cursor_run_id)), true) => {
-                // With cursor, no status filter
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
-                           input, output, context, locked_by, attempts, error,
-                           created_at, started_at, finished_at, wake_up_at, deadline_at,
-                           version, parent_step_attempt_id
-                    FROM kagzi.workflow_runs
-                    WHERE namespace_id = $1 AND (created_at, run_id) < ($2, $3)
-                    ORDER BY created_at DESC, run_id DESC
-                    LIMIT $4
-                    "#,
-                )
-                .bind(&namespace_id)
-                .bind(cursor_time)
-                .bind(cursor_run_id)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-            }
-            (Some((cursor_time, cursor_run_id)), false) => {
-                // With cursor and status filter
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT run_id, namespace_id, business_id, task_queue, workflow_type, status,
-                           input, output, context, locked_by, attempts, error,
-                           created_at, started_at, finished_at, wake_up_at, deadline_at,
-                           version, parent_step_attempt_id
-                    FROM kagzi.workflow_runs
-                    WHERE namespace_id = $1 AND status = $2 AND (created_at, run_id) < ($3, $4)
-                    ORDER BY created_at DESC, run_id DESC
-                    LIMIT $5
-                    "#,
-                )
-                .bind(&namespace_id)
-                .bind(&req.filter_status)
-                .bind(cursor_time)
-                .bind(cursor_run_id)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await
-            }
-        }
-        .map_err(|e| {
-            tracing::error!("Failed to list workflow runs: {:?}", e);
-            Status::internal("Failed to list workflow runs")
-        })?;
-
-        // Determine if there are more results
-        let has_more = rows.len() > page_size as usize;
-        let result_rows: Vec<_> = rows.into_iter().take(page_size as usize).collect();
-
-        // Generate next page token from last result
-        let next_page_token = if has_more {
-            if let Some(last) = result_rows.last() {
-                if let Some(created_at) = last.created_at {
-                    let cursor_str = format!("{}:{}", created_at.timestamp_millis(), last.run_id);
-                    base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            }
+        // Parse cursor from page_token
+        let cursor: Option<WorkflowCursor> = if req.page_token.is_empty() {
+            None
         } else {
-            String::new()
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(&req.page_token)
+                .map_err(|_| Status::invalid_argument("Invalid page_token"))?;
+            let cursor_str = String::from_utf8(decoded)
+                .map_err(|_| Status::invalid_argument("Invalid page_token encoding"))?;
+            let parts: Vec<&str> = cursor_str.splitn(2, ':').collect();
+            if parts.len() != 2 {
+                return Err(Status::invalid_argument("Invalid page_token format"));
+            }
+            let millis: i64 = parts[0]
+                .parse()
+                .map_err(|_| Status::invalid_argument("Invalid page_token timestamp"))?;
+            let run_id = uuid::Uuid::parse_str(parts[1])
+                .map_err(|_| Status::invalid_argument("Invalid page_token run_id"))?;
+            let cursor_time = chrono::DateTime::from_timestamp_millis(millis)
+                .ok_or_else(|| Status::invalid_argument("Invalid cursor timestamp"))?;
+            Some(WorkflowCursor {
+                created_at: cursor_time,
+                run_id,
+            })
         };
 
-        // Map database rows to WorkflowRun messages
-        let workflow_runs: Result<Vec<_>, Status> =
-            result_rows.into_iter().map(|r| r.into_proto()).collect();
-        let workflow_runs = workflow_runs.map_err(|e| {
-            tracing::error!("Failed to convert workflow runs to proto: {:?}", e);
-            e
-        })?;
+        let result = self
+            .store
+            .workflows()
+            .list(ListWorkflowsParams {
+                namespace_id,
+                filter_status: if req.filter_status.is_empty() {
+                    None
+                } else {
+                    Some(req.filter_status)
+                },
+                page_size,
+                cursor,
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        // Generate next page token
+        let next_page_token = result
+            .next_cursor
+            .map(|c| {
+                let cursor_str = format!("{}:{}", c.created_at.timestamp_millis(), c.run_id);
+                base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
+            })
+            .unwrap_or_default();
+
+        // Convert to proto
+        let workflow_runs: Result<Vec<_>, Status> = result
+            .workflows
+            .into_iter()
+            .map(workflow_to_proto)
+            .collect();
+        let workflow_runs = workflow_runs?;
 
         let response = Response::new(ListWorkflowRunsResponse {
             workflow_runs,
             next_page_token,
-            prev_page_token: String::new(), // Backward pagination not implemented yet
-            has_more,
+            prev_page_token: String::new(),
+            has_more: result.has_more,
         });
 
         log_grpc_response(
@@ -705,7 +512,6 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
 
@@ -715,84 +521,53 @@ impl WorkflowService for MyWorkflowService {
             req.namespace_id
         };
 
-        // Check current status and update to CANCELLED if allowed
-        // Only PENDING, RUNNING, or SLEEPING workflows can be cancelled
-        let result = sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET status = 'CANCELLED',
-                finished_at = NOW(),
-                locked_by = NULL,
-                locked_until = NULL
-            WHERE run_id = $1 
-              AND namespace_id = $2
-              AND status IN ('PENDING', 'RUNNING', 'SLEEPING')
-            RETURNING run_id
-            "#,
-            run_id,
-            namespace_id
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to cancel workflow run: {:?}", e);
-            Status::internal("Failed to cancel workflow run")
-        })?;
+        let workflows = self.store.workflows();
 
-        match result {
-            Some(_) => {
-                info!("Workflow {} cancelled successfully", run_id);
+        let cancelled = workflows
+            .cancel(run_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?;
 
-                let response = Response::new(Empty {});
+        if cancelled {
+            info!("Workflow {} cancelled successfully", run_id);
 
-                log_grpc_response(
-                    "CancelWorkflowRun",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    None,
-                );
+            log_grpc_response(
+                "CancelWorkflowRun",
+                &correlation_id,
+                &trace_id,
+                Status::code(&Status::ok("")),
+                None,
+            );
 
-                Ok(response)
-            }
-            None => {
-                // Check if workflow exists to provide better error message
-                let exists = sqlx::query!(
-                    r#"
-                    SELECT status FROM kagzi.workflow_runs
-                    WHERE run_id = $1 AND namespace_id = $2
-                    "#,
-                    run_id,
-                    namespace_id
-                )
-                .fetch_optional(&self.pool)
+            Ok(Response::new(Empty {}))
+        } else {
+            // Check why cancellation failed
+            let exists = workflows
+                .check_exists(run_id, &namespace_id)
                 .await
-                .map_err(|e| {
-                    tracing::error!("Failed to check workflow existence: {:?}", e);
-                    Status::internal("Failed to check workflow existence")
-                })?;
+                .map_err(map_store_error)?;
 
-                let status = match exists {
-                    Some(row) => Status::failed_precondition(format!(
-                        "Cannot cancel workflow with status '{}'. Only PENDING, RUNNING, or SLEEPING workflows can be cancelled.",
-                        row.status
-                    )),
-                    None => Status::not_found(format!(
-                        "Workflow run not found: run_id={}, namespace_id={}",
-                        run_id, namespace_id
-                    )),
-                };
+            let status = if exists.exists {
+                Status::failed_precondition(format!(
+                    "Cannot cancel workflow with status '{:?}'. Only PENDING, RUNNING, or SLEEPING workflows can be cancelled.",
+                    exists.status
+                ))
+            } else {
+                Status::not_found(format!(
+                    "Workflow run not found: run_id={}, namespace_id={}",
+                    run_id, namespace_id
+                ))
+            };
 
-                log_grpc_response(
-                    "CancelWorkflowRun",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&status),
-                    Some("Workflow cancellation failed"),
-                );
+            log_grpc_response(
+                "CancelWorkflowRun",
+                &correlation_id,
+                &trace_id,
+                Status::code(&status),
+                Some("Workflow cancellation failed"),
+            );
 
-                Err(status)
-            }
+            Err(status)
         }
     }
 
@@ -813,50 +588,24 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
         let start = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(60); // 60s long poll
+        let timeout = std::time::Duration::from_secs(60);
 
         loop {
-            // Try to claim a task (PENDING or SLEEPING with wake_up_at passed)
-            let work = sqlx::query!(
-                r#"
-                UPDATE kagzi.workflow_runs
-                SET status = 'RUNNING',
-                    locked_by = $1,
-                    locked_until = NOW() + INTERVAL '30 seconds',
-                    started_at = COALESCE(started_at, NOW()),
-                    attempts = attempts + 1
-                WHERE run_id = (
-                    SELECT run_id
-                    FROM kagzi.workflow_runs
-                    WHERE task_queue = $2
-                      AND namespace_id = $3
-                      AND (
-                        (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
-                        OR (status = 'SLEEPING' AND wake_up_at <= NOW())
-                      )
-                    ORDER BY COALESCE(wake_up_at, created_at) ASC
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 1
-                )
-                RETURNING run_id, workflow_type, input
-                "#,
-                req.worker_id,
-                req.task_queue,
-                if req.namespace_id.is_empty() {
-                    "default".to_string()
-                } else {
-                    req.namespace_id.clone()
-                }
-            )
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to poll activity: {:?}", e);
-                Status::internal("Failed to poll activity")
-            })?;
+            let claimed = self
+                .store
+                .workflows()
+                .claim_next(&req.task_queue, &namespace_id, &req.worker_id)
+                .await
+                .map_err(map_store_error)?;
 
-            if let Some(w) = work {
+            if let Some(w) = claimed {
                 let input_bytes = serde_json::to_vec(&w.input).map_err(|e| {
                     tracing::error!("Failed to serialize workflow input: {:?}", e);
                     Status::internal("Failed to serialize workflow input")
@@ -887,8 +636,6 @@ impl WorkflowService for MyWorkflowService {
             }
 
             if start.elapsed() > timeout {
-                // Return empty response instead of error when no work is available
-                // This allows workers to gracefully handle the timeout and retry
                 log_grpc_response(
                     "PollActivity",
                     &correlation_id,
@@ -904,7 +651,6 @@ impl WorkflowService for MyWorkflowService {
                 }));
             }
 
-            // Wait a bit before retrying
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }
@@ -926,7 +672,6 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
 
@@ -934,90 +679,72 @@ impl WorkflowService for MyWorkflowService {
             return Err(Status::invalid_argument("worker_id is required"));
         }
 
-        // Extend lock only if worker still owns it
-        let result = sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET locked_until = NOW() + INTERVAL '30 seconds'
-            WHERE run_id = $1
-              AND locked_by = $2
-              AND status = 'RUNNING'
-            RETURNING run_id
-            "#,
-            run_id,
-            req.worker_id
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to record heartbeat: {:?}", e);
-            Status::internal("Failed to record heartbeat")
-        })?;
+        let extended = self
+            .store
+            .workflows()
+            .extend_lock(run_id, &req.worker_id)
+            .await
+            .map_err(map_store_error)?;
 
-        match result {
-            Some(_) => {
-                info!(
-                    "Heartbeat recorded for workflow {} by worker {}",
-                    run_id, req.worker_id
-                );
+        if extended {
+            info!(
+                "Heartbeat recorded for workflow {} by worker {}",
+                run_id, req.worker_id
+            );
 
-                let response = Response::new(Empty {});
+            log_grpc_response(
+                "RecordHeartbeat",
+                &correlation_id,
+                &trace_id,
+                Status::code(&Status::ok("")),
+                None,
+            );
 
-                log_grpc_response(
-                    "RecordHeartbeat",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    None,
-                );
+            Ok(Response::new(Empty {}))
+        } else {
+            // Check why heartbeat failed - query directly since we don't have namespace
+            let workflow = sqlx::query!(
+                r#"
+                SELECT status, locked_by FROM kagzi.workflow_runs
+                WHERE run_id = $1
+                "#,
+                run_id
+            )
+            .fetch_optional(self.store.pool())
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to check workflow: {:?}", e);
+                Status::internal("Failed to check workflow")
+            })?;
 
-                Ok(response)
-            }
-            None => {
-                // Check why the update failed
-                let workflow = sqlx::query!(
-                    r#"
-                    SELECT status, locked_by FROM kagzi.workflow_runs
-                    WHERE run_id = $1
-                    "#,
-                    run_id
-                )
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to check workflow: {:?}", e);
-                    Status::internal("Failed to check workflow")
-                })?;
-
-                let status = match workflow {
-                    Some(row) => {
-                        if row.status != "RUNNING" {
-                            Status::failed_precondition(format!(
-                                "Workflow is not running (status: {})",
-                                row.status
-                            ))
-                        } else if row.locked_by.as_deref() != Some(&req.worker_id) {
-                            Status::failed_precondition(format!(
-                                "Lock stolen by another worker: {:?}",
-                                row.locked_by
-                            ))
-                        } else {
-                            Status::internal("Unexpected heartbeat failure")
-                        }
+            let status = match workflow {
+                Some(row) => {
+                    if row.status != "RUNNING" {
+                        Status::failed_precondition(format!(
+                            "Workflow is not running (status: {})",
+                            row.status
+                        ))
+                    } else if row.locked_by.as_deref() != Some(&req.worker_id) {
+                        Status::failed_precondition(format!(
+                            "Lock stolen by another worker: {:?}",
+                            row.locked_by
+                        ))
+                    } else {
+                        Status::internal("Unexpected heartbeat failure")
                     }
-                    None => Status::not_found(format!("Workflow run not found: {}", run_id)),
-                };
+                }
+                None => Status::not_found(format!("Workflow run not found: {}", run_id)),
+            };
 
-                log_grpc_response(
-                    "RecordHeartbeat",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&status),
-                    Some("Heartbeat recording failed"),
-                );
+            log_grpc_response(
+                "RecordHeartbeat",
+                &correlation_id,
+                &trace_id,
+                Status::code(&status),
+                Some("Heartbeat recording failed"),
+            );
 
-                Err(status)
-            }
+            Err(status)
         }
     }
 
@@ -1039,101 +766,42 @@ impl WorkflowService for MyWorkflowService {
         let attempt_id = uuid::Uuid::parse_str(&req.step_attempt_id)
             .map_err(|_| Status::invalid_argument("Invalid step_attempt_id"))?;
 
-        let row = sqlx::query!(
-            r#"
-            SELECT attempt_id, run_id as workflow_run_id, step_id, attempt_number, status,
-                   input, output, error, child_workflow_run_id,
-                   started_at, finished_at, created_at, namespace_id
-            FROM kagzi.step_runs
-            WHERE attempt_id = $1
-            "#,
-            attempt_id
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get step attempt: {:?}", e);
-            Status::internal("Failed to get step attempt")
-        })?;
+        let step = self
+            .store
+            .steps()
+            .find_by_id(attempt_id)
+            .await
+            .map_err(map_store_error)?;
 
-        if let Some(r) = row {
-            // Determine step kind from step_id patterns or other logic
-            let kind = if r.step_id.contains("sleep") || r.step_id.contains("wait") {
-                StepKind::Sleep
-            } else if r.step_id.contains("function") || r.step_id.contains("task") {
-                StepKind::Function
-            } else {
-                StepKind::Unspecified
-            };
+        match step {
+            Some(s) => {
+                let proto = step_to_proto(s)?;
 
-            let output_bytes = serde_json::to_vec(&r.output).map_err(|e| {
-                tracing::error!("Failed to serialize step output: {:?}", e);
-                Status::internal("Failed to serialize step output")
-            })?;
+                log_grpc_response(
+                    "GetStepAttempt",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&Status::ok("")),
+                    None,
+                );
 
-            let attempt = StepAttempt {
-                step_attempt_id: r.attempt_id.to_string(),
-                workflow_run_id: r.workflow_run_id.to_string(),
-                step_id: r.step_id,
-                kind: kind.into(),
-                status: map_step_status(&r.status).into(),
-                config: vec![],  // Config not stored in DB yet
-                context: vec![], // Context not stored in DB yet
-                output: output_bytes,
-                error: r.error.map(|e| e.into_bytes()).unwrap_or_default(),
-                started_at: r.started_at.map(|t| prost_types::Timestamp {
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
-                finished_at: r.finished_at.map(|t| prost_types::Timestamp {
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
-                created_at: r.created_at.map(|t| prost_types::Timestamp {
-                    seconds: t.timestamp(),
-                    nanos: t.timestamp_subsec_nanos() as i32,
-                }),
-                updated_at: r
-                    .finished_at
-                    .or(r.created_at)
-                    .map(|t| prost_types::Timestamp {
-                        seconds: t.timestamp(),
-                        nanos: t.timestamp_subsec_nanos() as i32,
-                    }),
-                child_workflow_run_id: r
-                    .child_workflow_run_id
-                    .map(|u| u.to_string())
-                    .unwrap_or_else(|| {
-                        tracing::warn!("Step attempt has no child_workflow_run_id, using default");
-                        String::new()
-                    }),
-                namespace_id: r.namespace_id,
-            };
-            let response = Response::new(GetStepAttemptResponse {
-                step_attempt: Some(attempt),
-            });
+                Ok(Response::new(GetStepAttemptResponse {
+                    step_attempt: Some(proto),
+                }))
+            }
+            None => {
+                let status = Status::not_found("Step attempt not found");
 
-            log_grpc_response(
-                "GetStepAttempt",
-                &correlation_id,
-                &trace_id,
-                Status::code(&Status::ok("")),
-                None,
-            );
+                log_grpc_response(
+                    "GetStepAttempt",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&status),
+                    Some("Step attempt not found"),
+                );
 
-            Ok(response)
-        } else {
-            let status = Status::not_found("Step attempt not found");
-
-            log_grpc_response(
-                "GetStepAttempt",
-                &correlation_id,
-                &trace_id,
-                Status::code(&status),
-                Some("Step attempt not found"),
-            );
-
-            Err(status)
+                Err(status)
+            }
         }
     }
 
@@ -1157,7 +825,6 @@ impl WorkflowService for MyWorkflowService {
         let run_id = uuid::Uuid::parse_str(&req.workflow_run_id)
             .map_err(|_| Status::invalid_argument("Invalid workflow_run_id"))?;
 
-        // Default page size
         let page_size = if req.page_size <= 0 {
             50
         } else if req.page_size > 100 {
@@ -1166,132 +833,21 @@ impl WorkflowService for MyWorkflowService {
             req.page_size
         };
 
-        // Define a struct to hold the query result
-        #[derive(sqlx::FromRow)]
-        struct StepRunRow {
-            attempt_id: uuid::Uuid,
-            workflow_run_id: uuid::Uuid,
-            step_id: String,
-            #[allow(dead_code)]
-            attempt_number: i32,
-            status: String,
-            #[allow(dead_code)]
-            input: Option<serde_json::Value>,
-            output: Option<serde_json::Value>,
-            error: Option<String>,
-            child_workflow_run_id: Option<uuid::Uuid>,
-            started_at: Option<chrono::DateTime<chrono::Utc>>,
-            finished_at: Option<chrono::DateTime<chrono::Utc>>,
-            created_at: Option<chrono::DateTime<chrono::Utc>>,
-            namespace_id: String,
-        }
-
-        // Query with optional step_id filter
-        let rows: Vec<StepRunRow> = if req.step_id.is_empty() {
-            sqlx::query_as(
-                r#"
-                SELECT attempt_id, run_id as workflow_run_id, step_id, attempt_number, status,
-                       input, output, error, child_workflow_run_id,
-                       started_at, finished_at, created_at, namespace_id
-                FROM kagzi.step_runs
-                WHERE run_id = $1
-                ORDER BY created_at ASC, attempt_number ASC
-                LIMIT $2
-                "#,
-            )
-            .bind(run_id)
-            .bind(page_size as i64)
-            .fetch_all(&self.pool)
-            .await
+        let step_id = if req.step_id.is_empty() {
+            None
         } else {
-            sqlx::query_as(
-                r#"
-                SELECT attempt_id, run_id as workflow_run_id, step_id, attempt_number, status,
-                       input, output, error, child_workflow_run_id,
-                       started_at, finished_at, created_at, namespace_id
-                FROM kagzi.step_runs
-                WHERE run_id = $1 AND step_id = $2
-                ORDER BY attempt_number ASC
-                LIMIT $3
-                "#,
-            )
-            .bind(run_id)
-            .bind(&req.step_id)
-            .bind(page_size as i64)
-            .fetch_all(&self.pool)
+            Some(req.step_id.as_str())
+        };
+
+        let steps = self
+            .store
+            .steps()
+            .list_by_workflow(run_id, step_id, page_size)
             .await
-        }
-        .map_err(|e| {
-            tracing::error!("Failed to list step attempts: {:?}", e);
-            Status::internal("Failed to list step attempts")
-        })?;
+            .map_err(map_store_error)?;
 
-        let attempts: Result<Vec<_>, Status> =
-            rows.into_iter()
-                .map(|r| {
-                    // Determine step kind from step_id patterns or other logic
-                    let kind = if r.step_id.contains("sleep") || r.step_id.contains("wait") {
-                        StepKind::Sleep
-                    } else if r.step_id.contains("function") || r.step_id.contains("task") {
-                        StepKind::Function
-                    } else {
-                        StepKind::Unspecified
-                    };
-
-                    Ok(StepAttempt {
-                        step_attempt_id: r.attempt_id.to_string(),
-                        workflow_run_id: r.workflow_run_id.to_string(),
-                        step_id: r.step_id,
-                        kind: kind.into(),
-                        status: map_step_status(&r.status).into(),
-                        config: vec![],  // Config not stored in DB yet
-                        context: vec![], // Context not stored in DB yet
-                        output: serde_json::to_vec(&r.output).map_err(|e| {
-                            tracing::error!("Failed to serialize step output: {:?}", e);
-                            Status::internal("Failed to serialize step output")
-                        })?,
-                        error: r.error.map(|e| e.into_bytes()).unwrap_or_default(),
-                        started_at: r.started_at.map(|t| prost_types::Timestamp {
-                            seconds: t.timestamp(),
-                            nanos: t.timestamp_subsec_nanos() as i32,
-                        }),
-                        finished_at: r.finished_at.map(|t| prost_types::Timestamp {
-                            seconds: t.timestamp(),
-                            nanos: t.timestamp_subsec_nanos() as i32,
-                        }),
-                        created_at: r.created_at.map(|t| prost_types::Timestamp {
-                            seconds: t.timestamp(),
-                            nanos: t.timestamp_subsec_nanos() as i32,
-                        }),
-                        updated_at: r.finished_at.or(r.created_at).map(|t| {
-                            prost_types::Timestamp {
-                                seconds: t.timestamp(),
-                                nanos: t.timestamp_subsec_nanos() as i32,
-                            }
-                        }),
-                        child_workflow_run_id: r
-                            .child_workflow_run_id
-                            .map(|u| u.to_string())
-                            .unwrap_or_else(|| {
-                                tracing::warn!(
-                                    "Step attempt has no child_workflow_run_id, using default"
-                                );
-                                String::new()
-                            }),
-                        namespace_id: r.namespace_id,
-                    })
-                })
-                .collect();
-
-        let attempts = attempts.map_err(|e| {
-            tracing::error!("Failed to convert step attempts to proto: {:?}", e);
-            e
-        })?;
-
-        let response = Response::new(ListStepAttemptsResponse {
-            step_attempts: attempts,
-            next_page_token: String::new(), // Pagination not implemented yet
-        });
+        let attempts: Result<Vec<_>, Status> = steps.into_iter().map(step_to_proto).collect();
+        let attempts = attempts?;
 
         log_grpc_response(
             "ListStepAttempts",
@@ -1301,7 +857,10 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(response)
+        Ok(Response::new(ListStepAttemptsResponse {
+            step_attempts: attempts,
+            next_page_token: String::new(),
+        }))
     }
 
     #[instrument(skip(self), fields(
@@ -1324,110 +883,35 @@ impl WorkflowService for MyWorkflowService {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
 
-        let step = sqlx::query!(
-            r#"
-            SELECT status, output, retry_at
-            FROM kagzi.step_runs
-            WHERE run_id = $1 AND step_id = $2 AND is_latest = true
-            "#,
-            run_id,
-            req.step_id
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to check step status: {:?}", e);
-            Status::internal("Failed to check step status")
-        })?;
-
-        if let Some(ref s) = step {
-            if s.status == "COMPLETED" {
-                let cached_bytes = serde_json::to_vec(&s.output).map_err(|e| {
-                    tracing::error!("Failed to serialize cached step output: {:?}", e);
-                    Status::internal("Failed to serialize cached step output")
-                })?;
-
-                let response = Response::new(BeginStepResponse {
-                    should_execute: false,
-                    cached_result: cached_bytes,
-                });
-
-                log_grpc_response(
-                    "BeginStep",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    None,
-                );
-
-                return Ok(response);
-            }
-
-            if s.status == "PENDING"
-                && let Some(retry_at) = s.retry_at
-                && retry_at > chrono::Utc::now()
-            {
-                let wait_duration = retry_at - chrono::Utc::now();
-                tracing::info!(
-                    "Step is in backoff, retry_at: {:?}, wait: {:?}",
-                    retry_at,
-                    wait_duration
-                );
-                return Err(Status::failed_precondition(format!(
-                    "Step is in backoff. Retry scheduled at {}",
-                    retry_at
-                )));
-            }
-        }
-
-        // Parse input if provided
-        let input_json: Option<serde_json::Value> = if !req.input.is_empty() {
+        let input: Option<serde_json::Value> = if !req.input.is_empty() {
             Some(serde_json::from_slice(&req.input).map_err(|e| {
-                tracing::error!("Failed to parse step input: {:?}", e);
                 Status::invalid_argument(format!("Input must be valid JSON: {}", e))
             })?)
         } else {
             None
         };
 
-        // Mark any previous attempts as not latest
-        sqlx::query!(
-            "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
-            run_id,
-            req.step_id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to update previous attempts: {:?}", e);
-            Status::internal("Failed to update previous attempts")
-        })?;
+        let result = self
+            .store
+            .steps()
+            .begin(BeginStepParams {
+                run_id,
+                step_id: req.step_id,
+                input,
+                retry_policy: proto_policy_to_store(req.retry_policy),
+            })
+            .await
+            .map_err(map_store_error)?;
 
-        // Create the step record with RUNNING status, input, and started_at
-        sqlx::query!(
-            r#"
-            INSERT INTO kagzi.step_runs (run_id, step_id, status, input, started_at, is_latest, attempt_number, namespace_id, retry_policy)
-            VALUES ($1, $2, 'RUNNING', $3, NOW(), true, 
-                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'),
-                    $4)
-            "#,
-            run_id,
-            req.step_id,
-            input_json,
-            serde_json::to_value(RetryPolicyConfig::from_proto(req.retry_policy)).unwrap_or(serde_json::json!(null))
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to create step record: {:?}", e);
-            Status::internal("Failed to create step record")
-        })?;
-
-        let response = Response::new(BeginStepResponse {
-            should_execute: true,
-            cached_result: vec![],
-        });
+        let cached_result = result
+            .cached_output
+            .map(|o| serde_json::to_vec(&o))
+            .transpose()
+            .map_err(|e| {
+                tracing::error!("Failed to serialize cached step output: {:?}", e);
+                Status::internal("Failed to serialize cached step output")
+            })?
+            .unwrap_or_default();
 
         log_grpc_response(
             "BeginStep",
@@ -1437,7 +921,10 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(response)
+        Ok(Response::new(BeginStepResponse {
+            should_execute: result.should_execute,
+            cached_result,
+        }))
     }
 
     #[instrument(skip(self), fields(
@@ -1463,61 +950,11 @@ impl WorkflowService for MyWorkflowService {
         let output_json: serde_json::Value = serde_json::from_slice(&req.output)
             .map_err(|e| Status::invalid_argument(format!("Output must be valid JSON: {}", e)))?;
 
-        // Update the existing RUNNING step record to COMPLETED
-        // This preserves the input and started_at from begin_step
-        let result = sqlx::query!(
-            r#"
-            UPDATE kagzi.step_runs 
-            SET status = 'COMPLETED', output = $3, finished_at = NOW()
-            WHERE run_id = $1 AND step_id = $2 AND is_latest = true AND status = 'RUNNING'
-            "#,
-            run_id,
-            req.step_id,
-            output_json
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to complete step: {:?}", e);
-            Status::internal("Failed to complete step")
-        })?;
-
-        // If no RUNNING record was updated, create a new one (for backward compatibility)
-        if result.rows_affected() == 0 {
-            // Mark previous attempts as not latest
-            sqlx::query!(
-                "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
-                run_id,
-                req.step_id
-            )
-            .execute(&self.pool)
+        self.store
+            .steps()
+            .complete(run_id, &req.step_id, output_json)
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to update previous attempts: {:?}", e);
-                Status::internal("Failed to update previous attempts")
-            })?;
-
-            // Insert new completed record
-            sqlx::query!(
-                r#"
-                INSERT INTO kagzi.step_runs (run_id, step_id, status, output, finished_at, is_latest, attempt_number, namespace_id)
-                VALUES ($1, $2, 'COMPLETED', $3, NOW(), true, 
-                        COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                        COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
-                "#,
-                run_id,
-                req.step_id,
-                output_json
-            )
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to complete step: {:?}", e);
-                Status::internal("Failed to complete step")
-            })?;
-        }
-
-        let response = Response::new(Empty {});
+            .map_err(map_store_error)?;
 
         log_grpc_response(
             "CompleteStep",
@@ -1527,7 +964,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(response)
+        Ok(Response::new(Empty {}))
     }
 
     #[instrument(skip(self), fields(
@@ -1547,7 +984,6 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        // Validate UUID format
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
 
@@ -1555,130 +991,37 @@ impl WorkflowService for MyWorkflowService {
             return Err(Status::invalid_argument("step_id is required"));
         }
 
-        // Fetch current attempt number and retry policy
-        let step_info = sqlx::query!(
-            r#"
-            SELECT attempt_number, COALESCE(sr.retry_policy, wr.retry_policy) as policy
-            FROM kagzi.step_runs sr
-            JOIN kagzi.workflow_runs wr ON sr.run_id = wr.run_id
-            WHERE sr.run_id = $1 AND sr.step_id = $2 AND sr.is_latest = true
-            "#,
-            run_id,
-            req.step_id
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to fetch step info: {:?}", e);
-            Status::internal("Failed to fetch step info")
-        })?;
-
-        if let Some(info) = step_info {
-            let policy: RetryPolicyConfig = info
-                .policy
-                .map(|v| serde_json::from_value(v).unwrap_or_default())
-                .unwrap_or_default();
-
-            let should_retry = !req.non_retryable
-                && !policy.is_non_retryable(&req.error)
-                && policy.should_retry(info.attempt_number);
-
-            if should_retry {
-                let delay = if req.retry_after_ms > 0 {
-                    Duration::from_millis(req.retry_after_ms as u64)
+        let result = self
+            .store
+            .steps()
+            .fail(FailStepParams {
+                run_id,
+                step_id: req.step_id.clone(),
+                error: req.error,
+                non_retryable: req.non_retryable,
+                retry_after_ms: if req.retry_after_ms > 0 {
+                    Some(req.retry_after_ms)
                 } else {
-                    policy.calculate_delay(info.attempt_number)
-                };
-
-                // Schedule retry
-                sqlx::query!(
-                    r#"
-                    UPDATE kagzi.step_runs
-                    SET status = 'PENDING',
-                        retry_at = NOW() + ($3 * INTERVAL '1 millisecond'),
-                        error = $4
-                    WHERE run_id = $1 AND step_id = $2 AND is_latest = true
-                    "#,
-                    run_id,
-                    req.step_id,
-                    delay.as_millis() as f64,
-                    req.error
-                )
-                .execute(&self.pool)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to schedule retry: {:?}", e);
-                    Status::internal("Failed to schedule retry")
-                })?;
-
-                info!(run_id = %run_id, step_id = %req.step_id,
-                      attempt = info.attempt_number, delay_ms = delay.as_millis(),
-                      "Step failed, scheduling retry");
-
-                return Ok(Response::new(Empty {}));
-            }
-        }
-
-        // Update the existing RUNNING step record to FAILED
-        // This preserves the input and started_at from begin_step
-        let result = sqlx::query!(
-            r#"
-            UPDATE kagzi.step_runs 
-            SET status = 'FAILED', error = $3, finished_at = NOW()
-            WHERE run_id = $1 AND step_id = $2 AND is_latest = true AND status = 'RUNNING'
-            "#,
-            run_id,
-            req.step_id,
-            req.error
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to record step failure: {:?}", e);
-            Status::internal("Failed to record step failure")
-        })?;
-
-        // If no RUNNING record was updated, create a new one (for backward compatibility)
-        if result.rows_affected() == 0 {
-            // Mark previous attempts as not latest
-            sqlx::query!(
-                "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
-                run_id,
-                req.step_id
-            )
-            .execute(&self.pool)
+                    None
+                },
+            })
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to update previous attempts: {:?}", e);
-                Status::internal("Failed to update previous attempts")
-            })?;
+            .map_err(map_store_error)?;
 
-            // Insert new failed attempt
-            sqlx::query!(
-                r#"
-                INSERT INTO kagzi.step_runs (run_id, step_id, status, error, finished_at, is_latest, attempt_number, namespace_id)
-                VALUES ($1, $2, 'FAILED', $3, NOW(), true, 
-                        COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                        COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
-                "#,
-                run_id,
-                req.step_id,
-                req.error
-            )
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to record step failure: {:?}", e);
-                Status::internal("Failed to record step failure")
-            })?;
+        if result.scheduled_retry {
+            info!(
+                run_id = %run_id,
+                step_id = %req.step_id,
+                retry_at = ?result.retry_at,
+                "Step failed, scheduling retry"
+            );
+        } else {
+            info!(
+                run_id = %run_id,
+                step_id = %req.step_id,
+                "Step failed permanently"
+            );
         }
-
-        info!(
-            "Step {} failed for workflow {}: {}",
-            req.step_id, run_id, req.error
-        );
-
-        let response = Response::new(Empty {});
 
         log_grpc_response(
             "FailStep",
@@ -1688,7 +1031,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(response)
+        Ok(Response::new(Empty {}))
     }
 
     #[instrument(skip(self), fields(
@@ -1713,27 +1056,11 @@ impl WorkflowService for MyWorkflowService {
         let output_json: serde_json::Value = serde_json::from_slice(&req.output)
             .map_err(|e| Status::invalid_argument(format!("Output must be valid JSON: {}", e)))?;
 
-        sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET status = 'COMPLETED',
-                output = $2,
-                finished_at = NOW(),
-                locked_by = NULL,
-                locked_until = NULL
-            WHERE run_id = $1
-            "#,
-            run_id,
-            output_json
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to complete workflow: {:?}", e);
-            Status::internal("Failed to complete workflow")
-        })?;
-
-        let response = Response::new(Empty {});
+        self.store
+            .workflows()
+            .complete(run_id, output_json)
+            .await
+            .map_err(map_store_error)?;
 
         log_grpc_response(
             "CompleteWorkflow",
@@ -1743,7 +1070,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(response)
+        Ok(Response::new(Empty {}))
     }
 
     #[instrument(skip(self), fields(
@@ -1765,27 +1092,11 @@ impl WorkflowService for MyWorkflowService {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
 
-        sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET status = 'FAILED',
-                error = $2,
-                finished_at = NOW(),
-                locked_by = NULL,
-                locked_until = NULL
-            WHERE run_id = $1
-            "#,
-            run_id,
-            req.error
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to fail workflow: {:?}", e);
-            Status::internal("Failed to fail workflow")
-        })?;
-
-        let response = Response::new(Empty {});
+        self.store
+            .workflows()
+            .fail(run_id, &req.error)
+            .await
+            .map_err(map_store_error)?;
 
         log_grpc_response(
             "FailWorkflow",
@@ -1795,7 +1106,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(response)
+        Ok(Response::new(Empty {}))
     }
 
     #[instrument(skip(self), fields(
@@ -1818,28 +1129,11 @@ impl WorkflowService for MyWorkflowService {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
 
-        let duration = req.duration_seconds as f64;
-
-        sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET status = 'SLEEPING',
-                wake_up_at = NOW() + ($2 * INTERVAL '1 second'),
-                locked_by = NULL,
-                locked_until = NULL
-            WHERE run_id = $1
-            "#,
-            run_id,
-            duration
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to schedule sleep: {:?}", e);
-            Status::internal("Failed to schedule sleep")
-        })?;
-
-        let response = Response::new(Empty {});
+        self.store
+            .workflows()
+            .schedule_sleep(run_id, req.duration_seconds)
+            .await
+            .map_err(map_store_error)?;
 
         log_grpc_response(
             "ScheduleSleep",
@@ -1849,7 +1143,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(response)
+        Ok(Response::new(Empty {}))
     }
 
     async fn health_check(
@@ -1862,7 +1156,7 @@ impl WorkflowService for MyWorkflowService {
         log_grpc_request("HealthCheck", &correlation_id, &trace_id, None);
 
         let _req = request.into_inner();
-        let db_status = match sqlx::query("SELECT 1").fetch_one(&self.pool).await {
+        let db_status = match sqlx::query("SELECT 1").fetch_one(self.store.pool()).await {
             Ok(_) => {
                 info!(
                     correlation_id = correlation_id,
@@ -1872,7 +1166,7 @@ impl WorkflowService for MyWorkflowService {
                 kagzi_proto::kagzi::health_check_response::ServingStatus::Serving
             }
             Err(e) => {
-                error!(
+                tracing::error!(
                     correlation_id = correlation_id,
                     trace_id = trace_id,
                     error = %e,
