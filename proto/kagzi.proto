@@ -130,6 +130,14 @@ message StepAttempt {
 
 // --- Requests / Responses ---
 
+message RetryPolicy {
+  int32 maximum_attempts = 1;           // default: 5, -1 = unlimited
+  int64 initial_interval_ms = 2;        // default: 1000
+  double backoff_coefficient = 3;       // default: 2.0
+  int64 maximum_interval_ms = 4;        // default: 60000
+  repeated string non_retryable_errors = 5;
+}
+
 message StartWorkflowRequest {
   string workflow_id = 1;    // Business ID (e.g., "order-123")
   string task_queue = 2;     // Who handles this?
@@ -142,6 +150,7 @@ message StartWorkflowRequest {
   bytes context = 7;
   google.protobuf.Timestamp deadline_at = 8;
   string version = 9;
+  RetryPolicy retry_policy = 10;
 }
 
 message StartWorkflowResponse {
@@ -219,6 +228,7 @@ message BeginStepRequest {
   string run_id = 1;
   string step_id = 2;
   bytes input = 3;  // Optional: Step input for recording
+  RetryPolicy retry_policy = 4;
 }
 
 message BeginStepResponse {
@@ -236,6 +246,8 @@ message FailStepRequest {
   string run_id = 1;
   string step_id = 2;
   string error = 3;
+  bool non_retryable = 4;
+  int64 retry_after_ms = 5;
 }
 
 message CompleteWorkflowRequest {

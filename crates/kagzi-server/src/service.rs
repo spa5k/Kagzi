@@ -9,10 +9,11 @@ use kagzi_proto::kagzi::{
     GetStepAttemptResponse, GetWorkflowRunRequest, GetWorkflowRunResponse, HealthCheckRequest,
     HealthCheckResponse, ListStepAttemptsRequest, ListStepAttemptsResponse,
     ListWorkflowRunsRequest, ListWorkflowRunsResponse, PollActivityRequest, PollActivityResponse,
-    RecordHeartbeatRequest, ScheduleSleepRequest, StartWorkflowRequest, StartWorkflowResponse,
-    StepAttempt, StepAttemptStatus, StepKind, WorkflowRun, WorkflowStatus,
+    RecordHeartbeatRequest, RetryPolicy, ScheduleSleepRequest, StartWorkflowRequest,
+    StartWorkflowResponse, StepAttempt, StepAttemptStatus, StepKind, WorkflowRun, WorkflowStatus,
 };
 use sqlx::PgPool;
+use std::time::Duration;
 use tonic::{Request, Response, Status};
 use tracing::{error, info, instrument};
 
@@ -132,6 +133,75 @@ fn map_step_status(status: &str) -> StepAttemptStatus {
     }
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct RetryPolicyConfig {
+    pub maximum_attempts: i32,
+    pub initial_interval_ms: i64,
+    pub backoff_coefficient: f64,
+    pub maximum_interval_ms: i64,
+    #[serde(default)]
+    pub non_retryable_errors: Vec<String>,
+}
+
+impl Default for RetryPolicyConfig {
+    fn default() -> Self {
+        Self {
+            maximum_attempts: 5,
+            initial_interval_ms: 1000,
+            backoff_coefficient: 2.0,
+            maximum_interval_ms: 60000,
+            non_retryable_errors: vec![],
+        }
+    }
+}
+
+impl RetryPolicyConfig {
+    pub fn from_proto(proto: Option<RetryPolicy>) -> Self {
+        match proto {
+            Some(p) => Self {
+                maximum_attempts: if p.maximum_attempts == 0 {
+                    5
+                } else {
+                    p.maximum_attempts
+                },
+                initial_interval_ms: if p.initial_interval_ms == 0 {
+                    1000
+                } else {
+                    p.initial_interval_ms
+                },
+                backoff_coefficient: if p.backoff_coefficient == 0.0 {
+                    2.0
+                } else {
+                    p.backoff_coefficient
+                },
+                maximum_interval_ms: if p.maximum_interval_ms == 0 {
+                    60000
+                } else {
+                    p.maximum_interval_ms
+                },
+                non_retryable_errors: p.non_retryable_errors,
+            },
+            None => Self::default(),
+        }
+    }
+
+    pub fn calculate_delay(&self, attempt: i32) -> Duration {
+        let delay_ms =
+            (self.initial_interval_ms as f64 * self.backoff_coefficient.powi(attempt)) as i64;
+        Duration::from_millis(delay_ms.min(self.maximum_interval_ms) as u64)
+    }
+
+    pub fn is_non_retryable(&self, error: &str) -> bool {
+        self.non_retryable_errors
+            .iter()
+            .any(|e| error.starts_with(e))
+    }
+
+    pub fn should_retry(&self, current_attempt: i32) -> bool {
+        self.maximum_attempts < 0 || current_attempt < self.maximum_attempts
+    }
+}
+
 pub struct MyWorkflowService {
     pub pool: PgPool,
 }
@@ -212,9 +282,9 @@ impl WorkflowService for MyWorkflowService {
             r#"
             INSERT INTO kagzi.workflow_runs (
                 business_id, task_queue, workflow_type, status, input,
-                namespace_id, idempotency_key, context, deadline_at, version
+                namespace_id, idempotency_key, context, deadline_at, version, retry_policy
             )
-            VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9, $10)
             RETURNING run_id
             "#,
             req.workflow_id,
@@ -232,7 +302,9 @@ impl WorkflowService for MyWorkflowService {
                 .map(|ts| std::time::SystemTime::UNIX_EPOCH
                     + std::time::Duration::new(ts.seconds as u64, ts.nanos as u32))
                 .map(chrono::DateTime::<chrono::Utc>::from),
-            version
+            version,
+            serde_json::to_value(RetryPolicyConfig::from_proto(req.retry_policy))
+                .unwrap_or(serde_json::json!(null))
         )
         .fetch_one(&self.pool)
         .await
@@ -1254,7 +1326,7 @@ impl WorkflowService for MyWorkflowService {
 
         let step = sqlx::query!(
             r#"
-            SELECT status, output
+            SELECT status, output, retry_at
             FROM kagzi.step_runs
             WHERE run_id = $1 AND step_id = $2 AND is_latest = true
             "#,
@@ -1268,28 +1340,44 @@ impl WorkflowService for MyWorkflowService {
             Status::internal("Failed to check step status")
         })?;
 
-        if let Some(s) = step
-            && s.status == "COMPLETED"
-        {
-            let cached_bytes = serde_json::to_vec(&s.output).map_err(|e| {
-                tracing::error!("Failed to serialize cached step output: {:?}", e);
-                Status::internal("Failed to serialize cached step output")
-            })?;
+        if let Some(ref s) = step {
+            if s.status == "COMPLETED" {
+                let cached_bytes = serde_json::to_vec(&s.output).map_err(|e| {
+                    tracing::error!("Failed to serialize cached step output: {:?}", e);
+                    Status::internal("Failed to serialize cached step output")
+                })?;
 
-            let response = Response::new(BeginStepResponse {
-                should_execute: false,
-                cached_result: cached_bytes,
-            });
+                let response = Response::new(BeginStepResponse {
+                    should_execute: false,
+                    cached_result: cached_bytes,
+                });
 
-            log_grpc_response(
-                "BeginStep",
-                &correlation_id,
-                &trace_id,
-                Status::code(&Status::ok("")),
-                None,
-            );
+                log_grpc_response(
+                    "BeginStep",
+                    &correlation_id,
+                    &trace_id,
+                    Status::code(&Status::ok("")),
+                    None,
+                );
 
-            return Ok(response);
+                return Ok(response);
+            }
+
+            if s.status == "PENDING"
+                && let Some(retry_at) = s.retry_at
+                && retry_at > chrono::Utc::now()
+            {
+                let wait_duration = retry_at - chrono::Utc::now();
+                tracing::info!(
+                    "Step is in backoff, retry_at: {:?}, wait: {:?}",
+                    retry_at,
+                    wait_duration
+                );
+                return Err(Status::failed_precondition(format!(
+                    "Step is in backoff. Retry scheduled at {}",
+                    retry_at
+                )));
+            }
         }
 
         // Parse input if provided
@@ -1318,14 +1406,16 @@ impl WorkflowService for MyWorkflowService {
         // Create the step record with RUNNING status, input, and started_at
         sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (run_id, step_id, status, input, started_at, is_latest, attempt_number, namespace_id)
+            INSERT INTO kagzi.step_runs (run_id, step_id, status, input, started_at, is_latest, attempt_number, namespace_id, retry_policy)
             VALUES ($1, $2, 'RUNNING', $3, NOW(), true, 
                     COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'),
+                    $4)
             "#,
             run_id,
             req.step_id,
-            input_json
+            input_json,
+            serde_json::to_value(RetryPolicyConfig::from_proto(req.retry_policy)).unwrap_or(serde_json::json!(null))
         )
         .execute(&self.pool)
         .await
@@ -1463,6 +1553,70 @@ impl WorkflowService for MyWorkflowService {
 
         if req.step_id.is_empty() {
             return Err(Status::invalid_argument("step_id is required"));
+        }
+
+        // Fetch current attempt number and retry policy
+        let step_info = sqlx::query!(
+            r#"
+            SELECT attempt_number, COALESCE(sr.retry_policy, wr.retry_policy) as policy
+            FROM kagzi.step_runs sr
+            JOIN kagzi.workflow_runs wr ON sr.run_id = wr.run_id
+            WHERE sr.run_id = $1 AND sr.step_id = $2 AND sr.is_latest = true
+            "#,
+            run_id,
+            req.step_id
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to fetch step info: {:?}", e);
+            Status::internal("Failed to fetch step info")
+        })?;
+
+        if let Some(info) = step_info {
+            let policy: RetryPolicyConfig = info
+                .policy
+                .map(|v| serde_json::from_value(v).unwrap_or_default())
+                .unwrap_or_default();
+
+            let should_retry = !req.non_retryable
+                && !policy.is_non_retryable(&req.error)
+                && policy.should_retry(info.attempt_number);
+
+            if should_retry {
+                let delay = if req.retry_after_ms > 0 {
+                    Duration::from_millis(req.retry_after_ms as u64)
+                } else {
+                    policy.calculate_delay(info.attempt_number)
+                };
+
+                // Schedule retry
+                sqlx::query!(
+                    r#"
+                    UPDATE kagzi.step_runs
+                    SET status = 'PENDING',
+                        retry_at = NOW() + ($3 * INTERVAL '1 millisecond'),
+                        error = $4
+                    WHERE run_id = $1 AND step_id = $2 AND is_latest = true
+                    "#,
+                    run_id,
+                    req.step_id,
+                    delay.as_millis() as f64,
+                    req.error
+                )
+                .execute(&self.pool)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to schedule retry: {:?}", e);
+                    Status::internal("Failed to schedule retry")
+                })?;
+
+                info!(run_id = %run_id, step_id = %req.step_id,
+                      attempt = info.attempt_number, delay_ms = delay.as_millis(),
+                      "Step failed, scheduling retry");
+
+                return Ok(Response::new(Empty {}));
+            }
         }
 
         // Update the existing RUNNING step record to FAILED

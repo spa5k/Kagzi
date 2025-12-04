@@ -46,7 +46,7 @@ build-proto:
 # --- Development ---
 
 # Run the gRPC server
-dev:
+dev: build-proto
     cargo run -p kagzi-server
 
 # Launch gRPCui (requires grpcui to be installed: go install github.com/fullstorydev/grpcui/cmd/grpcui@latest)

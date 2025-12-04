@@ -35,6 +35,67 @@ impl std::fmt::Display for WorkflowPaused {
 
 impl std::error::Error for WorkflowPaused {}
 
+#[derive(Clone, Default)]
+pub struct RetryPolicy {
+    pub maximum_attempts: Option<i32>,
+    pub initial_interval: Option<Duration>,
+    pub backoff_coefficient: Option<f64>,
+    pub maximum_interval: Option<Duration>,
+    pub non_retryable_errors: Vec<String>,
+}
+
+impl From<RetryPolicy> for kagzi_proto::kagzi::RetryPolicy {
+    fn from(p: RetryPolicy) -> Self {
+        Self {
+            maximum_attempts: p.maximum_attempts.unwrap_or(0),
+            initial_interval_ms: p
+                .initial_interval
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+            backoff_coefficient: p.backoff_coefficient.unwrap_or(0.0),
+            maximum_interval_ms: p
+                .maximum_interval
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+            non_retryable_errors: p.non_retryable_errors,
+        }
+    }
+}
+
+/// Error that skips all retries
+#[derive(Debug)]
+pub struct NonRetryableError(pub String);
+
+impl std::fmt::Display for NonRetryableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for NonRetryableError {}
+
+/// Error with custom retry delay
+#[derive(Debug)]
+pub struct RetryAfterError {
+    pub message: String,
+    pub retry_after: Duration,
+}
+
+impl RetryAfterError {
+    pub fn new(message: impl Into<String>, retry_after: Duration) -> Self {
+        Self {
+            message: message.into(),
+            retry_after,
+        }
+    }
+}
+
+impl std::fmt::Display for RetryAfterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+impl std::error::Error for RetryAfterError {}
+
 pub struct WorkflowContext {
     client: WorkflowServiceClient<Channel>,
     run_id: String,
@@ -57,6 +118,7 @@ impl WorkflowContext {
             run_id: self.run_id.clone(),
             step_id: step_id.to_string(),
             input: vec![],
+            retry_policy: None,
         }));
 
         let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
@@ -83,10 +145,18 @@ impl WorkflowContext {
             Err(e) => {
                 error!(error = %e, "Step {} failed", step_id);
 
+                let non_retryable = e.downcast_ref::<NonRetryableError>().is_some();
+                let retry_after_ms = e
+                    .downcast_ref::<RetryAfterError>()
+                    .map(|e| e.retry_after.as_millis() as i64)
+                    .unwrap_or(0);
+
                 let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
                     step_id: step_id.to_string(),
                     error: e.to_string(),
+                    non_retryable,
+                    retry_after_ms,
                 }));
 
                 self.client.fail_step(fail_request).await?;
@@ -117,6 +187,7 @@ impl WorkflowContext {
             run_id: self.run_id.clone(),
             step_id: step_id.to_string(),
             input: input_bytes,
+            retry_policy: None,
         }));
 
         let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
@@ -143,10 +214,18 @@ impl WorkflowContext {
             Err(e) => {
                 error!(error = %e, "Step {} failed", step_id);
 
+                let non_retryable = e.downcast_ref::<NonRetryableError>().is_some();
+                let retry_after_ms = e
+                    .downcast_ref::<RetryAfterError>()
+                    .map(|e| e.retry_after.as_millis() as i64)
+                    .unwrap_or(0);
+
                 let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
                     step_id: step_id.to_string(),
                     error: e.to_string(),
+                    non_retryable,
+                    retry_after_ms,
                 }));
 
                 self.client.fail_step(fail_request).await?;
@@ -169,6 +248,7 @@ impl WorkflowContext {
             run_id: self.run_id.clone(),
             step_id: step_id.clone(),
             input: vec![],
+            retry_policy: None,
         }));
 
         let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
@@ -447,6 +527,7 @@ pub struct WorkflowBuilder<'a, I> {
     context: Option<serde_json::Value>,
     deadline_at: Option<chrono::DateTime<chrono::Utc>>,
     version: Option<String>,
+    retry_policy: Option<RetryPolicy>,
 }
 
 impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
@@ -461,6 +542,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             context: None,
             deadline_at: None,
             version: None,
+            retry_policy: None,
         }
     }
 
@@ -486,6 +568,18 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
 
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
+        self
+    }
+
+    pub fn retry_policy(mut self, policy: RetryPolicy) -> Self {
+        self.retry_policy = Some(policy);
+        self
+    }
+
+    pub fn retries(mut self, max_attempts: i32) -> Self {
+        self.retry_policy
+            .get_or_insert_with(Default::default)
+            .maximum_attempts = Some(max_attempts);
         self
     }
 
@@ -515,6 +609,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
                     nanos: dt.timestamp_subsec_nanos() as i32,
                 }),
                 version: self.version.unwrap_or_default(),
+                retry_policy: self.retry_policy.map(Into::into),
             })
             .await?;
 

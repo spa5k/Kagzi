@@ -7,10 +7,10 @@ mod common;
 
 use common::{TestHarness, from_json_bytes, json_bytes, make_request};
 use kagzi_proto::kagzi::{
-    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, FailWorkflowRequest,
-    GetWorkflowRunRequest, HealthCheckRequest, ListWorkflowRunsRequest, PollActivityRequest,
-    RecordHeartbeatRequest, ScheduleSleepRequest, StartWorkflowRequest, WorkflowStatus,
-    workflow_service_server::WorkflowService,
+    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, FailStepRequest,
+    FailWorkflowRequest, GetWorkflowRunRequest, HealthCheckRequest, ListWorkflowRunsRequest,
+    PollActivityRequest, RecordHeartbeatRequest, RetryPolicy, ScheduleSleepRequest,
+    StartWorkflowRequest, WorkflowStatus, workflow_service_server::WorkflowService,
 };
 use std::time::Duration;
 
@@ -36,6 +36,7 @@ async fn test_workflow_happy_path_start_poll_complete() {
         context: vec![],
         deadline_at: None,
         version: "1.0".to_string(),
+        retry_policy: None,
     };
 
     let response = harness
@@ -152,6 +153,7 @@ async fn test_workflow_failure_path() {
         workflow_type: "FailingTask".to_string(),
         input: json_bytes(&serde_json::json!({})),
         namespace_id: "test-ns".to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -224,6 +226,7 @@ async fn test_step_memoization_returns_cached_result() {
         workflow_type: "MemoTest".to_string(),
         input: json_bytes(&serde_json::json!({})),
         namespace_id: "test-ns".to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -252,6 +255,7 @@ async fn test_step_memoization_returns_cached_result() {
         run_id: run_id.clone(),
         step_id: "fetch_user_data".to_string(),
         input: vec![],
+        retry_policy: None,
     };
 
     let begin_response = harness
@@ -286,6 +290,7 @@ async fn test_step_memoization_returns_cached_result() {
         run_id: run_id.clone(),
         step_id: "fetch_user_data".to_string(),
         input: vec![],
+        retry_policy: None,
     };
 
     let begin_response = harness
@@ -321,6 +326,7 @@ async fn test_step_memoization_independent_steps() {
         workflow_type: "MultiStep".to_string(),
         input: json_bytes(&serde_json::json!({})),
         namespace_id: "test-ns".to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -361,6 +367,7 @@ async fn test_step_memoization_independent_steps() {
             run_id: run_id.clone(),
             step_id: "step_a".to_string(),
             input: vec![],
+            retry_policy: None,
         }))
         .await
         .unwrap()
@@ -375,6 +382,7 @@ async fn test_step_memoization_independent_steps() {
             run_id: run_id.clone(),
             step_id: "step_b".to_string(),
             input: vec![],
+            retry_policy: None,
         }))
         .await
         .unwrap()
@@ -399,6 +407,7 @@ async fn test_durable_sleep_and_wake() {
         workflow_type: "SleepTest".to_string(),
         input: json_bytes(&serde_json::json!({})),
         namespace_id: "test-ns".to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -520,6 +529,7 @@ async fn test_orphan_recovery_expired_lock() {
         workflow_type: "OrphanTest".to_string(),
         input: json_bytes(&serde_json::json!({})),
         namespace_id: "test-ns".to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -624,6 +634,7 @@ async fn test_heartbeat_extends_lock() {
         workflow_type: "HeartbeatTest".to_string(),
         input: json_bytes(&serde_json::json!({})),
         namespace_id: "test-ns".to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -686,6 +697,7 @@ async fn test_heartbeat_wrong_worker_rejected() {
         workflow_type: "Test".to_string(),
         input: json_bytes(&serde_json::json!({})),
         namespace_id: "test-ns".to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -750,6 +762,7 @@ async fn test_idempotency_returns_existing_workflow() {
         input: json_bytes(&serde_json::json!({"attempt": 1})),
         namespace_id: "test-ns".to_string(),
         idempotency_key: idempotency_key.to_string(),
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -769,6 +782,7 @@ async fn test_idempotency_returns_existing_workflow() {
         input: json_bytes(&serde_json::json!({"attempt": 2})), // Different input
         namespace_id: "test-ns".to_string(),
         idempotency_key: idempotency_key.to_string(), // Same key!
+        retry_policy: None,
         ..Default::default()
     };
 
@@ -820,6 +834,7 @@ async fn test_idempotency_different_keys_create_separate() {
             input: json_bytes(&serde_json::json!({})),
             namespace_id: "test-ns".to_string(),
             idempotency_key: "key-1".to_string(),
+            retry_policy: None,
             ..Default::default()
         }))
         .await
@@ -837,6 +852,7 @@ async fn test_idempotency_different_keys_create_separate() {
             input: json_bytes(&serde_json::json!({})),
             namespace_id: "test-ns".to_string(),
             idempotency_key: "key-2".to_string(),
+            retry_policy: None,
             ..Default::default()
         }))
         .await
@@ -867,6 +883,7 @@ async fn test_idempotency_scoped_to_namespace() {
             input: json_bytes(&serde_json::json!({})),
             namespace_id: "namespace-a".to_string(),
             idempotency_key: idempotency_key.to_string(),
+            retry_policy: None,
             ..Default::default()
         }))
         .await
@@ -884,6 +901,7 @@ async fn test_idempotency_scoped_to_namespace() {
             input: json_bytes(&serde_json::json!({})),
             namespace_id: "namespace-b".to_string(),
             idempotency_key: idempotency_key.to_string(),
+            retry_policy: None,
             ..Default::default()
         }))
         .await
@@ -916,6 +934,7 @@ async fn test_list_workflows_pagination() {
                 workflow_type: "Test".to_string(),
                 input: json_bytes(&serde_json::json!({})),
                 namespace_id: "test-ns".to_string(),
+                retry_policy: None,
                 ..Default::default()
             }))
             .await
@@ -1001,6 +1020,7 @@ async fn test_list_workflows_status_filter() {
             workflow_type: "Test".to_string(),
             input: json_bytes(&serde_json::json!({})),
             namespace_id: "test-ns".to_string(),
+            retry_policy: None,
             ..Default::default()
         }))
         .await
@@ -1016,6 +1036,7 @@ async fn test_list_workflows_status_filter() {
             workflow_type: "Test".to_string(),
             input: json_bytes(&serde_json::json!({})),
             namespace_id: "test-ns".to_string(),
+            retry_policy: None,
             ..Default::default()
         }))
         .await
@@ -1157,6 +1178,7 @@ async fn test_cancel_completed_workflow_fails() {
             workflow_type: "Test".to_string(),
             input: json_bytes(&serde_json::json!({})),
             namespace_id: "test-ns".to_string(),
+            retry_policy: None,
             ..Default::default()
         }))
         .await
@@ -1220,6 +1242,7 @@ async fn test_observability_fields_single_run() {
         context: vec![],
         deadline_at: None,
         version: "".to_string(), // Empty - should default to "1"
+        retry_policy: None,
     };
 
     let response = harness
@@ -1273,6 +1296,7 @@ async fn test_observability_fields_single_run() {
         run_id: run_id.clone(),
         step_id: "fetch_data".to_string(),
         input: json_bytes(&step_input),
+        retry_policy: None,
     };
 
     let begin_response = harness
@@ -1384,6 +1408,7 @@ async fn test_observability_workflow_with_sleep_attempts() {
         context: vec![],
         deadline_at: None,
         version: "2.0".to_string(), // Explicit version
+        retry_policy: None,
     };
 
     let run_id = harness
@@ -1432,6 +1457,7 @@ async fn test_observability_workflow_with_sleep_attempts() {
             run_id: run_id.clone(),
             step_id: sleep_step_id.to_string(),
             input: json_bytes(&serde_json::json!({"duration_seconds": 1})),
+            retry_policy: None,
         }))
         .await
         .unwrap();
@@ -1515,4 +1541,100 @@ async fn test_observability_workflow_with_sleep_attempts() {
         workflow_after_wakeup.attempts, 2,
         "After sleep wakeup: attempts should be 2 (picked up twice)"
     );
+}
+
+// ============================================================================
+// Retry Policy Tests
+// ============================================================================
+
+/// Test: Step retry respects backoff
+#[tokio::test]
+async fn test_step_retry_with_backoff() {
+    let harness = TestHarness::new().await;
+
+    // 1. Start workflow
+    let start_req = StartWorkflowRequest {
+        workflow_id: "retry-test".to_string(),
+        task_queue: "default".to_string(),
+        workflow_type: "RetryTest".to_string(),
+        input: json_bytes(&serde_json::json!({})),
+        namespace_id: "test-ns".to_string(),
+        retry_policy: None,
+        ..Default::default()
+    };
+
+    let run_id = harness
+        .service
+        .start_workflow(make_request(start_req))
+        .await
+        .unwrap()
+        .into_inner()
+        .run_id;
+
+    // Poll to start
+    harness
+        .service
+        .poll_activity(make_request(PollActivityRequest {
+            task_queue: "default".to_string(),
+            worker_id: "worker-1".to_string(),
+            namespace_id: "test-ns".to_string(),
+        }))
+        .await
+        .unwrap();
+
+    // 2. Begin step with retry policy
+    let retry_policy = RetryPolicy {
+        maximum_attempts: 3,
+        initial_interval_ms: 2000, // 2 seconds
+        backoff_coefficient: 1.0,
+        maximum_interval_ms: 10000,
+        non_retryable_errors: vec![],
+    };
+
+    let begin_req = BeginStepRequest {
+        run_id: run_id.clone(),
+        step_id: "retry_step".to_string(),
+        input: vec![],
+        retry_policy: Some(retry_policy),
+    };
+
+    harness
+        .service
+        .begin_step(make_request(begin_req.clone()))
+        .await
+        .unwrap();
+
+    // 3. Fail the step (retryable)
+    let fail_req = FailStepRequest {
+        run_id: run_id.clone(),
+        step_id: "retry_step".to_string(),
+        error: "Temporary failure".to_string(),
+        non_retryable: false,
+        retry_after_ms: 0,
+    };
+
+    harness
+        .service
+        .fail_step(make_request(fail_req))
+        .await
+        .unwrap();
+
+    // 4. Try to begin step immediately (should fail due to backoff)
+    let result = harness
+        .service
+        .begin_step(make_request(begin_req.clone()))
+        .await;
+
+    assert!(result.is_err(), "Should fail during backoff");
+    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
+
+    // 5. Wait for backoff
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // 6. Try to begin step again (should succeed)
+    let result = harness.service.begin_step(make_request(begin_req)).await;
+
+    assert!(result.is_ok(), "Should succeed after backoff");
+    let response = result.unwrap().into_inner();
+    assert!(response.should_execute);
 }
