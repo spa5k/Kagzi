@@ -1,8 +1,10 @@
+mod payload;
 mod step;
 mod workflow;
 
 use sqlx::PgPool;
 
+pub use payload::PgPayloadRepository;
 pub use step::PgStepRepository;
 pub use workflow::PgWorkflowRepository;
 
@@ -22,6 +24,10 @@ impl PgStore {
 
     pub fn steps(&self) -> PgStepRepository {
         PgStepRepository::new(self.pool.clone())
+    }
+
+    pub fn payloads(&self) -> PgPayloadRepository {
+        PgPayloadRepository::new(self.pool.clone())
     }
 
     pub fn pool(&self) -> &PgPool {

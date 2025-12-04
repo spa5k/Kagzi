@@ -12,6 +12,7 @@ use kagzi_proto::kagzi::{
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::sync::Semaphore;
 use tonic::Request;
 use tonic::transport::Channel;
 use tracing::{error, info, instrument};
@@ -284,11 +285,15 @@ type WorkflowFn = Box<
         + Sync,
 >;
 
+const DEFAULT_MAX_CONCURRENT_WORKFLOWS: usize = 100;
+
 pub struct Worker {
     client: WorkflowServiceClient<Channel>,
     task_queue: String,
     workflows: HashMap<String, Arc<WorkflowFn>>,
     worker_id: String,
+    semaphore: Arc<Semaphore>,
+    max_concurrent: usize,
 }
 
 impl Worker {
@@ -298,6 +303,20 @@ impl Worker {
         task_queue = %task_queue
     ))]
     pub async fn new(addr: &str, task_queue: &str) -> anyhow::Result<Self> {
+        Self::with_max_concurrent(addr, task_queue, DEFAULT_MAX_CONCURRENT_WORKFLOWS).await
+    }
+
+    #[instrument(fields(
+        correlation_id = %get_or_generate_correlation_id(),
+        trace_id = %get_or_generate_trace_id(),
+        task_queue = %task_queue,
+        max_concurrent = %max_concurrent
+    ))]
+    pub async fn with_max_concurrent(
+        addr: &str,
+        task_queue: &str,
+        max_concurrent: usize,
+    ) -> anyhow::Result<Self> {
         let client = WorkflowServiceClient::connect(addr.to_string()).await?;
         let worker_id = uuid::Uuid::new_v4().to_string();
 
@@ -306,6 +325,8 @@ impl Worker {
             task_queue: task_queue.to_string(),
             workflows: HashMap::new(),
             worker_id,
+            semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            max_concurrent,
         })
     }
 
@@ -334,14 +355,24 @@ impl Worker {
         correlation_id = %get_or_generate_correlation_id(),
         trace_id = %get_or_generate_trace_id(),
         worker_id = %self.worker_id,
-        task_queue = %self.task_queue
+        task_queue = %self.task_queue,
+        max_concurrent = %self.max_concurrent
     ))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!(
             "Worker {} started on queue {}",
             self.worker_id, self.task_queue
         );
+
         loop {
+            let permit = match self.semaphore.clone().acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    error!("Semaphore closed unexpectedly");
+                    break;
+                }
+            };
+
             let poll_request = add_tracing_metadata(Request::new(PollActivityRequest {
                 task_queue: self.task_queue.clone(),
                 worker_id: self.worker_id.clone(),
@@ -354,14 +385,15 @@ impl Worker {
                 Ok(r) => {
                     let task = r.into_inner();
 
-                    // Empty response means no work available (timeout)
                     if task.run_id.is_empty() {
+                        drop(permit);
                         continue;
                     }
 
                     info!(
                         run_id = %task.run_id,
                         workflow_type = %task.workflow_type,
+                        available_permits = self.semaphore.available_permits(),
                         "Received task"
                     );
 
@@ -374,11 +406,10 @@ impl Worker {
                             .unwrap_or(serde_json::Value::Null);
 
                         tokio::spawn(async move {
-                            // Generate tracing IDs for this workflow execution
+                            let _permit = permit;
                             let correlation_id = uuid::Uuid::new_v4().to_string();
                             let trace_id = uuid::Uuid::new_v4().to_string();
 
-                            // Execute workflow with tracing context
                             tracing_utils::with_tracing_context(
                                 Some(correlation_id.clone()),
                                 Some(trace_id.clone()),
@@ -396,9 +427,11 @@ impl Worker {
                         });
                     } else {
                         error!("No handler for workflow type: {}", task.workflow_type);
+                        drop(permit);
                     }
                 }
                 Err(status) => {
+                    drop(permit);
                     if status.code() != tonic::Code::DeadlineExceeded
                         && status.code() != tonic::Code::NotFound
                     {
@@ -407,6 +440,8 @@ impl Worker {
                 }
             }
         }
+
+        Ok(())
     }
 }
 

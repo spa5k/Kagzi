@@ -150,6 +150,7 @@ pub struct ClaimedWorkflow {
     pub run_id: Uuid,
     pub workflow_type: String,
     pub input: serde_json::Value,
+    pub locked_by: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,4 +166,12 @@ pub struct WorkflowExistsResult {
     pub exists: bool,
     pub status: Option<WorkflowStatus>,
     pub locked_by: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowPayload {
+    pub run_id: Uuid,
+    pub input: serde_json::Value,
+    pub output: Option<serde_json::Value>,
+    pub context: Option<serde_json::Value>,
 }

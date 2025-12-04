@@ -6,4 +6,4 @@ pub mod repository;
 pub use error::StoreError;
 pub use models::*;
 pub use postgres::PgStore;
-pub use repository::{StepRepository, WorkflowRepository};
+pub use repository::{PayloadRepository, StepRepository, WorkflowRepository};

@@ -2,6 +2,7 @@ use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
     log_grpc_response,
 };
+use crate::work_distributor::WorkDistributorHandle;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CancelWorkflowRunRequest, CompleteStepRequest,
@@ -16,6 +17,7 @@ use kagzi_store::{
     BeginStepParams, CreateWorkflow, FailStepParams, ListWorkflowsParams, PgStore, StepRepository,
     WorkflowCursor, WorkflowRepository,
 };
+use std::time::Duration;
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
 
@@ -212,11 +214,16 @@ fn map_store_error(e: kagzi_store::StoreError) -> Status {
 
 pub struct MyWorkflowService {
     pub store: PgStore,
+    pub work_distributor: WorkDistributorHandle,
 }
 
 impl MyWorkflowService {
     pub fn new(store: PgStore) -> Self {
-        Self { store }
+        let work_distributor = WorkDistributorHandle::new(store.clone());
+        Self {
+            store,
+            work_distributor,
+        }
     }
 }
 
@@ -594,19 +601,17 @@ impl WorkflowService for MyWorkflowService {
             req.namespace_id
         };
 
-        let start = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(60);
+        let timeout = Duration::from_secs(60);
 
-        loop {
-            let claimed = self
-                .store
-                .workflows()
-                .claim_next(&req.task_queue, &namespace_id, &req.worker_id)
-                .await
-                .map_err(map_store_error)?;
-
-            if let Some(w) = claimed {
-                let input_bytes = serde_json::to_vec(&w.input).map_err(|e| {
+        // Use the work distributor instead of direct DB polling
+        // This coalesces requests: 100 workers = 1 DB query instead of 100
+        match self
+            .work_distributor
+            .wait_for_work(&req.task_queue, &namespace_id, &req.worker_id, timeout)
+            .await
+        {
+            Some(work_item) => {
+                let input_bytes = serde_json::to_vec(&work_item.input).map_err(|e| {
                     tracing::error!("Failed to serialize workflow input: {:?}", e);
                     Status::internal("Failed to serialize workflow input")
                 })?;
@@ -614,10 +619,10 @@ impl WorkflowService for MyWorkflowService {
                 info!(
                     correlation_id = correlation_id,
                     trace_id = trace_id,
-                    run_id = %w.run_id,
-                    workflow_type = %w.workflow_type,
+                    run_id = %work_item.run_id,
+                    workflow_type = %work_item.workflow_type,
                     worker_id = %req.worker_id,
-                    "Worker claimed workflow"
+                    "Worker claimed workflow via distributor"
                 );
 
                 log_grpc_response(
@@ -628,14 +633,13 @@ impl WorkflowService for MyWorkflowService {
                     None,
                 );
 
-                return Ok(Response::new(PollActivityResponse {
-                    run_id: w.run_id.to_string(),
-                    workflow_type: w.workflow_type,
+                Ok(Response::new(PollActivityResponse {
+                    run_id: work_item.run_id.to_string(),
+                    workflow_type: work_item.workflow_type,
                     workflow_input: input_bytes,
-                }));
+                }))
             }
-
-            if start.elapsed() > timeout {
+            None => {
                 log_grpc_response(
                     "PollActivity",
                     &correlation_id,
@@ -644,14 +648,12 @@ impl WorkflowService for MyWorkflowService {
                     Some("No work available - timeout"),
                 );
 
-                return Ok(Response::new(PollActivityResponse {
+                Ok(Response::new(PollActivityResponse {
                     run_id: String::new(),
                     workflow_type: String::new(),
                     workflow_input: vec![],
-                }));
+                }))
             }
-
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }
 

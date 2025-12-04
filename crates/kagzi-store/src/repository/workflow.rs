@@ -46,6 +46,23 @@ pub trait WorkflowRepository: Send + Sync {
         worker_id: &str,
     ) -> Result<Option<ClaimedWorkflow>, StoreError>;
 
+    /// Claim a batch of workflows for distribution to workers
+    /// This is used by the work distributor to fetch multiple items in one query
+    async fn claim_batch(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        limit: i32,
+    ) -> Result<Vec<ClaimedWorkflow>, StoreError>;
+
+    /// Transfer the lock from one worker to another (used by work distributor)
+    async fn transfer_lock(
+        &self,
+        run_id: Uuid,
+        from_worker_id: &str,
+        to_worker_id: &str,
+    ) -> Result<bool, StoreError>;
+
     async fn extend_lock(&self, run_id: Uuid, worker_id: &str) -> Result<bool, StoreError>;
 
     async fn wake_sleeping(&self) -> Result<u64, StoreError>;

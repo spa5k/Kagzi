@@ -179,6 +179,8 @@ impl StepRepository for PgStepRepository {
     }
 
     async fn begin(&self, params: BeginStepParams) -> Result<BeginStepResult, StoreError> {
+        let mut tx = self.pool.begin().await?;
+
         let existing = sqlx::query!(
             r#"
             SELECT status, output, retry_at
@@ -188,7 +190,7 @@ impl StepRepository for PgStepRepository {
             params.run_id,
             params.step_id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
         if let Some(ref step) = existing {
@@ -215,7 +217,7 @@ impl StepRepository for PgStepRepository {
             params.run_id,
             params.step_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
         let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
@@ -233,8 +235,10 @@ impl StepRepository for PgStepRepository {
             params.input,
             retry_policy_json
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         Ok(BeginStepResult {
             should_execute: true,
@@ -248,6 +252,8 @@ impl StepRepository for PgStepRepository {
         step_id: &str,
         output: serde_json::Value,
     ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+
         let result = sqlx::query!(
             r#"
             UPDATE kagzi.step_runs 
@@ -258,7 +264,7 @@ impl StepRepository for PgStepRepository {
             step_id,
             output
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
         if result.rows_affected() == 0 {
@@ -267,7 +273,7 @@ impl StepRepository for PgStepRepository {
                 run_id,
                 step_id
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query!(
@@ -281,9 +287,11 @@ impl StepRepository for PgStepRepository {
                 step_id,
                 output
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
+
+        tx.commit().await?;
 
         Ok(())
     }
@@ -327,6 +335,8 @@ impl StepRepository for PgStepRepository {
             }
         }
 
+        let mut tx = self.pool.begin().await?;
+
         let result = sqlx::query!(
             r#"
             UPDATE kagzi.step_runs 
@@ -337,7 +347,7 @@ impl StepRepository for PgStepRepository {
             params.step_id,
             params.error
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
         if result.rows_affected() == 0 {
@@ -346,7 +356,7 @@ impl StepRepository for PgStepRepository {
                 params.run_id,
                 params.step_id
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query!(
@@ -360,9 +370,11 @@ impl StepRepository for PgStepRepository {
                 params.step_id,
                 params.error
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
         }
+
+        tx.commit().await?;
 
         Ok(FailStepResult {
             scheduled_retry: false,
@@ -375,9 +387,15 @@ impl StepRepository for PgStepRepository {
             r#"
             UPDATE kagzi.step_runs
             SET status = 'PENDING', retry_at = NULL
-            WHERE status = 'PENDING'
-              AND retry_at IS NOT NULL
-              AND retry_at <= NOW()
+            WHERE attempt_id IN (
+                SELECT attempt_id
+                FROM kagzi.step_runs
+                WHERE status = 'PENDING'
+                  AND retry_at IS NOT NULL
+                  AND retry_at <= NOW()
+                FOR UPDATE SKIP LOCKED
+                LIMIT 100
+            )
             RETURNING run_id, step_id, attempt_number
             "#
         )
