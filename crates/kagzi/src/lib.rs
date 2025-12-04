@@ -56,6 +56,67 @@ impl WorkflowContext {
         let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id.to_string(),
+            input: vec![],
+        }));
+
+        let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
+
+        if !begin_resp.should_execute {
+            let result: R = serde_json::from_slice(&begin_resp.cached_result)?;
+            return Ok(result);
+        }
+
+        let result = fut.await;
+
+        match result {
+            Ok(val) => {
+                let output_bytes = serde_json::to_vec(&val)?;
+                let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
+                    run_id: self.run_id.clone(),
+                    step_id: step_id.to_string(),
+                    output: output_bytes,
+                }));
+
+                self.client.complete_step(complete_request).await?;
+                Ok(val)
+            }
+            Err(e) => {
+                error!(error = %e, "Step {} failed", step_id);
+
+                let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
+                    run_id: self.run_id.clone(),
+                    step_id: step_id.to_string(),
+                    error: e.to_string(),
+                }));
+
+                self.client.fail_step(fail_request).await?;
+                Err(e)
+            }
+        }
+    }
+
+    #[instrument(skip(self, input, fut), fields(
+        correlation_id = %get_or_generate_correlation_id(),
+        trace_id = %get_or_generate_trace_id(),
+        run_id = %self.run_id,
+        step_id = %step_id
+    ))]
+    pub async fn run_with_input<I, R, Fut>(
+        &mut self,
+        step_id: &str,
+        input: &I,
+        fut: Fut,
+    ) -> anyhow::Result<R>
+    where
+        I: Serialize + Send + 'static,
+        R: Serialize + DeserializeOwned + Send + 'static,
+        Fut: Future<Output = anyhow::Result<R>> + Send,
+    {
+        let input_bytes = serde_json::to_vec(input)?;
+        let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
+            run_id: self.run_id.clone(),
+            step_id: step_id.to_string(),
+            input: input_bytes,
         }));
 
         let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
@@ -107,6 +168,7 @@ impl WorkflowContext {
         let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id.clone(),
+            input: vec![],
         }));
 
         let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
@@ -211,6 +273,12 @@ impl Worker {
             match resp {
                 Ok(r) => {
                     let task = r.into_inner();
+
+                    // Empty response means no work available (timeout)
+                    if task.run_id.is_empty() {
+                        continue;
+                    }
+
                     info!(
                         run_id = %task.run_id,
                         workflow_type = %task.workflow_type,
@@ -219,110 +287,132 @@ impl Worker {
 
                     if let Some(handler) = self.workflows.get(&task.workflow_type) {
                         let handler = handler.clone();
-                        let mut client = self.client.clone();
+                        let client = self.client.clone();
                         let run_id = task.run_id.clone();
                         let worker_id = self.worker_id.clone();
                         let input: serde_json::Value = serde_json::from_slice(&task.workflow_input)
                             .unwrap_or(serde_json::Value::Null);
 
                         tokio::spawn(async move {
-                            let correlation_id = get_or_generate_correlation_id();
-                            let trace_id = get_or_generate_trace_id();
+                            // Generate tracing IDs for this workflow execution
+                            let correlation_id = uuid::Uuid::new_v4().to_string();
+                            let trace_id = uuid::Uuid::new_v4().to_string();
 
-                            // Start background heartbeat task
-                            let heartbeat_handle = {
-                                let mut heartbeat_client = client.clone();
-                                let heartbeat_run_id = run_id.clone();
-                                let heartbeat_worker_id = worker_id.clone();
-
-                                tokio::spawn(async move {
-                                    let mut interval =
-                                        tokio::time::interval(Duration::from_secs(10));
-                                    loop {
-                                        interval.tick().await;
-                                        let request = add_tracing_metadata(Request::new(
-                                            RecordHeartbeatRequest {
-                                                run_id: heartbeat_run_id.clone(),
-                                                worker_id: heartbeat_worker_id.clone(),
-                                            },
-                                        ));
-                                        if let Err(e) =
-                                            heartbeat_client.record_heartbeat(request).await
-                                        {
-                                            // Log but don't fail - heartbeat errors are non-fatal
-                                            // The workflow might have been completed/failed already
-                                            tracing::debug!(
-                                                run_id = %heartbeat_run_id,
-                                                error = %e,
-                                                "Heartbeat failed (workflow may have completed)"
-                                            );
-                                            break;
-                                        }
-                                    }
-                                })
-                            };
-
-                            let ctx = WorkflowContext {
-                                client: client.clone(),
-                                run_id: run_id.clone(),
-                                sleep_counter: 0,
-                            };
-
-                            let result = handler(ctx, input).await;
-
-                            // Stop heartbeat task
-                            heartbeat_handle.abort();
-
-                            match result {
-                                Ok(output) => {
-                                    let complete_request = add_tracing_metadata(Request::new(
-                                        CompleteWorkflowRequest {
-                                            run_id,
-                                            output: serde_json::to_vec(&output).unwrap(),
-                                        },
-                                    ));
-
-                                    let _ = client.complete_workflow(complete_request).await;
-                                }
-                                Err(e) => {
-                                    if e.downcast_ref::<WorkflowPaused>().is_some() {
-                                        info!(
-                                            correlation_id = correlation_id,
-                                            trace_id = trace_id,
-                                            run_id = %run_id,
-                                            "Workflow paused (sleeping)"
-                                        );
-                                        return;
-                                    }
-
-                                    error!(
-                                        correlation_id = correlation_id,
-                                        trace_id = trace_id,
-                                        run_id = %run_id,
-                                        error = %e,
-                                        "Workflow failed"
-                                    );
-
-                                    let fail_request =
-                                        add_tracing_metadata(Request::new(FailWorkflowRequest {
-                                            run_id,
-                                            error: e.to_string(),
-                                        }));
-
-                                    let _ = client.fail_workflow(fail_request).await;
-                                }
-                            }
+                            // Execute workflow with tracing context
+                            tracing_utils::with_tracing_context(
+                                Some(correlation_id.clone()),
+                                Some(trace_id.clone()),
+                                execute_workflow(
+                                    client,
+                                    handler,
+                                    run_id,
+                                    worker_id,
+                                    input,
+                                    correlation_id,
+                                    trace_id,
+                                ),
+                            )
+                            .await;
                         });
                     } else {
                         error!("No handler for workflow type: {}", task.workflow_type);
                     }
                 }
                 Err(status) => {
-                    if status.code() != tonic::Code::DeadlineExceeded {
+                    if status.code() != tonic::Code::DeadlineExceeded
+                        && status.code() != tonic::Code::NotFound
+                    {
                         error!("Poll failed: {:?}", status);
                     }
                 }
             }
+        }
+    }
+}
+
+/// Execute a workflow with proper tracing context and heartbeat management
+async fn execute_workflow(
+    mut client: WorkflowServiceClient<Channel>,
+    handler: Arc<WorkflowFn>,
+    run_id: String,
+    worker_id: String,
+    input: serde_json::Value,
+    correlation_id: String,
+    trace_id: String,
+) {
+    // Start background heartbeat task
+    let heartbeat_handle = {
+        let mut heartbeat_client = client.clone();
+        let heartbeat_run_id = run_id.clone();
+        let heartbeat_worker_id = worker_id.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                let request = add_tracing_metadata(Request::new(RecordHeartbeatRequest {
+                    run_id: heartbeat_run_id.clone(),
+                    worker_id: heartbeat_worker_id.clone(),
+                }));
+                if let Err(e) = heartbeat_client.record_heartbeat(request).await {
+                    // Log but don't fail - heartbeat errors are non-fatal
+                    // The workflow might have been completed/failed already
+                    tracing::debug!(
+                        run_id = %heartbeat_run_id,
+                        error = %e,
+                        "Heartbeat failed (workflow may have completed)"
+                    );
+                    break;
+                }
+            }
+        })
+    };
+
+    let ctx = WorkflowContext {
+        client: client.clone(),
+        run_id: run_id.clone(),
+        sleep_counter: 0,
+    };
+
+    let result = handler(ctx, input).await;
+
+    // Stop heartbeat task
+    heartbeat_handle.abort();
+
+    match result {
+        Ok(output) => {
+            let complete_request = add_tracing_metadata(Request::new(CompleteWorkflowRequest {
+                run_id,
+                output: serde_json::to_vec(&output).unwrap(),
+            }));
+
+            let _ = client.complete_workflow(complete_request).await;
+        }
+        Err(e) => {
+            if e.downcast_ref::<WorkflowPaused>().is_some() {
+                info!(
+                    correlation_id = correlation_id,
+                    trace_id = trace_id,
+                    run_id = %run_id,
+                    "Workflow paused (sleeping)"
+                );
+                return;
+            }
+
+            error!(
+                correlation_id = correlation_id,
+                trace_id = trace_id,
+                run_id = %run_id,
+                error = %e,
+                "Workflow failed"
+            );
+
+            let fail_request = add_tracing_metadata(Request::new(FailWorkflowRequest {
+                run_id,
+                error: e.to_string(),
+            }));
+
+            let _ = client.fail_workflow(fail_request).await;
         }
     }
 }

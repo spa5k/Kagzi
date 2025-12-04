@@ -14,7 +14,7 @@ use kagzi_proto::kagzi::{
 };
 use sqlx::PgPool;
 use tonic::{Request, Response, Status};
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, instrument};
 
 /// Database row for workflow_runs table
 #[derive(sqlx::FromRow)]
@@ -201,6 +201,13 @@ impl WorkflowService for MyWorkflowService {
             }
         }
 
+        // Default version to "1" if not specified
+        let version = if req.version.is_empty() {
+            "1".to_string()
+        } else {
+            req.version
+        };
+
         let run_id = sqlx::query!(
             r#"
             INSERT INTO kagzi.workflow_runs (
@@ -225,7 +232,7 @@ impl WorkflowService for MyWorkflowService {
                 .map(|ts| std::time::SystemTime::UNIX_EPOCH
                     + std::time::Duration::new(ts.seconds as u64, ts.nanos as u32))
                 .map(chrono::DateTime::<chrono::Utc>::from),
-            req.version
+            version
         )
         .fetch_one(&self.pool)
         .await
@@ -745,7 +752,8 @@ impl WorkflowService for MyWorkflowService {
                 SET status = 'RUNNING',
                     locked_by = $1,
                     locked_until = NOW() + INTERVAL '30 seconds',
-                    started_at = COALESCE(started_at, NOW())
+                    started_at = COALESCE(started_at, NOW()),
+                    attempts = attempts + 1
                 WHERE run_id = (
                     SELECT run_id
                     FROM kagzi.workflow_runs
@@ -807,23 +815,21 @@ impl WorkflowService for MyWorkflowService {
             }
 
             if start.elapsed() > timeout {
-                warn!(
-                    correlation_id = correlation_id,
-                    trace_id = trace_id,
-                    worker_id = %req.worker_id,
-                    task_queue = %req.task_queue,
-                    "PollActivity timeout - no work available"
-                );
-
+                // Return empty response instead of error when no work is available
+                // This allows workers to gracefully handle the timeout and retry
                 log_grpc_response(
                     "PollActivity",
                     &correlation_id,
                     &trace_id,
-                    Status::code(&Status::deadline_exceeded("No work available")),
-                    None,
+                    Status::code(&Status::ok("")),
+                    Some("No work available - timeout"),
                 );
 
-                return Err(Status::deadline_exceeded("No work available"));
+                return Ok(Response::new(PollActivityResponse {
+                    run_id: String::new(),
+                    workflow_type: String::new(),
+                    workflow_input: vec![],
+                }));
             }
 
             // Wait a bit before retrying
@@ -1286,6 +1292,48 @@ impl WorkflowService for MyWorkflowService {
             return Ok(response);
         }
 
+        // Parse input if provided
+        let input_json: Option<serde_json::Value> = if !req.input.is_empty() {
+            Some(serde_json::from_slice(&req.input).map_err(|e| {
+                tracing::error!("Failed to parse step input: {:?}", e);
+                Status::invalid_argument(format!("Input must be valid JSON: {}", e))
+            })?)
+        } else {
+            None
+        };
+
+        // Mark any previous attempts as not latest
+        sqlx::query!(
+            "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
+            run_id,
+            req.step_id
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to update previous attempts: {:?}", e);
+            Status::internal("Failed to update previous attempts")
+        })?;
+
+        // Create the step record with RUNNING status, input, and started_at
+        sqlx::query!(
+            r#"
+            INSERT INTO kagzi.step_runs (run_id, step_id, status, input, started_at, is_latest, attempt_number, namespace_id)
+            VALUES ($1, $2, 'RUNNING', $3, NOW(), true, 
+                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
+                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+            "#,
+            run_id,
+            req.step_id,
+            input_json
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create step record: {:?}", e);
+            Status::internal("Failed to create step record")
+        })?;
+
         let response = Response::new(BeginStepResponse {
             should_execute: true,
             cached_result: vec![],
@@ -1325,26 +1373,13 @@ impl WorkflowService for MyWorkflowService {
         let output_json: serde_json::Value = serde_json::from_slice(&req.output)
             .map_err(|e| Status::invalid_argument(format!("Output must be valid JSON: {}", e)))?;
 
-        // Mark previous attempts as not latest
-        sqlx::query!(
-            "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
-            run_id,
-            req.step_id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to update previous attempts: {:?}", e);
-            Status::internal("Failed to update previous attempts")
-        })?;
-
-        // Then insert new attempt
-        sqlx::query!(
+        // Update the existing RUNNING step record to COMPLETED
+        // This preserves the input and started_at from begin_step
+        let result = sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (run_id, step_id, status, output, finished_at, is_latest, attempt_number, namespace_id)
-            VALUES ($1, $2, 'COMPLETED', $3, NOW(), true, 
-                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+            UPDATE kagzi.step_runs 
+            SET status = 'COMPLETED', output = $3, finished_at = NOW()
+            WHERE run_id = $1 AND step_id = $2 AND is_latest = true AND status = 'RUNNING'
             "#,
             run_id,
             req.step_id,
@@ -1356,6 +1391,41 @@ impl WorkflowService for MyWorkflowService {
             tracing::error!("Failed to complete step: {:?}", e);
             Status::internal("Failed to complete step")
         })?;
+
+        // If no RUNNING record was updated, create a new one (for backward compatibility)
+        if result.rows_affected() == 0 {
+            // Mark previous attempts as not latest
+            sqlx::query!(
+                "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
+                run_id,
+                req.step_id
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to update previous attempts: {:?}", e);
+                Status::internal("Failed to update previous attempts")
+            })?;
+
+            // Insert new completed record
+            sqlx::query!(
+                r#"
+                INSERT INTO kagzi.step_runs (run_id, step_id, status, output, finished_at, is_latest, attempt_number, namespace_id)
+                VALUES ($1, $2, 'COMPLETED', $3, NOW(), true, 
+                        COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
+                        COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+                "#,
+                run_id,
+                req.step_id,
+                output_json
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to complete step: {:?}", e);
+                Status::internal("Failed to complete step")
+            })?;
+        }
 
         let response = Response::new(Empty {});
 
@@ -1395,26 +1465,13 @@ impl WorkflowService for MyWorkflowService {
             return Err(Status::invalid_argument("step_id is required"));
         }
 
-        // Mark previous attempts as not latest
-        sqlx::query!(
-            "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
-            run_id,
-            req.step_id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to update previous attempts: {:?}", e);
-            Status::internal("Failed to update previous attempts")
-        })?;
-
-        // Insert new failed attempt
-        sqlx::query!(
+        // Update the existing RUNNING step record to FAILED
+        // This preserves the input and started_at from begin_step
+        let result = sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (run_id, step_id, status, error, finished_at, is_latest, attempt_number, namespace_id)
-            VALUES ($1, $2, 'FAILED', $3, NOW(), true, 
-                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+            UPDATE kagzi.step_runs 
+            SET status = 'FAILED', error = $3, finished_at = NOW()
+            WHERE run_id = $1 AND step_id = $2 AND is_latest = true AND status = 'RUNNING'
             "#,
             run_id,
             req.step_id,
@@ -1426,6 +1483,41 @@ impl WorkflowService for MyWorkflowService {
             tracing::error!("Failed to record step failure: {:?}", e);
             Status::internal("Failed to record step failure")
         })?;
+
+        // If no RUNNING record was updated, create a new one (for backward compatibility)
+        if result.rows_affected() == 0 {
+            // Mark previous attempts as not latest
+            sqlx::query!(
+                "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
+                run_id,
+                req.step_id
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to update previous attempts: {:?}", e);
+                Status::internal("Failed to update previous attempts")
+            })?;
+
+            // Insert new failed attempt
+            sqlx::query!(
+                r#"
+                INSERT INTO kagzi.step_runs (run_id, step_id, status, error, finished_at, is_latest, attempt_number, namespace_id)
+                VALUES ($1, $2, 'FAILED', $3, NOW(), true, 
+                        COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
+                        COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+                "#,
+                run_id,
+                req.step_id,
+                req.error
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to record step failure: {:?}", e);
+                Status::internal("Failed to record step failure")
+            })?;
+        }
 
         info!(
             "Step {} failed for workflow {}: {}",

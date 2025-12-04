@@ -63,3 +63,25 @@ run-example:
 
 lint:
     cargo clippy --all-targets --all-features -- -D warnings
+
+# --- Tests ---
+
+# Run all tests
+test:
+    cargo test --all
+
+# Run unit tests only (fast, no Docker required)
+test-unit:
+    cargo test --lib --all
+
+# Run integration tests (requires Docker)
+test-integration:
+    cargo test -p kagzi-server --test integration_tests -- --test-threads=1
+
+# Run integration tests with output
+test-integration-verbose:
+    cargo test -p kagzi-server --test integration_tests -- --test-threads=1 --nocapture
+
+# Run a specific integration test
+test-one name:
+    cargo test -p kagzi-server --test integration_tests {{name}} -- --test-threads=1 --nocapture

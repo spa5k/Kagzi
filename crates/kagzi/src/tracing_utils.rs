@@ -1,5 +1,9 @@
+//! Tracing utilities for the Kagzi SDK
+//!
+//! Provides correlation ID and trace ID propagation for distributed tracing.
+
+use std::cell::RefCell;
 use tonic::{Request, metadata::MetadataKey};
-use tracing::Span;
 use uuid::Uuid;
 
 /// Correlation ID metadata key for gRPC
@@ -8,28 +12,80 @@ pub const CORRELATION_ID_KEY: &str = "x-correlation-id";
 /// Trace ID metadata key for distributed tracing  
 pub const TRACE_ID_KEY: &str = "x-trace-id";
 
-/// Generate or extract correlation ID for current context
-pub fn get_or_generate_correlation_id() -> String {
-    if let Some(correlation_id) = Span::current().field("correlation_id")
-        && let Some(correlation_id_str) = correlation_id.to_string().strip_prefix("\"")
-        && let Some(clean_id) = correlation_id_str.strip_suffix("\"")
-    {
-        return clean_id.to_string();
-    }
-
-    Uuid::new_v4().to_string()
+// Task-local storage for tracing context
+tokio::task_local! {
+    static CORRELATION_ID: RefCell<Option<String>>;
+    static TRACE_ID: RefCell<Option<String>>;
 }
 
-/// Generate or extract trace ID for current context
-pub fn get_or_generate_trace_id() -> String {
-    if let Some(trace_id) = Span::current().field("trace_id")
-        && let Some(trace_id_str) = trace_id.to_string().strip_prefix("\"")
-        && let Some(clean_id) = trace_id_str.strip_suffix("\"")
-    {
-        return clean_id.to_string();
-    }
+/// Set the correlation ID for the current task scope
+pub fn set_correlation_id(id: String) {
+    let _ = CORRELATION_ID.try_with(|cell| {
+        *cell.borrow_mut() = Some(id);
+    });
+}
 
-    Uuid::new_v4().to_string()
+/// Set the trace ID for the current task scope
+pub fn set_trace_id(id: String) {
+    let _ = TRACE_ID.try_with(|cell| {
+        *cell.borrow_mut() = Some(id);
+    });
+}
+
+/// Get the correlation ID for the current context, or generate a new one
+pub fn get_or_generate_correlation_id() -> String {
+    CORRELATION_ID
+        .try_with(|cell| cell.borrow().clone())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+/// Get the trace ID for the current context, or generate a new one
+pub fn get_or_generate_trace_id() -> String {
+    TRACE_ID
+        .try_with(|cell| cell.borrow().clone())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+/// Run a future with tracing context (correlation ID and trace ID)
+pub async fn with_tracing_context<F, T>(
+    correlation_id: Option<String>,
+    trace_id: Option<String>,
+    f: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let correlation_id = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let trace_id = trace_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    CORRELATION_ID
+        .scope(RefCell::new(Some(correlation_id)), async {
+            TRACE_ID.scope(RefCell::new(Some(trace_id)), f).await
+        })
+        .await
+}
+
+/// Extract tracing context from gRPC request metadata
+pub fn extract_tracing_context<T>(request: &Request<T>) -> (String, String) {
+    let metadata = request.metadata();
+
+    let correlation_id = metadata
+        .get(CORRELATION_ID_KEY)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    let trace_id = metadata
+        .get(TRACE_ID_KEY)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    (correlation_id, trace_id)
 }
 
 /// Add tracing metadata to gRPC request
@@ -40,19 +96,23 @@ pub fn add_tracing_metadata<T>(request: Request<T>) -> Request<T> {
     let mut request = request;
     let metadata = request.metadata_mut();
 
-    if let Ok(correlation_key) = MetadataKey::from_bytes(CORRELATION_ID_KEY.as_bytes()) {
-        metadata.insert(correlation_key, correlation_id.parse().unwrap());
+    if let Ok(correlation_key) = MetadataKey::from_bytes(CORRELATION_ID_KEY.as_bytes())
+        && let Ok(value) = correlation_id.parse()
+    {
+        metadata.insert(correlation_key, value);
     }
 
-    if let Ok(trace_key) = MetadataKey::from_bytes(TRACE_ID_KEY.as_bytes()) {
-        metadata.insert(trace_key, trace_id.parse().unwrap());
+    if let Ok(trace_key) = MetadataKey::from_bytes(TRACE_ID_KEY.as_bytes())
+        && let Ok(value) = trace_id.parse()
+    {
+        metadata.insert(trace_key, value);
     }
 
     request
 }
 
+/// Initialize tracing for SDK with JSON structured logging
 #[allow(dead_code)]
-/// Initialize tracing for SDK
 pub fn init_tracing() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .json()
@@ -65,4 +125,36 @@ pub fn init_tracing() -> anyhow::Result<()> {
         .init();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_tracing_context_propagation() {
+        let correlation_id = "test-correlation-123".to_string();
+        let trace_id = "test-trace-456".to_string();
+
+        let (captured_correlation, captured_trace) = with_tracing_context(
+            Some(correlation_id.clone()),
+            Some(trace_id.clone()),
+            async { (get_or_generate_correlation_id(), get_or_generate_trace_id()) },
+        )
+        .await;
+
+        assert_eq!(captured_correlation, correlation_id);
+        assert_eq!(captured_trace, trace_id);
+    }
+
+    #[tokio::test]
+    async fn test_generates_new_ids_when_not_set() {
+        // Outside of tracing context, should generate new UUIDs
+        let id1 = get_or_generate_correlation_id();
+        let id2 = get_or_generate_correlation_id();
+
+        // Both should be valid UUIDs (though potentially different)
+        assert!(uuid::Uuid::parse_str(&id1).is_ok());
+        assert!(uuid::Uuid::parse_str(&id2).is_ok());
+    }
 }

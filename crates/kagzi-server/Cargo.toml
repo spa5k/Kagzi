@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "kagzi_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "kagzi-server"
 path = "src/main.rs"
@@ -26,3 +30,9 @@ tonic-reflection.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
 uuid.workspace = true
+
+[dev-dependencies]
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+tokio-test = "0.4"
+tracing-test = "0.2"

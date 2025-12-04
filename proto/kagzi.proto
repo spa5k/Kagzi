@@ -218,6 +218,7 @@ message RecordHeartbeatRequest {
 message BeginStepRequest {
   string run_id = 1;
   string step_id = 2;
+  bytes input = 3;  // Optional: Step input for recording
 }
 
 message BeginStepResponse {
