@@ -1,0 +1,181 @@
+syntax = "proto3";
+package kagzi;
+
+import "google/protobuf/timestamp.proto";
+import "errors.proto";
+import "worker.proto";
+import "health.proto";
+import "common.proto";
+
+// Single service covering client and worker APIs for simplicity.
+service WorkflowService {
+  // --- Client/Trigger Facing API ---
+  rpc StartWorkflow (StartWorkflowRequest) returns (StartWorkflowResponse);
+  rpc GetWorkflowRun (GetWorkflowRunRequest) returns (GetWorkflowRunResponse);
+  rpc ListWorkflowRuns (ListWorkflowRunsRequest) returns (ListWorkflowRunsResponse);
+  rpc CancelWorkflowRun (CancelWorkflowRunRequest) returns (Empty);
+
+  // --- Step Attempt API ---
+  rpc GetStepAttempt (GetStepAttemptRequest) returns (GetStepAttemptResponse);
+  rpc ListStepAttempts (ListStepAttemptsRequest) returns (ListStepAttemptsResponse);
+
+  // --- Worker Lifecycle API ---
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc WorkerHeartbeat(WorkerHeartbeatRequest) returns (WorkerHeartbeatResponse);
+  rpc DeregisterWorker(DeregisterWorkerRequest) returns (Empty);
+
+  // --- Worker Discovery API ---
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+  rpc GetWorker(GetWorkerRequest) returns (GetWorkerResponse);
+
+  // --- Worker Execution API (requires registration) ---
+  rpc PollActivity (PollActivityRequest) returns (PollActivityResponse);
+  rpc BeginStep (BeginStepRequest) returns (BeginStepResponse);
+  rpc CompleteStep (CompleteStepRequest) returns (Empty);
+  rpc FailStep (FailStepRequest) returns (Empty);
+  rpc CompleteWorkflow (CompleteWorkflowRequest) returns (Empty);
+  rpc FailWorkflow (FailWorkflowRequest) returns (Empty);
+  rpc ScheduleSleep (ScheduleSleepRequest) returns (Empty);
+
+  // --- Health & Monitoring API ---
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+enum WorkflowStatus {
+  WORKFLOW_STATUS_UNSPECIFIED = 0;
+  WORKFLOW_STATUS_PENDING = 1;
+  WORKFLOW_STATUS_RUNNING = 2;
+  WORKFLOW_STATUS_SLEEPING = 3;
+  WORKFLOW_STATUS_COMPLETED = 4;
+  WORKFLOW_STATUS_FAILED = 5;
+  WORKFLOW_STATUS_CANCELLED = 6;
+}
+
+enum StepKind {
+  STEP_KIND_UNSPECIFIED = 0;
+  STEP_KIND_FUNCTION = 1;
+  STEP_KIND_SLEEP = 2;
+}
+
+enum StepAttemptStatus {
+  STEP_ATTEMPT_STATUS_UNSPECIFIED = 0;
+  STEP_ATTEMPT_STATUS_PENDING = 1;
+  STEP_ATTEMPT_STATUS_RUNNING = 2;
+  STEP_ATTEMPT_STATUS_COMPLETED = 3;
+  STEP_ATTEMPT_STATUS_FAILED = 4;
+}
+
+// --- Core Objects ---
+
+message WorkflowRun {
+  string run_id = 1;
+  string business_id = 2;
+  string task_queue = 3;
+  string workflow_type = 4;
+  WorkflowStatus status = 5;
+  bytes input = 6;
+  bytes output = 7;
+  ErrorDetail error = 8;
+  int32 attempts = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp started_at = 11;
+  google.protobuf.Timestamp finished_at = 12;
+  google.protobuf.Timestamp wake_up_at = 13;
+  string namespace_id = 14;
+  bytes context = 15;
+  google.protobuf.Timestamp deadline_at = 16;
+  string worker_id = 17;
+  string version = 18;
+  string parent_step_attempt_id = 19;
+}
+
+message StepAttempt {
+  string step_attempt_id = 1;
+  string workflow_run_id = 2;
+  string step_id = 3;
+  StepKind kind = 4;
+  StepAttemptStatus status = 5;
+  bytes config = 6;
+  bytes context = 7;
+  bytes output = 8;
+  ErrorDetail error = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp finished_at = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  string child_workflow_run_id = 14;
+  string namespace_id = 15;
+}
+
+// --- Requests / Responses ---
+
+message StartWorkflowRequest {
+  string workflow_id = 1;
+  string task_queue = 2;
+  string workflow_type = 3;
+  bytes input = 4;
+  string namespace_id = 5;
+  string idempotency_key = 6;
+  bytes context = 7;
+  google.protobuf.Timestamp deadline_at = 8;
+  string version = 9;
+  RetryPolicy retry_policy = 10;
+}
+
+message StartWorkflowResponse {
+  string run_id = 1;
+}
+
+message GetWorkflowRunRequest {
+  string run_id = 1;
+  string namespace_id = 2;
+}
+
+message GetWorkflowRunResponse {
+  WorkflowRun workflow_run = 1;
+}
+
+message ListWorkflowRunsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  string filter_status = 3;
+  string namespace_id = 4;
+}
+
+message ListWorkflowRunsResponse {
+  repeated WorkflowRun workflow_runs = 1;
+  string next_page_token = 2;
+  string prev_page_token = 3;
+  bool has_more = 4;
+}
+
+message CancelWorkflowRunRequest {
+  string run_id = 1;
+  string namespace_id = 2;
+}
+
+message GetStepAttemptRequest {
+  string step_attempt_id = 1;
+  string namespace_id = 2;
+}
+
+message GetStepAttemptResponse {
+  StepAttempt step_attempt = 1;
+}
+
+message ListStepAttemptsRequest {
+  string workflow_run_id = 1;
+  string step_id = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+  string namespace_id = 5;
+}
+
+message ListStepAttemptsResponse {
+  repeated StepAttempt step_attempts = 1;
+  string next_page_token = 2;
+}
+
+// Standard empty message
+message Empty {}
+

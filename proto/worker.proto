@@ -1,0 +1,143 @@
+syntax = "proto3";
+package kagzi;
+
+import "google/protobuf/timestamp.proto";
+import "errors.proto";
+import "common.proto";
+
+enum WorkerStatus {
+  WORKER_STATUS_UNSPECIFIED = 0;
+  WORKER_STATUS_ONLINE = 1;
+  WORKER_STATUS_DRAINING = 2;
+  WORKER_STATUS_OFFLINE = 3;
+}
+
+message Worker {
+  string worker_id = 1;
+  string namespace_id = 2;
+  string task_queue = 3;
+  WorkerStatus status = 4;
+  string hostname = 5;
+  int32 pid = 6;
+  string version = 7;
+  repeated string workflow_types = 8;
+  int32 max_concurrent = 9;
+  int32 active_count = 10;
+  int64 total_completed = 11;
+  int64 total_failed = 12;
+  google.protobuf.Timestamp registered_at = 13;
+  google.protobuf.Timestamp last_heartbeat_at = 14;
+  map<string, string> labels = 15;
+}
+
+// --- Worker Registry Messages ---
+
+message RegisterWorkerRequest {
+  string namespace_id = 1;
+  string task_queue = 2;
+  repeated string workflow_types = 3;
+  string hostname = 4;
+  int32 pid = 5;
+  string version = 6;
+  int32 max_concurrent = 7;
+  map<string, string> labels = 8;
+}
+
+message RegisterWorkerResponse {
+  string worker_id = 1;
+  int32 heartbeat_interval_secs = 2;
+}
+
+message WorkerHeartbeatRequest {
+  string worker_id = 1;
+  int32 active_count = 2;
+  int32 completed_delta = 3;
+  int32 failed_delta = 4;
+}
+
+message WorkerHeartbeatResponse {
+  bool accepted = 1;
+  bool should_drain = 2;
+}
+
+message DeregisterWorkerRequest {
+  string worker_id = 1;
+  bool drain = 2;
+}
+
+message ListWorkersRequest {
+  string namespace_id = 1;
+  string task_queue = 2;
+  string filter_status = 3;
+  int32 page_size = 4;
+  string page_token = 5;
+}
+
+message ListWorkersResponse {
+  repeated Worker workers = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message GetWorkerRequest {
+  string worker_id = 1;
+}
+
+message GetWorkerResponse {
+  Worker worker = 1;
+}
+
+// --- Worker Execution API (requires registration) ---
+
+message PollActivityRequest {
+  string task_queue = 1;
+  string worker_id = 2;
+  string namespace_id = 3;
+  repeated string supported_workflow_types = 4;
+}
+
+message PollActivityResponse {
+  string run_id = 1;
+  string workflow_type = 2;
+  bytes workflow_input = 3;
+}
+
+message BeginStepRequest {
+  string run_id = 1;
+  string step_id = 2;
+  bytes input = 3;
+  RetryPolicy retry_policy = 4;
+}
+
+message BeginStepResponse {
+  bool should_execute = 1;
+  bytes cached_result = 2;
+}
+
+message CompleteStepRequest {
+  string run_id = 1;
+  string step_id = 2;
+  bytes output = 3;
+}
+
+message FailStepRequest {
+  string run_id = 1;
+  string step_id = 2;
+  ErrorDetail error = 3;
+}
+
+message CompleteWorkflowRequest {
+  string run_id = 1;
+  bytes output = 2;
+}
+
+message FailWorkflowRequest {
+  string run_id = 1;
+  ErrorDetail error = 2;
+}
+
+message ScheduleSleepRequest {
+  string run_id = 1;
+  uint64 duration_seconds = 2;
+}
+

@@ -7,15 +7,16 @@ use std::time::Duration;
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{
     BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, DeregisterWorkerRequest,
-    FailStepRequest, FailWorkflowRequest, PollActivityRequest, RegisterWorkerRequest,
-    ScheduleSleepRequest, StartWorkflowRequest, WorkerHeartbeatRequest,
+    ErrorCode, ErrorDetail, FailStepRequest, FailWorkflowRequest, PollActivityRequest,
+    RegisterWorkerRequest, ScheduleSleepRequest, StartWorkflowRequest, WorkerHeartbeatRequest,
 };
+use prost::Message;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
-use tonic::Request;
 use tonic::transport::Channel;
+use tonic::{Code, Request, Status};
 use tracing::{error, info, instrument};
 use tracing_utils::{
     add_tracing_metadata, get_or_generate_correlation_id, get_or_generate_trace_id,
@@ -37,6 +38,120 @@ impl std::fmt::Display for WorkflowPaused {
 }
 
 impl std::error::Error for WorkflowPaused {}
+
+#[derive(Debug, Clone)]
+pub struct KagziError {
+    pub code: ErrorCode,
+    pub message: String,
+    pub non_retryable: bool,
+    pub retry_after: Option<Duration>,
+}
+
+impl KagziError {
+    pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            non_retryable: matches!(
+                code,
+                ErrorCode::InvalidArgument
+                    | ErrorCode::InvalidState
+                    | ErrorCode::PreconditionFailed
+                    | ErrorCode::Conflict
+                    | ErrorCode::AlreadyCompleted
+                    | ErrorCode::Unauthorized
+            ),
+            retry_after: None,
+        }
+    }
+
+    pub fn non_retryable(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::PreconditionFailed,
+            message: message.into(),
+            non_retryable: true,
+            retry_after: None,
+        }
+    }
+
+    pub fn retry_after(message: impl Into<String>, retry_after: Duration) -> Self {
+        Self {
+            code: ErrorCode::Unavailable,
+            message: message.into(),
+            non_retryable: false,
+            retry_after: Some(retry_after),
+        }
+    }
+
+    pub fn to_detail(&self) -> ErrorDetail {
+        ErrorDetail {
+            code: self.code as i32,
+            message: self.message.clone(),
+            non_retryable: self.non_retryable,
+            retry_after_ms: self.retry_after.map(|d| d.as_millis() as i64).unwrap_or(0),
+            subject: String::new(),
+            subject_id: String::new(),
+        }
+    }
+}
+
+impl std::fmt::Display for KagziError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({:?})", self.message, self.code)
+    }
+}
+
+impl std::error::Error for KagziError {}
+
+fn error_code_from_status(code: Code) -> ErrorCode {
+    match code {
+        Code::NotFound => ErrorCode::NotFound,
+        Code::InvalidArgument => ErrorCode::InvalidArgument,
+        Code::FailedPrecondition => ErrorCode::PreconditionFailed,
+        Code::Aborted => ErrorCode::Conflict,
+        Code::PermissionDenied => ErrorCode::Unauthorized,
+        Code::Unavailable => ErrorCode::Unavailable,
+        Code::DeadlineExceeded | Code::Cancelled | Code::ResourceExhausted => {
+            ErrorCode::Unavailable
+        }
+        _ => ErrorCode::Internal,
+    }
+}
+
+impl From<Status> for KagziError {
+    fn from(status: Status) -> Self {
+        if let Ok(detail) = ErrorDetail::decode(status.details()) {
+            return Self {
+                code: ErrorCode::try_from(detail.code).unwrap_or(ErrorCode::Internal),
+                message: if detail.message.is_empty() {
+                    status.message().to_string()
+                } else {
+                    detail.message
+                },
+                non_retryable: detail.non_retryable,
+                retry_after: if detail.retry_after_ms > 0 {
+                    Some(Duration::from_millis(detail.retry_after_ms as u64))
+                } else {
+                    None
+                },
+            };
+        }
+
+        Self {
+            code: error_code_from_status(status.code()),
+            message: status.message().to_string(),
+            non_retryable: matches!(
+                status.code(),
+                Code::InvalidArgument | Code::FailedPrecondition | Code::PermissionDenied
+            ),
+            retry_after: None,
+        }
+    }
+}
+
+fn map_grpc_error(status: Status) -> anyhow::Error {
+    anyhow::Error::new(KagziError::from(status))
+}
 
 #[derive(Clone, Default)]
 pub struct RetryPolicy {
@@ -65,40 +180,6 @@ impl From<RetryPolicy> for kagzi_proto::kagzi::RetryPolicy {
     }
 }
 
-/// Error that skips all retries
-#[derive(Debug)]
-pub struct NonRetryableError(pub String);
-
-impl std::fmt::Display for NonRetryableError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for NonRetryableError {}
-
-/// Error with custom retry delay
-#[derive(Debug)]
-pub struct RetryAfterError {
-    pub message: String,
-    pub retry_after: Duration,
-}
-
-impl RetryAfterError {
-    pub fn new(message: impl Into<String>, retry_after: Duration) -> Self {
-        Self {
-            message: message.into(),
-            retry_after,
-        }
-    }
-}
-
-impl std::fmt::Display for RetryAfterError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-impl std::error::Error for RetryAfterError {}
-
 pub struct WorkflowContext {
     client: WorkflowServiceClient<Channel>,
     run_id: String,
@@ -124,7 +205,12 @@ impl WorkflowContext {
             retry_policy: None,
         }));
 
-        let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
+        let begin_resp = self
+            .client
+            .begin_step(begin_request)
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
 
         if !begin_resp.should_execute {
             let result: R = serde_json::from_slice(&begin_resp.cached_result)?;
@@ -142,28 +228,31 @@ impl WorkflowContext {
                     output: output_bytes,
                 }));
 
-                self.client.complete_step(complete_request).await?;
+                self.client
+                    .complete_step(complete_request)
+                    .await
+                    .map_err(map_grpc_error)?;
                 Ok(val)
             }
             Err(e) => {
                 error!(error = %e, "Step {} failed", step_id);
 
-                let non_retryable = e.downcast_ref::<NonRetryableError>().is_some();
-                let retry_after_ms = e
-                    .downcast_ref::<RetryAfterError>()
-                    .map(|e| e.retry_after.as_millis() as i64)
-                    .unwrap_or(0);
+                let kagzi_err = e
+                    .downcast_ref::<KagziError>()
+                    .cloned()
+                    .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
 
                 let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
                     step_id: step_id.to_string(),
-                    error: e.to_string(),
-                    non_retryable,
-                    retry_after_ms,
+                    error: Some(kagzi_err.to_detail()),
                 }));
 
-                self.client.fail_step(fail_request).await?;
-                Err(e)
+                self.client
+                    .fail_step(fail_request)
+                    .await
+                    .map_err(map_grpc_error)?;
+                Err(anyhow::Error::new(kagzi_err))
             }
         }
     }
@@ -193,7 +282,12 @@ impl WorkflowContext {
             retry_policy: None,
         }));
 
-        let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
+        let begin_resp = self
+            .client
+            .begin_step(begin_request)
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
 
         if !begin_resp.should_execute {
             let result: R = serde_json::from_slice(&begin_resp.cached_result)?;
@@ -211,28 +305,31 @@ impl WorkflowContext {
                     output: output_bytes,
                 }));
 
-                self.client.complete_step(complete_request).await?;
+                self.client
+                    .complete_step(complete_request)
+                    .await
+                    .map_err(map_grpc_error)?;
                 Ok(val)
             }
             Err(e) => {
                 error!(error = %e, "Step {} failed", step_id);
 
-                let non_retryable = e.downcast_ref::<NonRetryableError>().is_some();
-                let retry_after_ms = e
-                    .downcast_ref::<RetryAfterError>()
-                    .map(|e| e.retry_after.as_millis() as i64)
-                    .unwrap_or(0);
+                let kagzi_err = e
+                    .downcast_ref::<KagziError>()
+                    .cloned()
+                    .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
 
                 let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
                     step_id: step_id.to_string(),
-                    error: e.to_string(),
-                    non_retryable,
-                    retry_after_ms,
+                    error: Some(kagzi_err.to_detail()),
                 }));
 
-                self.client.fail_step(fail_request).await?;
-                Err(e)
+                self.client
+                    .fail_step(fail_request)
+                    .await
+                    .map_err(map_grpc_error)?;
+                Err(anyhow::Error::new(kagzi_err))
             }
         }
     }
@@ -254,7 +351,12 @@ impl WorkflowContext {
             retry_policy: None,
         }));
 
-        let begin_resp = self.client.begin_step(begin_request).await?.into_inner();
+        let begin_resp = self
+            .client
+            .begin_step(begin_request)
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
 
         if !begin_resp.should_execute {
             return Ok(());
@@ -265,14 +367,20 @@ impl WorkflowContext {
             duration_seconds: duration.as_secs(),
         }));
 
-        self.client.schedule_sleep(sleep_request).await?;
+        self.client
+            .schedule_sleep(sleep_request)
+            .await
+            .map_err(map_grpc_error)?;
 
         let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
             run_id: self.run_id.clone(),
             step_id,
             output: serde_json::to_vec(&())?,
         }));
-        self.client.complete_step(complete_request).await?;
+        self.client
+            .complete_step(complete_request)
+            .await
+            .map_err(map_grpc_error)?;
 
         Err(WorkflowPaused.into())
     }
@@ -455,7 +563,8 @@ impl Worker {
                 max_concurrent: self.max_concurrent as i32,
                 labels: self.labels.clone(),
             })
-            .await?
+            .await
+            .map_err(map_grpc_error)?
             .into_inner();
 
         self.worker_id = Some(Uuid::parse_str(&resp.worker_id)?);
@@ -658,9 +767,14 @@ async fn execute_workflow(
                 "Workflow failed"
             );
 
+            let kagzi_err = e
+                .downcast_ref::<KagziError>()
+                .cloned()
+                .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
+
             let fail_request = add_tracing_metadata(Request::new(FailWorkflowRequest {
                 run_id,
-                error: e.to_string(),
+                error: Some(kagzi_err.to_detail()),
             }));
 
             let _ = client.fail_workflow(fail_request).await;
@@ -782,7 +896,8 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
                 version: self.version.unwrap_or_default(),
                 retry_policy: self.retry_policy.map(Into::into),
             })
-            .await?;
+            .await
+            .map_err(map_grpc_error)?;
 
         Ok(resp.into_inner().run_id)
     }

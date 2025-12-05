@@ -1,4 +1,4 @@
-use kagzi::{Client, Worker, WorkflowContext};
+use kagzi::{Client, KagziError, Worker, WorkflowContext};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::info;
@@ -25,6 +25,10 @@ async fn step2() -> anyhow::Result<String> {
 
 async fn my_workflow(mut ctx: WorkflowContext, input: MyInput) -> anyhow::Result<MyOutput> {
     info!("Workflow started with input: {:?}", input);
+
+    if input.name.contains("fail-non-retryable") {
+        return Err(KagziError::non_retryable("user requested hard failure").into());
+    }
 
     let step1_res = ctx.run("step1", step1()).await?;
 

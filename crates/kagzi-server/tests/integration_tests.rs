@@ -5,10 +5,12 @@ mod common;
 
 use common::{TestHarness, json_bytes, make_request};
 use kagzi_proto::kagzi::{
-    CompleteWorkflowRequest, DeregisterWorkerRequest, GetWorkflowRunRequest, ListWorkersRequest,
-    PollActivityRequest, RegisterWorkerRequest, StartWorkflowRequest, WorkerHeartbeatRequest,
-    WorkerStatus, WorkflowStatus, workflow_service_server::WorkflowService,
+    CompleteWorkflowRequest, DeregisterWorkerRequest, ErrorCode, ErrorDetail,
+    GetWorkflowRunRequest, ListWorkersRequest, PollActivityRequest, RegisterWorkerRequest,
+    StartWorkflowRequest, WorkerHeartbeatRequest, WorkerStatus, WorkflowStatus,
+    workflow_service_server::WorkflowService,
 };
+use prost::Message;
 use sqlx::Row;
 use tonic::Code;
 use uuid::Uuid;
@@ -277,6 +279,24 @@ async fn worker_drain_blocks_new_work() {
 
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), Code::FailedPrecondition);
+}
+
+#[tokio::test]
+async fn error_details_include_codes() {
+    let harness = TestHarness::new().await;
+
+    let status = harness
+        .service
+        .get_workflow_run(make_request(GetWorkflowRunRequest {
+            run_id: "not-a-uuid".to_string(),
+            namespace_id: NAMESPACE.to_string(),
+        }))
+        .await
+        .unwrap_err();
+
+    let detail = ErrorDetail::decode(status.details()).expect("error detail should decode");
+    assert_eq!(detail.code, ErrorCode::InvalidArgument as i32);
+    assert!(detail.non_retryable);
 }
 
 #[tokio::test]

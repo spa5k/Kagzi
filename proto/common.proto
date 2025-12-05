@@ -1,0 +1,12 @@
+syntax = "proto3";
+package kagzi;
+
+// Shared policy and utility messages.
+message RetryPolicy {
+  int32 maximum_attempts = 1;
+  int64 initial_interval_ms = 2;
+  double backoff_coefficient = 3;
+  int64 maximum_interval_ms = 4;
+  repeated string non_retryable_errors = 5;
+}
+

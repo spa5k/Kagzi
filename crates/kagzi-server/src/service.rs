@@ -6,23 +6,25 @@ use crate::work_distributor::WorkDistributorHandle;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CancelWorkflowRunRequest, CompleteStepRequest,
-    CompleteWorkflowRequest, DeregisterWorkerRequest, Empty, FailStepRequest, FailWorkflowRequest,
-    GetStepAttemptRequest, GetStepAttemptResponse, GetWorkerRequest, GetWorkerResponse,
-    GetWorkflowRunRequest, GetWorkflowRunResponse, HealthCheckRequest, HealthCheckResponse,
-    ListStepAttemptsRequest, ListStepAttemptsResponse, ListWorkersRequest, ListWorkersResponse,
-    ListWorkflowRunsRequest, ListWorkflowRunsResponse, PollActivityRequest, PollActivityResponse,
-    RegisterWorkerRequest, RegisterWorkerResponse, RetryPolicy, ScheduleSleepRequest,
-    StartWorkflowRequest, StartWorkflowResponse, StepAttempt, StepAttemptStatus, StepKind, Worker,
-    WorkerHeartbeatRequest, WorkerHeartbeatResponse, WorkflowRun, WorkflowStatus,
+    CompleteWorkflowRequest, DeregisterWorkerRequest, Empty, ErrorCode, ErrorDetail,
+    FailStepRequest, FailWorkflowRequest, GetStepAttemptRequest, GetStepAttemptResponse,
+    GetWorkerRequest, GetWorkerResponse, GetWorkflowRunRequest, GetWorkflowRunResponse,
+    HealthCheckRequest, HealthCheckResponse, ListStepAttemptsRequest, ListStepAttemptsResponse,
+    ListWorkersRequest, ListWorkersResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
+    PollActivityRequest, PollActivityResponse, RegisterWorkerRequest, RegisterWorkerResponse,
+    RetryPolicy, ScheduleSleepRequest, StartWorkflowRequest, StartWorkflowResponse, StepAttempt,
+    StepAttemptStatus, StepKind, Worker, WorkerHeartbeatRequest, WorkerHeartbeatResponse,
+    WorkflowRun, WorkflowStatus,
 };
 use kagzi_store::{
     BeginStepParams, CreateWorkflow, FailStepParams, ListWorkersParams, ListWorkflowsParams,
     PgStore, RegisterWorkerParams, StepRepository, WorkerHeartbeatParams, WorkerRepository,
     WorkerStatus, WorkflowCursor, WorkflowRepository,
 };
+use prost::Message;
 use std::collections::HashMap;
 use std::time::Duration;
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 use tracing::{debug, info, instrument};
 
 /// Convert proto RetryPolicy to store RetryPolicy
@@ -74,11 +76,97 @@ fn map_step_status(status: kagzi_store::StepStatus) -> StepAttemptStatus {
     }
 }
 
+fn detail(
+    code: ErrorCode,
+    message: impl Into<String>,
+    non_retryable: bool,
+    retry_after_ms: i64,
+    subject: impl Into<String>,
+    subject_id: impl Into<String>,
+) -> ErrorDetail {
+    ErrorDetail {
+        code: code as i32,
+        message: message.into(),
+        non_retryable,
+        retry_after_ms,
+        subject: subject.into(),
+        subject_id: subject_id.into(),
+    }
+}
+
+fn status_with_detail(code: Code, detail: ErrorDetail) -> Status {
+    Status::with_details(code, detail.message.clone(), detail.encode_to_vec().into())
+}
+
+fn invalid_argument(message: impl Into<String>) -> Status {
+    status_with_detail(
+        Code::InvalidArgument,
+        detail(ErrorCode::InvalidArgument, message, true, 0, "", ""),
+    )
+}
+
+fn not_found(
+    message: impl Into<String>,
+    subject: impl Into<String>,
+    id: impl Into<String>,
+) -> Status {
+    status_with_detail(
+        Code::NotFound,
+        detail(ErrorCode::NotFound, message, true, 0, subject, id),
+    )
+}
+
+fn precondition_failed(message: impl Into<String>) -> Status {
+    status_with_detail(
+        Code::FailedPrecondition,
+        detail(ErrorCode::PreconditionFailed, message, true, 0, "", ""),
+    )
+}
+
+fn conflict(message: impl Into<String>) -> Status {
+    status_with_detail(
+        Code::Aborted,
+        detail(ErrorCode::Conflict, message, false, 0, "", ""),
+    )
+}
+
+fn unavailable(message: impl Into<String>) -> Status {
+    status_with_detail(
+        Code::Unavailable,
+        detail(ErrorCode::Unavailable, message, false, 0, "", ""),
+    )
+}
+
+fn permission_denied(message: impl Into<String>) -> Status {
+    status_with_detail(
+        Code::PermissionDenied,
+        detail(ErrorCode::Unauthorized, message, true, 0, "", ""),
+    )
+}
+
+fn internal(message: impl Into<String>) -> Status {
+    status_with_detail(
+        Code::Internal,
+        detail(ErrorCode::Internal, message, true, 0, "", ""),
+    )
+}
+
+fn string_error_detail(message: Option<String>) -> ErrorDetail {
+    detail(
+        ErrorCode::Unspecified,
+        message.unwrap_or_default(),
+        false,
+        0,
+        "",
+        "",
+    )
+}
+
 /// Convert store WorkflowRun to proto WorkflowRun
 fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status> {
     let input_bytes = serde_json::to_vec(&w.input).map_err(|e| {
         tracing::error!("Failed to serialize workflow input: {:?}", e);
-        Status::internal("Failed to serialize workflow input")
+        internal("Failed to serialize workflow input")
     })?;
 
     let output_bytes = w
@@ -86,7 +174,7 @@ fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status>
         .map(|o| {
             serde_json::to_vec(&o).map_err(|e| {
                 tracing::error!("Failed to serialize workflow output: {:?}", e);
-                Status::internal("Failed to serialize workflow output")
+                internal("Failed to serialize workflow output")
             })
         })
         .transpose()?
@@ -97,7 +185,7 @@ fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status>
         .map(|c| {
             serde_json::to_vec(&c).map_err(|e| {
                 tracing::error!("Failed to serialize workflow context: {:?}", e);
-                Status::internal("Failed to serialize workflow context")
+                internal("Failed to serialize workflow context")
             })
         })
         .transpose()?
@@ -111,7 +199,7 @@ fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status>
         status: map_workflow_status(w.status).into(),
         input: input_bytes,
         output: output_bytes,
-        error: w.error.unwrap_or_default(),
+        error: Some(string_error_detail(w.error)),
         attempts: w.attempts,
         created_at: w.created_at.map(|t| prost_types::Timestamp {
             seconds: t.timestamp(),
@@ -154,7 +242,7 @@ fn step_to_proto(s: kagzi_store::StepRun) -> Result<StepAttempt, Status> {
 
     let output_bytes = serde_json::to_vec(&s.output).map_err(|e| {
         tracing::error!("Failed to serialize step output: {:?}", e);
-        Status::internal("Failed to serialize step output")
+        internal("Failed to serialize step output")
     })?;
 
     Ok(StepAttempt {
@@ -166,7 +254,7 @@ fn step_to_proto(s: kagzi_store::StepRun) -> Result<StepAttempt, Status> {
         config: vec![],
         context: vec![],
         output: output_bytes,
-        error: s.error.map(|e| e.into_bytes()).unwrap_or_default(),
+        error: Some(string_error_detail(s.error)),
         started_at: s.started_at.map(|t| prost_types::Timestamp {
             seconds: t.timestamp(),
             nanos: t.timestamp_subsec_nanos() as i32,
@@ -236,24 +324,27 @@ fn worker_to_proto(w: kagzi_store::Worker) -> Worker {
 fn map_store_error(e: kagzi_store::StoreError) -> Status {
     match e {
         kagzi_store::StoreError::NotFound { entity, id } => {
-            Status::not_found(format!("{} not found: {}", entity, id))
+            not_found(format!("{} not found", entity), entity, id)
         }
-        kagzi_store::StoreError::InvalidState { message } => Status::invalid_argument(message),
-        kagzi_store::StoreError::LockConflict { message } => Status::failed_precondition(message),
-        kagzi_store::StoreError::PreconditionFailed { message } => {
-            Status::failed_precondition(message)
-        }
+        kagzi_store::StoreError::InvalidArgument { message } => invalid_argument(message),
+        kagzi_store::StoreError::InvalidState { message } => precondition_failed(message),
+        kagzi_store::StoreError::AlreadyCompleted { message } => precondition_failed(message),
+        kagzi_store::StoreError::LockConflict { message } => conflict(message),
+        kagzi_store::StoreError::PreconditionFailed { message } => precondition_failed(message),
+        kagzi_store::StoreError::Unauthorized { message } => permission_denied(message),
+        kagzi_store::StoreError::Unavailable { message } => unavailable(message),
         kagzi_store::StoreError::Database(e) => {
             tracing::error!("Database error: {:?}", e);
-            Status::internal("Database error")
+            internal("Database error")
         }
         kagzi_store::StoreError::Serialization(e) => {
             tracing::error!("Serialization error: {:?}", e);
-            Status::internal("Serialization error")
+            internal("Serialization error")
         }
     }
 }
 
+#[derive(Clone)]
 pub struct MyWorkflowService {
     pub store: PgStore,
     pub work_distributor: WorkDistributorHandle,
@@ -278,7 +369,7 @@ impl WorkflowService for MyWorkflowService {
         let req = request.into_inner();
 
         if req.workflow_types.is_empty() {
-            return Err(Status::invalid_argument("workflow_types cannot be empty"));
+            return Err(invalid_argument("workflow_types cannot be empty"));
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -325,7 +416,7 @@ impl WorkflowService for MyWorkflowService {
     ) -> Result<Response<WorkerHeartbeatResponse>, Status> {
         let req = request.into_inner();
         let worker_id = uuid::Uuid::parse_str(&req.worker_id)
-            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+            .map_err(|_| invalid_argument("Invalid worker_id"))?;
 
         let accepted = self
             .store
@@ -340,7 +431,11 @@ impl WorkflowService for MyWorkflowService {
             .map_err(map_store_error)?;
 
         if !accepted {
-            return Err(Status::not_found("Worker not found or offline"));
+            return Err(not_found(
+                "Worker not found or offline",
+                "worker",
+                req.worker_id,
+            ));
         }
 
         let extended = self
@@ -377,7 +472,7 @@ impl WorkflowService for MyWorkflowService {
     ) -> Result<Response<Empty>, Status> {
         let req = request.into_inner();
         let worker_id = uuid::Uuid::parse_str(&req.worker_id)
-            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+            .map_err(|_| invalid_argument("Invalid worker_id"))?;
 
         if req.drain {
             self.store
@@ -416,7 +511,7 @@ impl WorkflowService for MyWorkflowService {
         } else {
             Some(
                 uuid::Uuid::parse_str(&req.page_token)
-                    .map_err(|_| Status::invalid_argument("Invalid page_token"))?,
+                    .map_err(|_| invalid_argument("Invalid page_token"))?,
             )
         };
 
@@ -483,7 +578,7 @@ impl WorkflowService for MyWorkflowService {
     ) -> Result<Response<GetWorkerResponse>, Status> {
         let req = request.into_inner();
         let worker_id = uuid::Uuid::parse_str(&req.worker_id)
-            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+            .map_err(|_| invalid_argument("Invalid worker_id"))?;
 
         let worker = self
             .store
@@ -496,7 +591,7 @@ impl WorkflowService for MyWorkflowService {
             Some(w) => Ok(Response::new(GetWorkerResponse {
                 worker: Some(worker_to_proto(w)),
             })),
-            None => Err(Status::not_found("Worker not found")),
+            None => Err(not_found("Worker not found", "worker", req.worker_id)),
         }
     }
 
@@ -522,15 +617,16 @@ impl WorkflowService for MyWorkflowService {
             serde_json::json!(null)
         } else {
             serde_json::from_slice(&req.input)
-                .map_err(|e| Status::invalid_argument(format!("Input must be valid JSON: {}", e)))?
+                .map_err(|e| invalid_argument(format!("Input must be valid JSON: {}", e)))?
         };
 
         let context_json: Option<serde_json::Value> = if req.context.is_empty() {
             None
         } else {
-            Some(serde_json::from_slice(&req.context).map_err(|e| {
-                Status::invalid_argument(format!("Context must be valid JSON: {}", e))
-            })?)
+            Some(
+                serde_json::from_slice(&req.context)
+                    .map_err(|e| invalid_argument(format!("Context must be valid JSON: {}", e)))?,
+            )
         };
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -612,7 +708,7 @@ impl WorkflowService for MyWorkflowService {
         let req = request.into_inner();
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
+            .map_err(|_| invalid_argument("Invalid run_id: must be a valid UUID"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
@@ -644,10 +740,14 @@ impl WorkflowService for MyWorkflowService {
                 }))
             }
             None => {
-                let status = Status::not_found(format!(
-                    "Workflow run not found: run_id={}, namespace_id={}",
-                    run_id, namespace_id
-                ));
+                let status = not_found(
+                    format!(
+                        "Workflow run not found: run_id={}, namespace_id={}",
+                        run_id, namespace_id
+                    ),
+                    "workflow_run",
+                    run_id.to_string(),
+                );
 
                 log_grpc_response(
                     "GetWorkflowRun",
@@ -702,20 +802,20 @@ impl WorkflowService for MyWorkflowService {
         } else {
             let decoded = base64::engine::general_purpose::STANDARD
                 .decode(&req.page_token)
-                .map_err(|_| Status::invalid_argument("Invalid page_token"))?;
+                .map_err(|_| invalid_argument("Invalid page_token"))?;
             let cursor_str = String::from_utf8(decoded)
-                .map_err(|_| Status::invalid_argument("Invalid page_token encoding"))?;
+                .map_err(|_| invalid_argument("Invalid page_token encoding"))?;
             let parts: Vec<&str> = cursor_str.splitn(2, ':').collect();
             if parts.len() != 2 {
-                return Err(Status::invalid_argument("Invalid page_token format"));
+                return Err(invalid_argument("Invalid page_token format"));
             }
             let millis: i64 = parts[0]
                 .parse()
-                .map_err(|_| Status::invalid_argument("Invalid page_token timestamp"))?;
+                .map_err(|_| invalid_argument("Invalid page_token timestamp"))?;
             let run_id = uuid::Uuid::parse_str(parts[1])
-                .map_err(|_| Status::invalid_argument("Invalid page_token run_id"))?;
+                .map_err(|_| invalid_argument("Invalid page_token run_id"))?;
             let cursor_time = chrono::DateTime::from_timestamp_millis(millis)
-                .ok_or_else(|| Status::invalid_argument("Invalid cursor timestamp"))?;
+                .ok_or_else(|| invalid_argument("Invalid cursor timestamp"))?;
             Some(WorkflowCursor {
                 created_at: cursor_time,
                 run_id,
@@ -791,7 +891,7 @@ impl WorkflowService for MyWorkflowService {
         let req = request.into_inner();
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
+            .map_err(|_| invalid_argument("Invalid run_id: must be a valid UUID"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
@@ -826,15 +926,19 @@ impl WorkflowService for MyWorkflowService {
                 .map_err(map_store_error)?;
 
             let status = if exists.exists {
-                Status::failed_precondition(format!(
+                precondition_failed(format!(
                     "Cannot cancel workflow with status '{:?}'. Only PENDING, RUNNING, or SLEEPING workflows can be cancelled.",
                     exists.status
                 ))
             } else {
-                Status::not_found(format!(
-                    "Workflow run not found: run_id={}, namespace_id={}",
-                    run_id, namespace_id
-                ))
+                not_found(
+                    format!(
+                        "Workflow run not found: run_id={}, namespace_id={}",
+                        run_id, namespace_id
+                    ),
+                    "workflow_run",
+                    run_id.to_string(),
+                )
             };
 
             log_grpc_response(
@@ -867,12 +971,10 @@ impl WorkflowService for MyWorkflowService {
         let req = request.into_inner();
 
         let worker_id = uuid::Uuid::parse_str(&req.worker_id)
-            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+            .map_err(|_| invalid_argument("Invalid worker_id"))?;
 
         if req.supported_workflow_types.is_empty() {
-            return Err(Status::invalid_argument(
-                "supported_workflow_types cannot be empty",
-            ));
+            return Err(invalid_argument("supported_workflow_types cannot be empty"));
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -889,25 +991,23 @@ impl WorkflowService for MyWorkflowService {
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| {
-                Status::failed_precondition(
-                    "Worker not registered or offline. Call RegisterWorker first.",
-                )
+                precondition_failed("Worker not registered or offline. Call RegisterWorker first.")
             })?;
 
         if worker.namespace_id != namespace_id || worker.task_queue != req.task_queue {
-            return Err(Status::failed_precondition(
+            return Err(precondition_failed(
                 "Worker not registered for the requested namespace/task_queue",
             ));
         }
 
         if worker.status == WorkerStatus::Offline {
-            return Err(Status::failed_precondition(
+            return Err(precondition_failed(
                 "Worker not registered or offline. Call RegisterWorker first.",
             ));
         }
 
         if worker.status == WorkerStatus::Draining {
-            return Err(Status::failed_precondition(
+            return Err(precondition_failed(
                 "Worker is draining and not accepting new work",
             ));
         }
@@ -921,7 +1021,7 @@ impl WorkflowService for MyWorkflowService {
             .collect();
 
         if effective_types.is_empty() {
-            return Err(Status::failed_precondition(
+            return Err(precondition_failed(
                 "Worker is not registered for the requested workflow types",
             ));
         }
@@ -943,7 +1043,7 @@ impl WorkflowService for MyWorkflowService {
 
             let input_bytes = serde_json::to_vec(&work_item.input).map_err(|e| {
                 tracing::error!("Failed to serialize workflow input: {:?}", e);
-                Status::internal("Failed to serialize workflow input")
+                internal("Failed to serialize workflow input")
             })?;
 
             log_grpc_response(
@@ -983,7 +1083,7 @@ impl WorkflowService for MyWorkflowService {
 
                 let input_bytes = serde_json::to_vec(&work_item.input).map_err(|e| {
                     tracing::error!("Failed to serialize workflow input: {:?}", e);
-                    Status::internal("Failed to serialize workflow input")
+                    internal("Failed to serialize workflow input")
                 })?;
 
                 info!(
@@ -1043,7 +1143,7 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
         let attempt_id = uuid::Uuid::parse_str(&req.step_attempt_id)
-            .map_err(|_| Status::invalid_argument("Invalid step_attempt_id"))?;
+            .map_err(|_| invalid_argument("Invalid step_attempt_id"))?;
 
         let step = self
             .store
@@ -1069,7 +1169,11 @@ impl WorkflowService for MyWorkflowService {
                 }))
             }
             None => {
-                let status = Status::not_found("Step attempt not found");
+                let status = not_found(
+                    "Step attempt not found",
+                    "step_attempt",
+                    req.step_attempt_id,
+                );
 
                 log_grpc_response(
                     "GetStepAttempt",
@@ -1102,7 +1206,7 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
         let run_id = uuid::Uuid::parse_str(&req.workflow_run_id)
-            .map_err(|_| Status::invalid_argument("Invalid workflow_run_id"))?;
+            .map_err(|_| invalid_argument("Invalid workflow_run_id"))?;
 
         let page_size = if req.page_size <= 0 {
             50
@@ -1159,13 +1263,14 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
+        let run_id =
+            uuid::Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
         let input: Option<serde_json::Value> = if !req.input.is_empty() {
-            Some(serde_json::from_slice(&req.input).map_err(|e| {
-                Status::invalid_argument(format!("Input must be valid JSON: {}", e))
-            })?)
+            Some(
+                serde_json::from_slice(&req.input)
+                    .map_err(|e| invalid_argument(format!("Input must be valid JSON: {}", e)))?,
+            )
         } else {
             None
         };
@@ -1188,7 +1293,7 @@ impl WorkflowService for MyWorkflowService {
             .transpose()
             .map_err(|e| {
                 tracing::error!("Failed to serialize cached step output: {:?}", e);
-                Status::internal("Failed to serialize cached step output")
+                internal("Failed to serialize cached step output")
             })?
             .unwrap_or_default();
 
@@ -1223,11 +1328,11 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
+        let run_id =
+            uuid::Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
         let output_json: serde_json::Value = serde_json::from_slice(&req.output)
-            .map_err(|e| Status::invalid_argument(format!("Output must be valid JSON: {}", e)))?;
+            .map_err(|e| invalid_argument(format!("Output must be valid JSON: {}", e)))?;
 
         self.store
             .steps()
@@ -1264,11 +1369,20 @@ impl WorkflowService for MyWorkflowService {
         let req = request.into_inner();
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
+            .map_err(|_| invalid_argument("Invalid run_id: must be a valid UUID"))?;
 
         if req.step_id.is_empty() {
-            return Err(Status::invalid_argument("step_id is required"));
+            return Err(invalid_argument("step_id is required"));
         }
+
+        let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
+            code: ErrorCode::Unspecified as i32,
+            message: String::new(),
+            non_retryable: false,
+            retry_after_ms: 0,
+            subject: String::new(),
+            subject_id: String::new(),
+        });
 
         let result = self
             .store
@@ -1276,10 +1390,10 @@ impl WorkflowService for MyWorkflowService {
             .fail(FailStepParams {
                 run_id,
                 step_id: req.step_id.clone(),
-                error: req.error,
-                non_retryable: req.non_retryable,
-                retry_after_ms: if req.retry_after_ms > 0 {
-                    Some(req.retry_after_ms)
+                error: error_detail.message.clone(),
+                non_retryable: error_detail.non_retryable,
+                retry_after_ms: if error_detail.retry_after_ms > 0 {
+                    Some(error_detail.retry_after_ms)
                 } else {
                     None
                 },
@@ -1329,11 +1443,11 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
+        let run_id =
+            uuid::Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
         let output_json: serde_json::Value = serde_json::from_slice(&req.output)
-            .map_err(|e| Status::invalid_argument(format!("Output must be valid JSON: {}", e)))?;
+            .map_err(|e| invalid_argument(format!("Output must be valid JSON: {}", e)))?;
 
         self.store
             .workflows()
@@ -1368,12 +1482,21 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
+        let run_id =
+            uuid::Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+
+        let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
+            code: ErrorCode::Unspecified as i32,
+            message: String::new(),
+            non_retryable: false,
+            retry_after_ms: 0,
+            subject: String::new(),
+            subject_id: String::new(),
+        });
 
         self.store
             .workflows()
-            .fail(run_id, &req.error)
+            .fail(run_id, &error_detail.message)
             .await
             .map_err(map_store_error)?;
 
@@ -1405,8 +1528,8 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
-        let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id"))?;
+        let run_id =
+            uuid::Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
         self.store
             .workflows()
