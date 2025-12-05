@@ -46,6 +46,15 @@ pub trait WorkflowRepository: Send + Sync {
         worker_id: &str,
     ) -> Result<Option<ClaimedWorkflow>, StoreError>;
 
+    /// Claim next workflow filtered by supported types
+    async fn claim_next_filtered(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        worker_id: &str,
+        supported_types: &[String],
+    ) -> Result<Option<ClaimedWorkflow>, StoreError>;
+
     /// Claim a batch of workflows for distribution to workers
     /// This is used by the work distributor to fetch multiple items in one query
     async fn claim_batch(
@@ -64,6 +73,13 @@ pub trait WorkflowRepository: Send + Sync {
     ) -> Result<bool, StoreError>;
 
     async fn extend_lock(&self, run_id: Uuid, worker_id: &str) -> Result<bool, StoreError>;
+
+    /// Bulk extend locks for all workflows owned by a worker
+    async fn extend_locks_for_worker(
+        &self,
+        worker_id: &str,
+        duration_secs: i64,
+    ) -> Result<u64, StoreError>;
 
     async fn wake_sleeping(&self) -> Result<u64, StoreError>;
 

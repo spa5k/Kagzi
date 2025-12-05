@@ -14,12 +14,18 @@ service WorkflowService {
   rpc GetStepAttempt (GetStepAttemptRequest) returns (GetStepAttemptResponse);
   rpc ListStepAttempts (ListStepAttemptsRequest) returns (ListStepAttemptsResponse);
 
-  // --- Worker Facing API ---
+  // --- Worker Lifecycle API ---
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc WorkerHeartbeat(WorkerHeartbeatRequest) returns (WorkerHeartbeatResponse);
+  rpc DeregisterWorker(DeregisterWorkerRequest) returns (Empty);
+
+  // --- Worker Discovery API ---
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+  rpc GetWorker(GetWorkerRequest) returns (GetWorkerResponse);
+
+  // --- Worker Execution API (requires registration) ---
   // Worker calls this to ask for work. Blocks until work is available or timeout.
   rpc PollActivity (PollActivityRequest) returns (PollActivityResponse);
-  
-  // Worker sends this periodically to keep the lock on the workflow run
-  rpc RecordHeartbeat (RecordHeartbeatRequest) returns (Empty);
 
   // Worker asks: "Has this step run before?"
   rpc BeginStep (BeginStepRequest) returns (BeginStepResponse);
@@ -67,6 +73,13 @@ enum StepAttemptStatus {
   STEP_ATTEMPT_STATUS_RUNNING = 2;
   STEP_ATTEMPT_STATUS_COMPLETED = 3;
   STEP_ATTEMPT_STATUS_FAILED = 4;
+}
+
+enum WorkerStatus {
+  WORKER_STATUS_UNSPECIFIED = 0;
+  WORKER_STATUS_ONLINE = 1;      // Accepting and processing work
+  WORKER_STATUS_DRAINING = 2;    // Finishing existing, rejecting new
+  WORKER_STATUS_OFFLINE = 3;     // Not available
 }
 
 enum ErrorCode {
@@ -209,19 +222,15 @@ message ListStepAttemptsResponse {
 
 message PollActivityRequest {
   string task_queue = 1;
-  string worker_id = 2;
+  string worker_id = 2;           // Must be from RegisterWorkerResponse
   string namespace_id = 3;
+  repeated string supported_workflow_types = 4;
 }
 
 message PollActivityResponse {
   string run_id = 1;
   string workflow_type = 2;
   bytes workflow_input = 3;
-}
-
-message RecordHeartbeatRequest {
-  string run_id = 1;
-  string worker_id = 2;
 }
 
 message BeginStepRequest {
@@ -285,3 +294,84 @@ message HealthCheckResponse {
 
 // Standard empty message
 message Empty {}
+
+// --- Worker Registry Messages ---
+
+message Worker {
+  string worker_id = 1;
+  string namespace_id = 2;
+  string task_queue = 3;
+  WorkerStatus status = 4;
+
+  string hostname = 5;
+  int32 pid = 6;
+  string version = 7;
+
+  repeated string workflow_types = 8;
+  int32 max_concurrent = 9;
+  int32 active_count = 10;
+
+  int64 total_completed = 11;
+  int64 total_failed = 12;
+
+  google.protobuf.Timestamp registered_at = 13;
+  google.protobuf.Timestamp last_heartbeat_at = 14;
+
+  map<string, string> labels = 15;
+}
+
+message RegisterWorkerRequest {
+  string namespace_id = 1;
+  string task_queue = 2;
+  repeated string workflow_types = 3;
+
+  string hostname = 4;
+  int32 pid = 5;
+  string version = 6;
+  int32 max_concurrent = 7;
+  map<string, string> labels = 8;
+}
+
+message RegisterWorkerResponse {
+  string worker_id = 1;
+  int32 heartbeat_interval_secs = 2;
+}
+
+message WorkerHeartbeatRequest {
+  string worker_id = 1;
+  int32 active_count = 2;
+  int32 completed_delta = 3;
+  int32 failed_delta = 4;
+}
+
+message WorkerHeartbeatResponse {
+  bool accepted = 1;
+  bool should_drain = 2;
+}
+
+message DeregisterWorkerRequest {
+  string worker_id = 1;
+  bool drain = 2;
+}
+
+message ListWorkersRequest {
+  string namespace_id = 1;
+  string task_queue = 2;       // Optional filter
+  string filter_status = 3;    // Optional: ONLINE, DRAINING, OFFLINE
+  int32 page_size = 4;
+  string page_token = 5;
+}
+
+message ListWorkersResponse {
+  repeated Worker workers = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message GetWorkerRequest {
+  string worker_id = 1;
+}
+
+message GetWorkerResponse {
+  Worker worker = 1;
+}

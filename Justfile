@@ -74,14 +74,14 @@ test:
 test-unit:
     cargo test --lib --all
 
-# Run integration tests (requires Docker)
+# Run integration tests (requires Docker) with shorter poll timeout
 test-integration:
-    cargo test -p kagzi-server --test integration_tests -- --test-threads=1
+    KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests -- --test-threads=1
 
 # Run integration tests with output
 test-integration-verbose:
-    cargo test -p kagzi-server --test integration_tests -- --test-threads=1 --nocapture
+    KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests -- --test-threads=1 --nocapture
 
 # Run a specific integration test
 test-one name:
-    cargo test -p kagzi-server --test integration_tests {{name}} -- --test-threads=1 --nocapture
+    KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests {{name}} -- --test-threads=1 --nocapture

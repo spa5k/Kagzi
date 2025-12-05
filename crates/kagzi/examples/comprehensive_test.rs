@@ -728,7 +728,7 @@ async fn main() -> anyhow::Result<()> {
     println!("TEST 1: Basic Workflow Execution");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    let mut worker = Worker::new(&server_url, &task_queue).await?;
+    let mut worker = Worker::builder(&server_url, &task_queue).build().await?;
     worker.register("OrderProcessing", order_processing_workflow);
     worker.register("SleepWorkflow", sleep_workflow);
     worker.register("FailingWorkflow", failing_workflow);

@@ -37,7 +37,9 @@ async fn welcome_workflow(mut ctx: WorkflowContext, input: Input) -> anyhow::Res
 async fn main() -> anyhow::Result<()> {
     kagzi::tracing_utils::init_tracing()?;
 
-    let mut worker = Worker::new("http://localhost:50051", "welcome-queue").await?;
+    let mut worker = Worker::builder("http://localhost:50051", "welcome-queue")
+        .build()
+        .await?;
     worker.register("WelcomeEmail", welcome_workflow);
     worker.run().await
 }

@@ -6,19 +6,21 @@ use std::time::Duration;
 
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{
-    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, FailStepRequest,
-    FailWorkflowRequest, PollActivityRequest, RecordHeartbeatRequest, ScheduleSleepRequest,
-    StartWorkflowRequest,
+    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, DeregisterWorkerRequest,
+    FailStepRequest, FailWorkflowRequest, PollActivityRequest, RegisterWorkerRequest,
+    ScheduleSleepRequest, StartWorkflowRequest, WorkerHeartbeatRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tonic::transport::Channel;
 use tracing::{error, info, instrument};
 use tracing_utils::{
     add_tracing_metadata, get_or_generate_correlation_id, get_or_generate_trace_id,
 };
+use uuid::Uuid;
 
 pub mod tracing_utils;
 
@@ -287,47 +289,98 @@ type WorkflowFn = Box<
 
 const DEFAULT_MAX_CONCURRENT_WORKFLOWS: usize = 100;
 
+pub struct WorkerBuilder {
+    addr: String,
+    task_queue: String,
+    namespace_id: String,
+    max_concurrent: usize,
+    hostname: Option<String>,
+    version: Option<String>,
+    labels: HashMap<String, String>,
+}
+
+impl WorkerBuilder {
+    pub fn new(addr: &str, task_queue: &str) -> Self {
+        Self {
+            addr: addr.to_string(),
+            task_queue: task_queue.to_string(),
+            namespace_id: "default".to_string(),
+            max_concurrent: DEFAULT_MAX_CONCURRENT_WORKFLOWS,
+            hostname: None,
+            version: None,
+            labels: HashMap::new(),
+        }
+    }
+
+    pub fn namespace(mut self, ns: &str) -> Self {
+        self.namespace_id = ns.to_string();
+        self
+    }
+
+    pub fn max_concurrent(mut self, n: usize) -> Self {
+        self.max_concurrent = n;
+        self
+    }
+
+    pub fn hostname(mut self, h: &str) -> Self {
+        self.hostname = Some(h.to_string());
+        self
+    }
+
+    pub fn version(mut self, v: &str) -> Self {
+        self.version = Some(v.to_string());
+        self
+    }
+
+    pub fn label(mut self, key: &str, value: &str) -> Self {
+        self.labels.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub async fn build(self) -> anyhow::Result<Worker> {
+        let client = WorkflowServiceClient::connect(self.addr.clone()).await?;
+
+        Ok(Worker {
+            client,
+            task_queue: self.task_queue,
+            namespace_id: self.namespace_id,
+            max_concurrent: self.max_concurrent,
+            hostname: self.hostname,
+            version: self.version,
+            labels: self.labels,
+            workflows: HashMap::new(),
+            workflow_types: Vec::new(),
+            worker_id: None,
+            heartbeat_interval: Duration::from_secs(10),
+            semaphore: Arc::new(Semaphore::new(self.max_concurrent)),
+            shutdown: CancellationToken::new(),
+        })
+    }
+}
+
 pub struct Worker {
     client: WorkflowServiceClient<Channel>,
     task_queue: String,
-    workflows: HashMap<String, Arc<WorkflowFn>>,
-    worker_id: String,
-    semaphore: Arc<Semaphore>,
+    namespace_id: String,
     max_concurrent: usize,
+    hostname: Option<String>,
+    version: Option<String>,
+    labels: HashMap<String, String>,
+    workflows: HashMap<String, Arc<WorkflowFn>>,
+    workflow_types: Vec<String>,
+    worker_id: Option<Uuid>,
+    heartbeat_interval: Duration,
+    semaphore: Arc<Semaphore>,
+    shutdown: CancellationToken,
 }
 
 impl Worker {
-    #[instrument(fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        task_queue = %task_queue
-    ))]
-    pub async fn new(addr: &str, task_queue: &str) -> anyhow::Result<Self> {
-        Self::with_max_concurrent(addr, task_queue, DEFAULT_MAX_CONCURRENT_WORKFLOWS).await
+    pub fn builder(addr: &str, task_queue: &str) -> WorkerBuilder {
+        WorkerBuilder::new(addr, task_queue)
     }
 
-    #[instrument(fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        task_queue = %task_queue,
-        max_concurrent = %max_concurrent
-    ))]
-    pub async fn with_max_concurrent(
-        addr: &str,
-        task_queue: &str,
-        max_concurrent: usize,
-    ) -> anyhow::Result<Self> {
-        let client = WorkflowServiceClient::connect(addr.to_string()).await?;
-        let worker_id = uuid::Uuid::new_v4().to_string();
-
-        Ok(Self {
-            client,
-            task_queue: task_queue.to_string(),
-            workflows: HashMap::new(),
-            worker_id,
-            semaphore: Arc::new(Semaphore::new(max_concurrent)),
-            max_concurrent,
-        })
+    pub async fn new(addr: &str, task_queue: &str) -> anyhow::Result<Self> {
+        Self::builder(addr, task_queue).build().await
     }
 
     pub fn register<F, Fut, I, O>(&mut self, name: &str, func: F)
@@ -351,138 +404,224 @@ impl Worker {
             .insert(name.to_string(), Arc::new(Box::new(wrapped)));
     }
 
+    pub fn worker_id(&self) -> Option<Uuid> {
+        self.worker_id
+    }
+
+    pub fn is_registered(&self) -> bool {
+        self.worker_id.is_some()
+    }
+
+    pub fn active_count(&self) -> usize {
+        self.max_concurrent - self.semaphore.available_permits()
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown.cancel();
+    }
+
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
+
     #[instrument(skip(self), fields(
         correlation_id = %get_or_generate_correlation_id(),
         trace_id = %get_or_generate_trace_id(),
-        worker_id = %self.worker_id,
         task_queue = %self.task_queue,
         max_concurrent = %self.max_concurrent
     ))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
+        if self.workflows.is_empty() {
+            anyhow::bail!("No workflows registered. Call register() before run()");
+        }
+
+        let workflow_types: Vec<String> = self.workflows.keys().cloned().collect();
+        self.workflow_types = workflow_types.clone();
+
+        let resp = self
+            .client
+            .register_worker(RegisterWorkerRequest {
+                namespace_id: self.namespace_id.clone(),
+                task_queue: self.task_queue.clone(),
+                workflow_types,
+                hostname: self.hostname.clone().unwrap_or_else(|| {
+                    hostname::get()
+                        .ok()
+                        .and_then(|h| h.into_string().ok())
+                        .unwrap_or_default()
+                }),
+                pid: std::process::id() as i32,
+                version: self.version.clone().unwrap_or_default(),
+                max_concurrent: self.max_concurrent as i32,
+                labels: self.labels.clone(),
+            })
+            .await?
+            .into_inner();
+
+        self.worker_id = Some(Uuid::parse_str(&resp.worker_id)?);
+        self.heartbeat_interval = Duration::from_secs(resp.heartbeat_interval_secs as u64);
+
         info!(
-            "Worker {} started on queue {}",
-            self.worker_id, self.task_queue
+            worker_id = %self.worker_id.unwrap(),
+            task_queue = %self.task_queue,
+            workflows = ?self.workflows.keys().collect::<Vec<_>>(),
+            "Worker registered"
         );
 
+        let heartbeat_handle = self.spawn_heartbeat_task();
+
+        let shutdown = self.shutdown.clone();
         loop {
-            let permit = match self.semaphore.clone().acquire_owned().await {
-                Ok(permit) => permit,
-                Err(_) => {
-                    error!("Semaphore closed unexpectedly");
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    info!("Worker shutdown signal received");
                     break;
                 }
-            };
-
-            let poll_request = add_tracing_metadata(Request::new(PollActivityRequest {
-                task_queue: self.task_queue.clone(),
-                worker_id: self.worker_id.clone(),
-                namespace_id: "default".to_string(),
-            }));
-
-            let resp = self.client.poll_activity(poll_request).await;
-
-            match resp {
-                Ok(r) => {
-                    let task = r.into_inner();
-
-                    if task.run_id.is_empty() {
-                        drop(permit);
-                        continue;
-                    }
-
-                    info!(
-                        run_id = %task.run_id,
-                        workflow_type = %task.workflow_type,
-                        available_permits = self.semaphore.available_permits(),
-                        "Received task"
-                    );
-
-                    if let Some(handler) = self.workflows.get(&task.workflow_type) {
-                        let handler = handler.clone();
-                        let client = self.client.clone();
-                        let run_id = task.run_id.clone();
-                        let worker_id = self.worker_id.clone();
-                        let input: serde_json::Value = serde_json::from_slice(&task.workflow_input)
-                            .unwrap_or(serde_json::Value::Null);
-
-                        tokio::spawn(async move {
-                            let _permit = permit;
-                            let correlation_id = uuid::Uuid::new_v4().to_string();
-                            let trace_id = uuid::Uuid::new_v4().to_string();
-
-                            tracing_utils::with_tracing_context(
-                                Some(correlation_id.clone()),
-                                Some(trace_id.clone()),
-                                execute_workflow(
-                                    client,
-                                    handler,
-                                    run_id,
-                                    worker_id,
-                                    input,
-                                    correlation_id,
-                                    trace_id,
-                                ),
-                            )
-                            .await;
-                        });
-                    } else {
-                        error!("No handler for workflow type: {}", task.workflow_type);
-                        drop(permit);
-                    }
-                }
-                Err(status) => {
-                    drop(permit);
-                    if status.code() != tonic::Code::DeadlineExceeded
-                        && status.code() != tonic::Code::NotFound
-                    {
-                        error!("Poll failed: {:?}", status);
-                    }
-                }
+                _ = self.poll_and_execute() => {}
             }
         }
 
+        info!(active = self.active_count(), "Draining active workflows...");
+        while self.active_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        heartbeat_handle.abort();
+        if let Some(id) = self.worker_id {
+            let _ = self
+                .client
+                .deregister_worker(DeregisterWorkerRequest {
+                    worker_id: id.to_string(),
+                    drain: false,
+                })
+                .await;
+        }
+
+        info!("Worker deregistered");
         Ok(())
+    }
+
+    fn spawn_heartbeat_task(&self) -> tokio::task::JoinHandle<()> {
+        let mut client = self.client.clone();
+        let worker_id = self.worker_id.unwrap();
+        let semaphore = self.semaphore.clone();
+        let max = self.max_concurrent;
+        let interval = self.heartbeat_interval;
+        let shutdown = self.shutdown.clone();
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            let mut completed: i32 = 0;
+            let mut failed: i32 = 0;
+
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    _ = ticker.tick() => {
+                        let active = (max - semaphore.available_permits()) as i32;
+
+                        let resp = client.worker_heartbeat(WorkerHeartbeatRequest {
+                            worker_id: worker_id.to_string(),
+                            active_count: active,
+                            completed_delta: completed,
+                            failed_delta: failed,
+                        }).await;
+
+                        completed = 0;
+                        failed = 0;
+
+                        match resp {
+                            Ok(r) => {
+                                let inner = r.into_inner();
+                                if inner.should_drain {
+                                    info!("Server requested drain");
+                                    shutdown.cancel();
+                                }
+                            }
+                            Err(e) => {
+                                error!("Heartbeat failed: {:?}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    async fn poll_and_execute(&mut self) {
+        let permit = match self.semaphore.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
+        let resp = self
+            .client
+            .poll_activity(PollActivityRequest {
+                task_queue: self.task_queue.clone(),
+                worker_id: self.worker_id.unwrap().to_string(),
+                namespace_id: self.namespace_id.clone(),
+                supported_workflow_types: self.workflow_types.clone(),
+            })
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let task = r.into_inner();
+                if task.run_id.is_empty() {
+                    drop(permit);
+                    return;
+                }
+
+                if let Some(handler) = self.workflows.get(&task.workflow_type) {
+                    let handler = handler.clone();
+                    let client = self.client.clone();
+                    let input: serde_json::Value = serde_json::from_slice(&task.workflow_input)
+                        .unwrap_or(serde_json::Value::Null);
+                    let run_id = task.run_id.clone();
+
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        let correlation_id = uuid::Uuid::new_v4().to_string();
+                        let trace_id = uuid::Uuid::new_v4().to_string();
+
+                        tracing_utils::with_tracing_context(
+                            Some(correlation_id.clone()),
+                            Some(trace_id.clone()),
+                            execute_workflow(
+                                client,
+                                handler,
+                                run_id,
+                                input,
+                                correlation_id,
+                                trace_id,
+                            ),
+                        )
+                        .await;
+                    });
+                } else {
+                    error!("No handler for workflow type: {}", task.workflow_type);
+                    drop(permit);
+                }
+            }
+            Err(e) => {
+                drop(permit);
+                if e.code() != tonic::Code::DeadlineExceeded {
+                    error!("Poll failed: {:?}", e);
+                }
+            }
+        }
     }
 }
 
-/// Execute a workflow with proper tracing context and heartbeat management
+/// Execute a workflow with proper tracing context
 async fn execute_workflow(
     mut client: WorkflowServiceClient<Channel>,
     handler: Arc<WorkflowFn>,
     run_id: String,
-    worker_id: String,
     input: serde_json::Value,
     correlation_id: String,
     trace_id: String,
 ) {
-    // Start background heartbeat task
-    let heartbeat_handle = {
-        let mut heartbeat_client = client.clone();
-        let heartbeat_run_id = run_id.clone();
-        let heartbeat_worker_id = worker_id.clone();
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(10));
-            loop {
-                interval.tick().await;
-                let request = add_tracing_metadata(Request::new(RecordHeartbeatRequest {
-                    run_id: heartbeat_run_id.clone(),
-                    worker_id: heartbeat_worker_id.clone(),
-                }));
-                if let Err(e) = heartbeat_client.record_heartbeat(request).await {
-                    // Log but don't fail - heartbeat errors are non-fatal
-                    // The workflow might have been completed/failed already
-                    tracing::debug!(
-                        run_id = %heartbeat_run_id,
-                        error = %e,
-                        "Heartbeat failed (workflow may have completed)"
-                    );
-                    break;
-                }
-            }
-        })
-    };
-
     let ctx = WorkflowContext {
         client: client.clone(),
         run_id: run_id.clone(),
@@ -490,9 +629,6 @@ async fn execute_workflow(
     };
 
     let result = handler(ctx, input).await;
-
-    // Stop heartbeat task
-    heartbeat_handle.abort();
 
     match result {
         Ok(output) => {

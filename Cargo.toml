@@ -41,3 +41,6 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+
+# Utilities
+tokio-util = "0.7"

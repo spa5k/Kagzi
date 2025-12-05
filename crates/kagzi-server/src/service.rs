@@ -6,20 +6,24 @@ use crate::work_distributor::WorkDistributorHandle;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CancelWorkflowRunRequest, CompleteStepRequest,
-    CompleteWorkflowRequest, Empty, FailStepRequest, FailWorkflowRequest, GetStepAttemptRequest,
-    GetStepAttemptResponse, GetWorkflowRunRequest, GetWorkflowRunResponse, HealthCheckRequest,
-    HealthCheckResponse, ListStepAttemptsRequest, ListStepAttemptsResponse,
+    CompleteWorkflowRequest, DeregisterWorkerRequest, Empty, FailStepRequest, FailWorkflowRequest,
+    GetStepAttemptRequest, GetStepAttemptResponse, GetWorkerRequest, GetWorkerResponse,
+    GetWorkflowRunRequest, GetWorkflowRunResponse, HealthCheckRequest, HealthCheckResponse,
+    ListStepAttemptsRequest, ListStepAttemptsResponse, ListWorkersRequest, ListWorkersResponse,
     ListWorkflowRunsRequest, ListWorkflowRunsResponse, PollActivityRequest, PollActivityResponse,
-    RecordHeartbeatRequest, RetryPolicy, ScheduleSleepRequest, StartWorkflowRequest,
-    StartWorkflowResponse, StepAttempt, StepAttemptStatus, StepKind, WorkflowRun, WorkflowStatus,
+    RegisterWorkerRequest, RegisterWorkerResponse, RetryPolicy, ScheduleSleepRequest,
+    StartWorkflowRequest, StartWorkflowResponse, StepAttempt, StepAttemptStatus, StepKind, Worker,
+    WorkerHeartbeatRequest, WorkerHeartbeatResponse, WorkflowRun, WorkflowStatus,
 };
 use kagzi_store::{
-    BeginStepParams, CreateWorkflow, FailStepParams, ListWorkflowsParams, PgStore, StepRepository,
-    WorkflowCursor, WorkflowRepository,
+    BeginStepParams, CreateWorkflow, FailStepParams, ListWorkersParams, ListWorkflowsParams,
+    PgStore, RegisterWorkerParams, StepRepository, WorkerHeartbeatParams, WorkerRepository,
+    WorkerStatus, WorkflowCursor, WorkflowRepository,
 };
+use std::collections::HashMap;
 use std::time::Duration;
 use tonic::{Request, Response, Status};
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 /// Convert proto RetryPolicy to store RetryPolicy
 fn proto_policy_to_store(p: Option<RetryPolicy>) -> Option<kagzi_store::RetryPolicy> {
@@ -190,6 +194,44 @@ fn step_to_proto(s: kagzi_store::StepRun) -> Result<StepAttempt, Status> {
     })
 }
 
+fn worker_to_proto(w: kagzi_store::Worker) -> Worker {
+    let labels = match w.labels {
+        serde_json::Value::Object(map) => map
+            .into_iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+            .collect(),
+        _ => HashMap::new(),
+    };
+
+    Worker {
+        worker_id: w.worker_id.to_string(),
+        namespace_id: w.namespace_id,
+        task_queue: w.task_queue,
+        status: match w.status {
+            WorkerStatus::Online => 1,
+            WorkerStatus::Draining => 2,
+            WorkerStatus::Offline => 3,
+        },
+        hostname: w.hostname.unwrap_or_default(),
+        pid: w.pid.unwrap_or(0),
+        version: w.version.unwrap_or_default(),
+        workflow_types: w.workflow_types,
+        max_concurrent: w.max_concurrent,
+        active_count: w.active_count,
+        total_completed: w.total_completed,
+        total_failed: w.total_failed,
+        registered_at: Some(prost_types::Timestamp {
+            seconds: w.registered_at.timestamp(),
+            nanos: w.registered_at.timestamp_subsec_nanos() as i32,
+        }),
+        last_heartbeat_at: Some(prost_types::Timestamp {
+            seconds: w.last_heartbeat_at.timestamp(),
+            nanos: w.last_heartbeat_at.timestamp_subsec_nanos() as i32,
+        }),
+        labels,
+    }
+}
+
 /// Map StoreError to gRPC Status
 fn map_store_error(e: kagzi_store::StoreError) -> Status {
     match e {
@@ -229,6 +271,235 @@ impl MyWorkflowService {
 
 #[tonic::async_trait]
 impl WorkflowService for MyWorkflowService {
+    async fn register_worker(
+        &self,
+        request: Request<RegisterWorkerRequest>,
+    ) -> Result<Response<RegisterWorkerResponse>, Status> {
+        let req = request.into_inner();
+
+        if req.workflow_types.is_empty() {
+            return Err(Status::invalid_argument("workflow_types cannot be empty"));
+        }
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        let worker_id = self
+            .store
+            .workers()
+            .register(RegisterWorkerParams {
+                namespace_id,
+                task_queue: req.task_queue,
+                workflow_types: req.workflow_types,
+                hostname: if req.hostname.is_empty() {
+                    None
+                } else {
+                    Some(req.hostname)
+                },
+                pid: if req.pid == 0 { None } else { Some(req.pid) },
+                version: if req.version.is_empty() {
+                    None
+                } else {
+                    Some(req.version)
+                },
+                max_concurrent: req.max_concurrent.max(1),
+                labels: serde_json::to_value(&req.labels).unwrap_or_default(),
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        info!(worker_id = %worker_id, "Worker registered");
+
+        Ok(Response::new(RegisterWorkerResponse {
+            worker_id: worker_id.to_string(),
+            heartbeat_interval_secs: 10,
+        }))
+    }
+
+    async fn worker_heartbeat(
+        &self,
+        request: Request<WorkerHeartbeatRequest>,
+    ) -> Result<Response<WorkerHeartbeatResponse>, Status> {
+        let req = request.into_inner();
+        let worker_id = uuid::Uuid::parse_str(&req.worker_id)
+            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+
+        let accepted = self
+            .store
+            .workers()
+            .heartbeat(WorkerHeartbeatParams {
+                worker_id,
+                active_count: req.active_count,
+                completed_delta: req.completed_delta,
+                failed_delta: req.failed_delta,
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        if !accepted {
+            return Err(Status::not_found("Worker not found or offline"));
+        }
+
+        let extended = self
+            .store
+            .workflows()
+            .extend_locks_for_worker(&req.worker_id, 30)
+            .await
+            .map_err(map_store_error)?;
+
+        if extended > 0 {
+            debug!(worker_id = %worker_id, extended = extended, "Extended workflow locks");
+        }
+
+        let worker = self
+            .store
+            .workers()
+            .find_by_id(worker_id)
+            .await
+            .map_err(map_store_error)?;
+
+        let should_drain = worker
+            .map(|w| w.status == WorkerStatus::Draining)
+            .unwrap_or(false);
+
+        Ok(Response::new(WorkerHeartbeatResponse {
+            accepted: true,
+            should_drain,
+        }))
+    }
+
+    async fn deregister_worker(
+        &self,
+        request: Request<DeregisterWorkerRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        let worker_id = uuid::Uuid::parse_str(&req.worker_id)
+            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+
+        if req.drain {
+            self.store
+                .workers()
+                .start_drain(worker_id)
+                .await
+                .map_err(map_store_error)?;
+            info!(worker_id = %worker_id, "Worker draining");
+        } else {
+            self.store
+                .workers()
+                .deregister(worker_id)
+                .await
+                .map_err(map_store_error)?;
+            info!(worker_id = %worker_id, "Worker deregistered");
+        }
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn list_workers(
+        &self,
+        request: Request<ListWorkersRequest>,
+    ) -> Result<Response<ListWorkersResponse>, Status> {
+        let req = request.into_inner();
+
+        let filter_status = match req.filter_status.as_str() {
+            "ONLINE" => Some(WorkerStatus::Online),
+            "DRAINING" => Some(WorkerStatus::Draining),
+            "OFFLINE" => Some(WorkerStatus::Offline),
+            _ => None,
+        };
+
+        let cursor = if req.page_token.is_empty() {
+            None
+        } else {
+            Some(
+                uuid::Uuid::parse_str(&req.page_token)
+                    .map_err(|_| Status::invalid_argument("Invalid page_token"))?,
+            )
+        };
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id.clone()
+        };
+
+        let page_size = req.page_size.clamp(1, 100);
+
+        let workers = self
+            .store
+            .workers()
+            .list(ListWorkersParams {
+                namespace_id: namespace_id.clone(),
+                task_queue: if req.task_queue.is_empty() {
+                    None
+                } else {
+                    Some(req.task_queue.clone())
+                },
+                filter_status,
+                page_size,
+                cursor,
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        let total_count = self
+            .store
+            .workers()
+            .count(
+                &namespace_id,
+                if req.task_queue.is_empty() {
+                    None
+                } else {
+                    Some(req.task_queue.as_str())
+                },
+                filter_status,
+            )
+            .await
+            .map_err(map_store_error)?;
+
+        let mut workers = workers;
+        let mut next_page_token = String::new();
+        if workers.len() as i32 > page_size
+            && let Some(last) = workers.pop()
+        {
+            next_page_token = last.worker_id.to_string();
+        }
+
+        let proto_workers = workers.into_iter().map(worker_to_proto).collect();
+
+        Ok(Response::new(ListWorkersResponse {
+            workers: proto_workers,
+            next_page_token,
+            total_count: total_count as i32,
+        }))
+    }
+
+    async fn get_worker(
+        &self,
+        request: Request<GetWorkerRequest>,
+    ) -> Result<Response<GetWorkerResponse>, Status> {
+        let req = request.into_inner();
+        let worker_id = uuid::Uuid::parse_str(&req.worker_id)
+            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+
+        let worker = self
+            .store
+            .workers()
+            .find_by_id(worker_id)
+            .await
+            .map_err(map_store_error)?;
+
+        match worker {
+            Some(w) => Ok(Response::new(GetWorkerResponse {
+                worker: Some(worker_to_proto(w)),
+            })),
+            None => Err(Status::not_found("Worker not found")),
+        }
+    }
+
     #[instrument(skip(self), fields(
         correlation_id = %extract_or_generate_correlation_id(&request),
         trace_id = %extract_or_generate_trace_id(&request),
@@ -595,22 +866,121 @@ impl WorkflowService for MyWorkflowService {
 
         let req = request.into_inner();
 
+        let worker_id = uuid::Uuid::parse_str(&req.worker_id)
+            .map_err(|_| Status::invalid_argument("Invalid worker_id"))?;
+
+        if req.supported_workflow_types.is_empty() {
+            return Err(Status::invalid_argument(
+                "supported_workflow_types cannot be empty",
+            ));
+        }
+
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
         } else {
             req.namespace_id
         };
 
-        let timeout = Duration::from_secs(60);
+        // Load worker record and validate queue/namespace/status.
+        let worker = self
+            .store
+            .workers()
+            .find_by_id(worker_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| {
+                Status::failed_precondition(
+                    "Worker not registered or offline. Call RegisterWorker first.",
+                )
+            })?;
 
-        // Use the work distributor instead of direct DB polling
-        // This coalesces requests: 100 workers = 1 DB query instead of 100
+        if worker.namespace_id != namespace_id || worker.task_queue != req.task_queue {
+            return Err(Status::failed_precondition(
+                "Worker not registered for the requested namespace/task_queue",
+            ));
+        }
+
+        if worker.status == WorkerStatus::Offline {
+            return Err(Status::failed_precondition(
+                "Worker not registered or offline. Call RegisterWorker first.",
+            ));
+        }
+
+        if worker.status == WorkerStatus::Draining {
+            return Err(Status::failed_precondition(
+                "Worker is draining and not accepting new work",
+            ));
+        }
+
+        // Use the worker's registered types, optionally narrowed by client request.
+        let effective_types: Vec<String> = worker
+            .workflow_types
+            .iter()
+            .filter(|t| req.supported_workflow_types.iter().any(|r| r == *t))
+            .cloned()
+            .collect();
+
+        if effective_types.is_empty() {
+            return Err(Status::failed_precondition(
+                "Worker is not registered for the requested workflow types",
+            ));
+        }
+
+        // Fast path: attempt immediate claim before long-polling.
+        if let Some(work_item) = self
+            .store
+            .workflows()
+            .claim_next_filtered(
+                &req.task_queue,
+                &namespace_id,
+                &req.worker_id,
+                &effective_types,
+            )
+            .await
+            .map_err(map_store_error)?
+        {
+            let _ = self.store.workers().update_active_count(worker_id, 1).await;
+
+            let input_bytes = serde_json::to_vec(&work_item.input).map_err(|e| {
+                tracing::error!("Failed to serialize workflow input: {:?}", e);
+                Status::internal("Failed to serialize workflow input")
+            })?;
+
+            log_grpc_response(
+                "PollActivity",
+                &correlation_id,
+                &trace_id,
+                Status::code(&Status::ok("")),
+                None,
+            );
+
+            return Ok(Response::new(PollActivityResponse {
+                run_id: work_item.run_id.to_string(),
+                workflow_type: work_item.workflow_type,
+                workflow_input: input_bytes,
+            }));
+        }
+
+        let timeout = std::env::var("KAGZI_POLL_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(60));
+
         match self
             .work_distributor
-            .wait_for_work(&req.task_queue, &namespace_id, &req.worker_id, timeout)
+            .wait_for_work(
+                &req.task_queue,
+                &namespace_id,
+                &req.worker_id,
+                &effective_types,
+                timeout,
+            )
             .await
         {
             Some(work_item) => {
+                let _ = self.store.workers().update_active_count(worker_id, 1).await;
+
                 let input_bytes = serde_json::to_vec(&work_item.input).map_err(|e| {
                     tracing::error!("Failed to serialize workflow input: {:?}", e);
                     Status::internal("Failed to serialize workflow input")
@@ -654,99 +1024,6 @@ impl WorkflowService for MyWorkflowService {
                     workflow_input: vec![],
                 }))
             }
-        }
-    }
-
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        worker_id = %request.get_ref().worker_id
-    ))]
-    async fn record_heartbeat(
-        &self,
-        request: Request<RecordHeartbeatRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("RecordHeartbeat", &correlation_id, &trace_id, None);
-
-        let req = request.into_inner();
-
-        let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| Status::invalid_argument("Invalid run_id: must be a valid UUID"))?;
-
-        if req.worker_id.is_empty() {
-            return Err(Status::invalid_argument("worker_id is required"));
-        }
-
-        let extended = self
-            .store
-            .workflows()
-            .extend_lock(run_id, &req.worker_id)
-            .await
-            .map_err(map_store_error)?;
-
-        if extended {
-            info!(
-                "Heartbeat recorded for workflow {} by worker {}",
-                run_id, req.worker_id
-            );
-
-            log_grpc_response(
-                "RecordHeartbeat",
-                &correlation_id,
-                &trace_id,
-                Status::code(&Status::ok("")),
-                None,
-            );
-
-            Ok(Response::new(Empty {}))
-        } else {
-            // Check why heartbeat failed - query directly since we don't have namespace
-            let workflow = sqlx::query!(
-                r#"
-                SELECT status, locked_by FROM kagzi.workflow_runs
-                WHERE run_id = $1
-                "#,
-                run_id
-            )
-            .fetch_optional(self.store.pool())
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to check workflow: {:?}", e);
-                Status::internal("Failed to check workflow")
-            })?;
-
-            let status = match workflow {
-                Some(row) => {
-                    if row.status != "RUNNING" {
-                        Status::failed_precondition(format!(
-                            "Workflow is not running (status: {})",
-                            row.status
-                        ))
-                    } else if row.locked_by.as_deref() != Some(&req.worker_id) {
-                        Status::failed_precondition(format!(
-                            "Lock stolen by another worker: {:?}",
-                            row.locked_by
-                        ))
-                    } else {
-                        Status::internal("Unexpected heartbeat failure")
-                    }
-                }
-                None => Status::not_found(format!("Workflow run not found: {}", run_id)),
-            };
-
-            log_grpc_response(
-                "RecordHeartbeat",
-                &correlation_id,
-                &trace_id,
-                Status::code(&status),
-                Some("Heartbeat recording failed"),
-            );
-
-            Err(status)
         }
     }
 

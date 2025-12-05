@@ -456,6 +456,58 @@ impl WorkflowRepository for PgWorkflowRepository {
         }))
     }
 
+    async fn claim_next_filtered(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        worker_id: &str,
+        supported_types: &[String],
+    ) -> Result<Option<ClaimedWorkflow>, StoreError> {
+        let row = sqlx::query_as::<_, ClaimedRow>(
+            r#"
+            WITH claimed AS (
+                UPDATE kagzi.workflow_runs
+                SET status = 'RUNNING',
+                    locked_by = $1,
+                    locked_until = NOW() + INTERVAL '30 seconds',
+                    started_at = COALESCE(started_at, NOW()),
+                    attempts = attempts + 1
+                WHERE run_id = (
+                    SELECT run_id
+                    FROM kagzi.workflow_runs
+                    WHERE task_queue = $2
+                      AND namespace_id = $3
+                      AND workflow_type = ANY($4::TEXT[])
+                      AND (
+                        (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
+                        OR (status = 'SLEEPING' AND wake_up_at <= NOW())
+                      )
+                    ORDER BY COALESCE(wake_up_at, created_at) ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING run_id, workflow_type, locked_by
+            )
+            SELECT c.run_id, c.workflow_type, p.input, c.locked_by
+            FROM claimed c
+            JOIN kagzi.workflow_payloads p ON c.run_id = p.run_id
+            "#,
+        )
+        .bind(worker_id)
+        .bind(task_queue)
+        .bind(namespace_id)
+        .bind(supported_types)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| ClaimedWorkflow {
+            run_id: r.run_id,
+            workflow_type: r.workflow_type,
+            input: r.input,
+            locked_by: r.locked_by,
+        }))
+    }
+
     async fn claim_batch(
         &self,
         task_queue: &str,
@@ -554,6 +606,27 @@ impl WorkflowRepository for PgWorkflowRepository {
         .await?;
 
         Ok(result.is_some())
+    }
+
+    async fn extend_locks_for_worker(
+        &self,
+        worker_id: &str,
+        duration_secs: i64,
+    ) -> Result<u64, StoreError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET locked_until = NOW() + ($2 * INTERVAL '1 second')
+            WHERE locked_by = $1
+              AND status = 'RUNNING'
+            "#,
+            worker_id,
+            duration_secs as f64
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
     }
 
     async fn wake_sleeping(&self) -> Result<u64, StoreError> {

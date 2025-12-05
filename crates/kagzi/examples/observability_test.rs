@@ -150,7 +150,9 @@ async fn main() -> anyhow::Result<()> {
     println!("Connecting to server: {}", server_url);
 
     // Create worker and register workflow
-    let mut worker = Worker::new(&server_url, "observability-test-queue").await?;
+    let mut worker = Worker::builder(&server_url, "observability-test-queue")
+        .build()
+        .await?;
 
     worker.register("UserOnboarding", user_onboarding_workflow);
 

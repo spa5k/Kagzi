@@ -110,7 +110,9 @@ async fn greet_workflow(mut ctx: WorkflowContext, input: Input) -> anyhow::Resul
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Start worker
-    let mut worker = Worker::new("http://localhost:50051", "default").await?;
+    let mut worker = Worker::builder("http://localhost:50051", "default")
+        .build()
+        .await?;
     worker.register("greet", greet_workflow);
     tokio::spawn(async move { worker.run().await });
     
@@ -178,7 +180,9 @@ let workflows = client.list_workflow_runs("namespace").await?;
 #### Worker API
 
 ```rust
-let mut worker = Worker::new("http://localhost:50051", "task_queue").await?;
+let mut worker = Worker::builder("http://localhost:50051", "task_queue")
+    .build()
+    .await?;
 
 // Register workflow
 worker.register("workflow_name", workflow_function);

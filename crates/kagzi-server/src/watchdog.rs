@@ -1,4 +1,4 @@
-use kagzi_store::{PgStore, StepRepository, WorkflowRepository};
+use kagzi_store::{PgStore, StepRepository, WorkerRepository, WorkflowRepository};
 use tracing::{error, info, warn};
 
 pub async fn run(store: PgStore) {
@@ -92,6 +92,15 @@ pub async fn run(store: PgStore) {
             Err(e) => {
                 error!("Watchdog failed to recover orphaned workflows: {:?}", e);
             }
+        }
+
+        // Mark stale workers offline (missed heartbeats)
+        match store.workers().mark_stale_offline(30).await {
+            Ok(count) if count > 0 => {
+                warn!("Marked {} stale workers as offline", count);
+            }
+            Err(e) => error!("Failed to mark stale workers: {:?}", e),
+            _ => {}
         }
     }
 }

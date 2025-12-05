@@ -98,8 +98,3 @@ pub fn make_request<T>(inner: T) -> tonic::Request<T> {
 pub fn json_bytes<T: serde::Serialize>(value: &T) -> Vec<u8> {
     serde_json::to_vec(value).expect("Failed to serialize to JSON")
 }
-
-/// Helper to parse JSON from bytes
-pub fn from_json_bytes<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
-    serde_json::from_slice(bytes).expect("Failed to deserialize from JSON")
-}

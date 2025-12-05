@@ -74,7 +74,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let mut worker = Worker::new("http://localhost:50051", "queue").await?;
+    let mut worker = Worker::builder("http://localhost:50051", "queue")
+        .build()
+        .await?;
     worker.register("UserSignup", user_signup);
 
     tokio::spawn(async move {
