@@ -452,6 +452,8 @@ impl PgWorkerRepository {
                 .or_default()
                 .push(WorkflowTypeConcurrency {
                     workflow_type: row.workflow_type,
+                    // NULL in DB means "no explicit limit configured".
+                    // Represented as 0 and later filtered by normalize_limit() in service layer.
                     max_concurrent: row.max_concurrent.unwrap_or(0),
                 });
         }
@@ -492,6 +494,8 @@ impl PgWorkerRepository {
             .into_iter()
             .map(|r| WorkflowTypeConcurrency {
                 workflow_type: r.workflow_type,
+                // NULL in DB means "no explicit limit configured".
+                // Represented as 0 and later filtered by normalize_limit() in service layer.
                 max_concurrent: r.max_concurrent.unwrap_or(0),
             })
             .collect();
