@@ -6,12 +6,15 @@ use std::time::Duration;
 
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{
-    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, DeregisterWorkerRequest,
-    ErrorCode, ErrorDetail, FailStepRequest, FailWorkflowRequest, PollActivityRequest,
-    RegisterWorkerRequest, ScheduleSleepRequest, StartWorkflowRequest, WorkerHeartbeatRequest,
+    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, CreateScheduleRequest,
+    DeleteScheduleRequest, DeregisterWorkerRequest, ErrorCode, ErrorDetail, FailStepRequest,
+    FailWorkflowRequest, GetScheduleRequest, ListSchedulesRequest, PollActivityRequest,
+    RegisterWorkerRequest, Schedule as ProtoSchedule, ScheduleSleepRequest, StartWorkflowRequest,
+    UpdateScheduleRequest, WorkerHeartbeatRequest,
     WorkflowTypeConcurrency as ProtoWorkflowTypeConcurrency,
 };
 use prost::Message;
+use prost_types::Timestamp;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
@@ -865,6 +868,104 @@ impl Client {
     ) -> WorkflowBuilder<'_, I> {
         WorkflowBuilder::new(self, workflow_type, task_queue, input)
     }
+
+    pub fn schedule(
+        &mut self,
+        workflow_type: &str,
+        task_queue: &str,
+        cron_expr: &str,
+    ) -> ScheduleBuilder<'_> {
+        ScheduleBuilder::new(self, workflow_type, task_queue, cron_expr)
+    }
+
+    pub async fn get_schedule(
+        &mut self,
+        schedule_id: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<ProtoSchedule> {
+        let resp = self
+            .client
+            .get_schedule(GetScheduleRequest {
+                schedule_id: schedule_id.to_string(),
+                namespace_id: namespace_id.to_string(),
+            })
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        resp.schedule
+            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
+    }
+
+    pub async fn list_schedules(
+        &mut self,
+        namespace_id: &str,
+        task_queue: Option<&str>,
+        limit: Option<i32>,
+    ) -> anyhow::Result<Vec<ProtoSchedule>> {
+        let resp = self
+            .client
+            .list_schedules(ListSchedulesRequest {
+                namespace_id: namespace_id.to_string(),
+                task_queue: task_queue.unwrap_or_default().to_string(),
+                limit: limit.unwrap_or(0),
+            })
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        Ok(resp.schedules)
+    }
+
+    pub async fn update_schedule(
+        &mut self,
+        schedule_id: &str,
+        namespace_id: &str,
+        update: ScheduleUpdate,
+    ) -> anyhow::Result<ProtoSchedule> {
+        let req = UpdateScheduleRequest {
+            schedule_id: schedule_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            task_queue: update.task_queue,
+            workflow_type: update.workflow_type,
+            cron_expr: update.cron_expr,
+            input: update.input.map(|v| serde_json::to_vec(&v)).transpose()?,
+            context: update.context.map(|v| serde_json::to_vec(&v)).transpose()?,
+            enabled: update.enabled,
+            max_catchup: update.max_catchup,
+            next_fire_at: update.next_fire_at.map(|dt| Timestamp {
+                seconds: dt.timestamp(),
+                nanos: dt.timestamp_subsec_nanos() as i32,
+            }),
+            version: update.version,
+        };
+
+        let resp = self
+            .client
+            .update_schedule(req)
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        resp.schedule
+            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
+    }
+
+    pub async fn delete_schedule(
+        &mut self,
+        schedule_id: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<()> {
+        self.client
+            .delete_schedule(DeleteScheduleRequest {
+                schedule_id: schedule_id.to_string(),
+                namespace_id: namespace_id.to_string(),
+            })
+            .await
+            .map_err(map_grpc_error)?;
+
+        Ok(())
+    }
 }
 
 pub struct WorkflowBuilder<'a, I> {
@@ -974,5 +1075,155 @@ impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowBuilder<'a, I> {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.execute())
+    }
+}
+
+pub struct ScheduleBuilder<'a> {
+    client: &'a mut Client,
+    namespace_id: String,
+    task_queue: String,
+    workflow_type: String,
+    cron_expr: String,
+    input: serde_json::Value,
+    context: Option<serde_json::Value>,
+    enabled: Option<bool>,
+    max_catchup: Option<i32>,
+    version: Option<String>,
+}
+
+impl<'a> ScheduleBuilder<'a> {
+    fn new(client: &'a mut Client, workflow_type: &str, task_queue: &str, cron_expr: &str) -> Self {
+        Self {
+            client,
+            namespace_id: "default".to_string(),
+            task_queue: task_queue.to_string(),
+            workflow_type: workflow_type.to_string(),
+            cron_expr: cron_expr.to_string(),
+            input: serde_json::json!(null),
+            context: None,
+            enabled: None,
+            max_catchup: None,
+            version: None,
+        }
+    }
+
+    pub fn namespace(mut self, namespace_id: impl Into<String>) -> Self {
+        self.namespace_id = namespace_id.into();
+        self
+    }
+
+    pub fn input(mut self, input: serde_json::Value) -> Self {
+        self.input = input;
+        self
+    }
+
+    pub fn context(mut self, context: serde_json::Value) -> Self {
+        self.context = Some(context);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    pub fn max_catchup(mut self, max_catchup: i32) -> Self {
+        self.max_catchup = Some(max_catchup);
+        self
+    }
+
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    pub async fn create(self) -> anyhow::Result<ProtoSchedule> {
+        let input_bytes = serde_json::to_vec(&self.input)?;
+        let context_bytes = self
+            .context
+            .map(|c| serde_json::to_vec(&c))
+            .transpose()?
+            .unwrap_or_default();
+
+        let resp = self
+            .client
+            .client
+            .create_schedule(CreateScheduleRequest {
+                namespace_id: self.namespace_id,
+                task_queue: self.task_queue,
+                workflow_type: self.workflow_type,
+                cron_expr: self.cron_expr,
+                input: input_bytes,
+                context: context_bytes,
+                enabled: self.enabled,
+                max_catchup: self.max_catchup.unwrap_or(0),
+                version: self.version.unwrap_or_default(),
+            })
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        resp.schedule
+            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
+    }
+}
+
+#[derive(Default)]
+pub struct ScheduleUpdate {
+    task_queue: Option<String>,
+    workflow_type: Option<String>,
+    cron_expr: Option<String>,
+    input: Option<serde_json::Value>,
+    context: Option<serde_json::Value>,
+    enabled: Option<bool>,
+    max_catchup: Option<i32>,
+    next_fire_at: Option<chrono::DateTime<chrono::Utc>>,
+    version: Option<String>,
+}
+
+impl ScheduleUpdate {
+    pub fn task_queue(mut self, value: impl Into<String>) -> Self {
+        self.task_queue = Some(value.into());
+        self
+    }
+
+    pub fn workflow_type(mut self, value: impl Into<String>) -> Self {
+        self.workflow_type = Some(value.into());
+        self
+    }
+
+    pub fn cron_expr(mut self, value: impl Into<String>) -> Self {
+        self.cron_expr = Some(value.into());
+        self
+    }
+
+    pub fn input(mut self, value: serde_json::Value) -> Self {
+        self.input = Some(value);
+        self
+    }
+
+    pub fn context(mut self, value: serde_json::Value) -> Self {
+        self.context = Some(value);
+        self
+    }
+
+    pub fn enabled(mut self, value: bool) -> Self {
+        self.enabled = Some(value);
+        self
+    }
+
+    pub fn max_catchup(mut self, value: i32) -> Self {
+        self.max_catchup = Some(value);
+        self
+    }
+
+    pub fn next_fire_at(mut self, value: chrono::DateTime<chrono::Utc>) -> Self {
+        self.next_fire_at = Some(value);
+        self
+    }
+
+    pub fn version(mut self, value: impl Into<String>) -> Self {
+        self.version = Some(value.into());
+        self
     }
 }

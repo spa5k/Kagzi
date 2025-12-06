@@ -3,26 +3,32 @@ use crate::tracing_utils::{
     log_grpc_response,
 };
 use crate::work_distributor::WorkDistributorHandle;
+use cron::Schedule as CronSchedule;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CancelWorkflowRunRequest, CompleteStepRequest,
-    CompleteWorkflowRequest, DeregisterWorkerRequest, Empty, ErrorCode, ErrorDetail,
-    FailStepRequest, FailWorkflowRequest, GetStepAttemptRequest, GetStepAttemptResponse,
+    CompleteWorkflowRequest, CreateScheduleRequest, CreateScheduleResponse, DeleteScheduleRequest,
+    DeregisterWorkerRequest, Empty, ErrorCode, ErrorDetail, FailStepRequest, FailWorkflowRequest,
+    GetScheduleRequest, GetScheduleResponse, GetStepAttemptRequest, GetStepAttemptResponse,
     GetWorkerRequest, GetWorkerResponse, GetWorkflowRunRequest, GetWorkflowRunResponse,
-    HealthCheckRequest, HealthCheckResponse, ListStepAttemptsRequest, ListStepAttemptsResponse,
-    ListWorkersRequest, ListWorkersResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
-    PollActivityRequest, PollActivityResponse, RegisterWorkerRequest, RegisterWorkerResponse,
-    RetryPolicy, ScheduleSleepRequest, StartWorkflowRequest, StartWorkflowResponse, StepAttempt,
-    StepAttemptStatus, StepKind, Worker, WorkerHeartbeatRequest, WorkerHeartbeatResponse,
-    WorkflowRun, WorkflowStatus,
+    HealthCheckRequest, HealthCheckResponse, ListSchedulesRequest, ListSchedulesResponse,
+    ListStepAttemptsRequest, ListStepAttemptsResponse, ListWorkersRequest, ListWorkersResponse,
+    ListWorkflowRunsRequest, ListWorkflowRunsResponse, PollActivityRequest, PollActivityResponse,
+    RegisterWorkerRequest, RegisterWorkerResponse, RetryPolicy, Schedule as ProtoSchedule,
+    ScheduleSleepRequest, StartWorkflowRequest, StartWorkflowResponse, StepAttempt,
+    StepAttemptStatus, StepKind, UpdateScheduleRequest, UpdateScheduleResponse, Worker,
+    WorkerHeartbeatRequest, WorkerHeartbeatResponse, WorkflowRun, WorkflowStatus,
 };
 use kagzi_store::{
-    BeginStepParams, CreateWorkflow, FailStepParams, ListWorkersParams, ListWorkflowsParams,
-    PgStore, RegisterWorkerParams, StepRepository, WorkerHeartbeatParams, WorkerRepository,
-    WorkerStatus, WorkflowCursor, WorkflowRepository, WorkflowTypeConcurrency,
+    BeginStepParams, CreateSchedule as StoreCreateSchedule, CreateWorkflow, FailStepParams,
+    ListSchedulesParams, ListWorkersParams, ListWorkflowsParams, PgStore, RegisterWorkerParams,
+    ScheduleRepository, StepRepository, UpdateSchedule as StoreUpdateSchedule,
+    WorkerHeartbeatParams, WorkerRepository, WorkerStatus, WorkflowCursor, WorkflowRepository,
+    WorkflowTypeConcurrency,
 };
 use prost::Message;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Duration;
 use tonic::{Code, Request, Response, Status};
 use tracing::{debug, info, instrument};
@@ -30,8 +36,6 @@ use tracing::{debug, info, instrument};
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
 
-/// Merge a proto RetryPolicy with an optional fallback (workflow-level) policy.
-/// Zero/empty values in proto are treated as "unspecified" and fall back.
 fn merge_proto_policy(
     proto: Option<RetryPolicy>,
     fallback: Option<&kagzi_store::RetryPolicy>,
@@ -83,7 +87,6 @@ fn merge_proto_policy(
     }
 }
 
-/// Map store workflow status to proto status
 fn map_workflow_status(status: kagzi_store::WorkflowStatus) -> WorkflowStatus {
     match status {
         kagzi_store::WorkflowStatus::Pending => WorkflowStatus::Pending,
@@ -95,7 +98,6 @@ fn map_workflow_status(status: kagzi_store::WorkflowStatus) -> WorkflowStatus {
     }
 }
 
-/// Map store step status to proto status
 fn map_step_status(status: kagzi_store::StepStatus) -> StepAttemptStatus {
     match status {
         kagzi_store::StepStatus::Pending => StepAttemptStatus::Pending,
@@ -191,7 +193,6 @@ fn string_error_detail(message: Option<String>) -> ErrorDetail {
     )
 }
 
-/// Convert store WorkflowRun to proto WorkflowRun
 fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status> {
     let input_bytes = serde_json::to_vec(&w.input).map_err(|e| {
         tracing::error!("Failed to serialize workflow input: {:?}", e);
@@ -258,9 +259,7 @@ fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status>
     })
 }
 
-/// Convert store StepRun to proto StepAttempt
 fn step_to_proto(s: kagzi_store::StepRun) -> Result<StepAttempt, Status> {
-    // Determine step kind from step_id patterns
     let kind = if s.step_id.contains("sleep") || s.step_id.contains("wait") {
         StepKind::Sleep
     } else if s.step_id.contains("function") || s.step_id.contains("task") {
@@ -366,7 +365,6 @@ fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
     }
 }
 
-/// Map StoreError to gRPC Status
 fn map_store_error(e: kagzi_store::StoreError) -> Status {
     match e {
         kagzi_store::StoreError::NotFound { entity, id } => {
@@ -388,6 +386,70 @@ fn map_store_error(e: kagzi_store::StoreError) -> Status {
             internal("Serialization error")
         }
     }
+}
+
+fn clamp_max_catchup(raw: i32) -> i32 {
+    raw.clamp(1, 10_000)
+}
+
+fn parse_cron_expr(expr: &str) -> Result<CronSchedule, Status> {
+    if expr.trim().is_empty() {
+        return Err(invalid_argument("cron_expr cannot be empty"));
+    }
+
+    CronSchedule::from_str(expr).map_err(|e| invalid_argument(format!("Invalid cron: {}", e)))
+}
+
+fn next_fire_from_now(
+    cron_expr: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<chrono::DateTime<chrono::Utc>, Status> {
+    let schedule = parse_cron_expr(cron_expr)?;
+    let next = schedule
+        .after(&now)
+        .next()
+        .ok_or_else(|| invalid_argument("Cron expression has no future occurrences"))?;
+    Ok(next.with_timezone(&chrono::Utc))
+}
+
+fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
+    prost_types::Timestamp {
+        seconds: ts.timestamp(),
+        nanos: ts.timestamp_subsec_nanos() as i32,
+    }
+}
+
+fn schedule_to_proto(s: kagzi_store::Schedule) -> Result<ProtoSchedule, Status> {
+    let input_bytes = serde_json::to_vec(&s.input).map_err(|e| {
+        tracing::error!("Failed to serialize schedule input: {:?}", e);
+        internal("Failed to serialize schedule input")
+    })?;
+
+    let context_bytes = s
+        .context
+        .map(|c| {
+            serde_json::to_vec(&c).map_err(|e| {
+                tracing::error!("Failed to serialize schedule context: {:?}", e);
+                internal("Failed to serialize schedule context")
+            })
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(ProtoSchedule {
+        schedule_id: s.schedule_id.to_string(),
+        namespace_id: s.namespace_id,
+        task_queue: s.task_queue,
+        workflow_type: s.workflow_type,
+        cron_expr: s.cron_expr,
+        input: input_bytes,
+        context: context_bytes,
+        enabled: s.enabled,
+        max_catchup: s.max_catchup,
+        next_fire_at: Some(to_proto_timestamp(s.next_fire_at)),
+        last_fired_at: s.last_fired_at.map(to_proto_timestamp),
+        version: s.version.unwrap_or_default(),
+    })
 }
 
 #[derive(Clone)]
@@ -752,6 +814,277 @@ impl WorkflowService for MyWorkflowService {
         }))
     }
 
+    async fn create_schedule(
+        &self,
+        request: Request<CreateScheduleRequest>,
+    ) -> Result<Response<CreateScheduleResponse>, Status> {
+        let req = request.into_inner();
+
+        if req.task_queue.is_empty() {
+            return Err(invalid_argument("task_queue is required"));
+        }
+        if req.workflow_type.is_empty() {
+            return Err(invalid_argument("workflow_type is required"));
+        }
+        if req.cron_expr.is_empty() {
+            return Err(invalid_argument("cron_expr is required"));
+        }
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        let input_json: serde_json::Value = if req.input.is_empty() {
+            serde_json::json!(null)
+        } else {
+            serde_json::from_slice(&req.input)
+                .map_err(|e| invalid_argument(format!("Input must be valid JSON: {}", e)))?
+        };
+
+        let context_json: Option<serde_json::Value> = if req.context.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::from_slice(&req.context)
+                    .map_err(|e| invalid_argument(format!("Context must be valid JSON: {}", e)))?,
+            )
+        };
+
+        let enabled = req.enabled.unwrap_or(true);
+        let max_catchup = if req.max_catchup == 0 {
+            100
+        } else {
+            clamp_max_catchup(req.max_catchup)
+        };
+
+        let next_fire_at = next_fire_from_now(&req.cron_expr, chrono::Utc::now())?;
+
+        let schedule_id = self
+            .store
+            .schedules()
+            .create(StoreCreateSchedule {
+                namespace_id: namespace_id.clone(),
+                task_queue: req.task_queue,
+                workflow_type: req.workflow_type,
+                cron_expr: req.cron_expr,
+                input: input_json,
+                context: context_json,
+                enabled,
+                max_catchup,
+                next_fire_at,
+                version: if req.version.is_empty() {
+                    None
+                } else {
+                    Some(req.version)
+                },
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        let schedule = self
+            .store
+            .schedules()
+            .find_by_id(schedule_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?;
+
+        let schedule = schedule
+            .map(schedule_to_proto)
+            .transpose()?
+            .ok_or_else(|| not_found("Schedule not found", "schedule", schedule_id.to_string()))?;
+
+        Ok(Response::new(CreateScheduleResponse {
+            schedule: Some(schedule),
+        }))
+    }
+
+    async fn get_schedule(
+        &self,
+        request: Request<GetScheduleRequest>,
+    ) -> Result<Response<GetScheduleResponse>, Status> {
+        let req = request.into_inner();
+        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+            .map_err(|_| invalid_argument("Invalid schedule_id"))?;
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        let schedule = self
+            .store
+            .schedules()
+            .find_by_id(schedule_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?;
+
+        let schedule = schedule
+            .map(schedule_to_proto)
+            .transpose()?
+            .ok_or_else(|| not_found("Schedule not found", "schedule", req.schedule_id))?;
+
+        Ok(Response::new(GetScheduleResponse {
+            schedule: Some(schedule),
+        }))
+    }
+
+    async fn list_schedules(
+        &self,
+        request: Request<ListSchedulesRequest>,
+    ) -> Result<Response<ListSchedulesResponse>, Status> {
+        let req = request.into_inner();
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        let limit = if req.limit <= 0 {
+            100
+        } else {
+            req.limit.min(500)
+        };
+
+        let schedules = self
+            .store
+            .schedules()
+            .list(ListSchedulesParams {
+                namespace_id,
+                task_queue: if req.task_queue.is_empty() {
+                    None
+                } else {
+                    Some(req.task_queue)
+                },
+                limit: Some(limit as i64),
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        let mut proto_schedules = Vec::with_capacity(schedules.len());
+        for s in schedules {
+            proto_schedules.push(schedule_to_proto(s)?);
+        }
+
+        Ok(Response::new(ListSchedulesResponse {
+            schedules: proto_schedules,
+        }))
+    }
+
+    async fn update_schedule(
+        &self,
+        request: Request<UpdateScheduleRequest>,
+    ) -> Result<Response<UpdateScheduleResponse>, Status> {
+        let req = request.into_inner();
+
+        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+            .map_err(|_| invalid_argument("Invalid schedule_id"))?;
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        let cron_expr = req.cron_expr.clone();
+        if let Some(ref expr) = cron_expr {
+            parse_cron_expr(expr)?;
+        }
+
+        let next_fire_at = if let Some(ref expr) = cron_expr {
+            Some(next_fire_from_now(expr, chrono::Utc::now())?)
+        } else if let Some(ts) = req.next_fire_at {
+            chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+        } else {
+            None
+        };
+
+        let input_json = match req.input {
+            Some(bytes) => Some(
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| invalid_argument(format!("Input must be valid JSON: {}", e)))?,
+            ),
+            None => None,
+        };
+
+        let context_json = match req.context {
+            Some(bytes) => Some(
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| invalid_argument(format!("Context must be valid JSON: {}", e)))?,
+            ),
+            None => None,
+        };
+
+        let max_catchup = req.max_catchup.map(clamp_max_catchup);
+
+        self.store
+            .schedules()
+            .update(
+                schedule_id,
+                &namespace_id,
+                StoreUpdateSchedule {
+                    task_queue: req.task_queue,
+                    workflow_type: req.workflow_type,
+                    cron_expr,
+                    input: input_json,
+                    context: context_json,
+                    enabled: req.enabled,
+                    max_catchup,
+                    next_fire_at,
+                    version: req.version,
+                },
+            )
+            .await
+            .map_err(map_store_error)?;
+
+        let schedule = self
+            .store
+            .schedules()
+            .find_by_id(schedule_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?;
+
+        let schedule = schedule
+            .map(schedule_to_proto)
+            .transpose()?
+            .ok_or_else(|| not_found("Schedule not found", "schedule", req.schedule_id))?;
+
+        Ok(Response::new(UpdateScheduleResponse {
+            schedule: Some(schedule),
+        }))
+    }
+
+    async fn delete_schedule(
+        &self,
+        request: Request<DeleteScheduleRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+            .map_err(|_| invalid_argument("Invalid schedule_id"))?;
+
+        let namespace_id = if req.namespace_id.is_empty() {
+            "default".to_string()
+        } else {
+            req.namespace_id
+        };
+
+        let deleted = self
+            .store
+            .schedules()
+            .delete(schedule_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?;
+
+        if !deleted {
+            return Err(not_found("Schedule not found", "schedule", req.schedule_id));
+        }
+
+        Ok(Response::new(Empty {}))
+    }
+
     #[instrument(skip(self), fields(
         correlation_id = %extract_or_generate_correlation_id(&request),
         trace_id = %extract_or_generate_trace_id(&request),
@@ -858,7 +1191,6 @@ impl WorkflowService for MyWorkflowService {
             req.page_size
         };
 
-        // Parse cursor from page_token
         let cursor: Option<WorkflowCursor> = if req.page_token.is_empty() {
             None
         } else {
@@ -900,7 +1232,6 @@ impl WorkflowService for MyWorkflowService {
             .await
             .map_err(map_store_error)?;
 
-        // Generate next page token
         let next_page_token = result
             .next_cursor
             .map(|c| {
@@ -909,7 +1240,6 @@ impl WorkflowService for MyWorkflowService {
             })
             .unwrap_or_default();
 
-        // Convert to proto
         let workflow_runs: Result<Vec<_>, Status> = result
             .workflows
             .into_iter()
@@ -981,7 +1311,6 @@ impl WorkflowService for MyWorkflowService {
 
             Ok(Response::new(Empty {}))
         } else {
-            // Check why cancellation failed
             let exists = workflows
                 .check_exists(run_id, &namespace_id)
                 .await
@@ -1045,7 +1374,6 @@ impl WorkflowService for MyWorkflowService {
             req.namespace_id
         };
 
-        // Load worker record and validate queue/namespace/status.
         let worker = self
             .store
             .workers()
@@ -1074,7 +1402,6 @@ impl WorkflowService for MyWorkflowService {
             ));
         }
 
-        // Use the worker's registered types, optionally narrowed by client request.
         let effective_types: Vec<String> = worker
             .workflow_types
             .iter()
@@ -1088,7 +1415,6 @@ impl WorkflowService for MyWorkflowService {
             ));
         }
 
-        // Fast path: attempt immediate claim before long-polling.
         if let Some(work_item) = self
             .store
             .workflows()

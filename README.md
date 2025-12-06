@@ -203,6 +203,39 @@ worker.register("workflow_name", workflow_function);
 worker.run().await?;
 ```
 
+#### Schedules (Cron)
+
+- Cron expressions follow `cron::Schedule` format in UTC: `sec min hour dom month dow [year]`. Missed ticks are replayed on restart using `(from, to]` bounds, capped by `max_catchup` (default 100).
+- Idempotency per fire: `schedule:{schedule_id}:{fire_at_rfc3339}` prevents duplicates across restarts.
+- Scheduler config: `KAGZI_SCHEDULER_INTERVAL_SECS` (default 5s), `KAGZI_SCHEDULER_BATCH_SIZE` (default 100), `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK` (default 1000).
+- Disable stops future fires; re-enable catches up from the last fired time within `max_catchup`.
+
+```rust
+use kagzi::{Client, ScheduleUpdate};
+
+let mut client = Client::connect("http://localhost:50051").await?;
+
+// Create a cron schedule
+let schedule = client
+    .schedule("daily_report", "reports", "0 0 6 * * *") // 06:00:00 UTC daily
+    .input(serde_json::json!({"region": "us-east"}))
+    .version("1.0.0")
+    .create()
+    .await?;
+
+// Update cron expression
+let updated = client
+    .update_schedule(
+        &schedule.schedule_id,
+        "default",
+        ScheduleUpdate::default().cron_expr("0 0 7 * * *"),
+    )
+    .await?;
+
+// Delete the schedule
+client.delete_schedule(&schedule.schedule_id, "default").await?;
+```
+
 #### Workflow Context API
 
 ```rust

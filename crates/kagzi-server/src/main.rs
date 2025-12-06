@@ -1,5 +1,5 @@
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
-use kagzi_server::{MyWorkflowService, tracing_utils, watchdog};
+use kagzi_server::{MyWorkflowService, run_scheduler, tracing_utils, watchdog};
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
@@ -39,6 +39,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let watchdog_store = store.clone();
     tokio::spawn(async move {
         watchdog::run(watchdog_store).await;
+    });
+
+    // Start the scheduler loop
+    let scheduler_store = store.clone();
+    tokio::spawn(async move {
+        run_scheduler(scheduler_store).await;
     });
 
     let addr = "0.0.0.0:50051".parse()?;
