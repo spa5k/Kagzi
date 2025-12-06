@@ -133,7 +133,7 @@ impl WorkflowService for MockWorkflowService {
             context: req.context.clone().unwrap_or_default(),
             enabled: req.enabled.unwrap_or(true),
             max_catchup: req.max_catchup.unwrap_or(100),
-            next_fire_at: Some(req.next_fire_at.clone().unwrap_or_else(now_ts)),
+            next_fire_at: Some(req.next_fire_at.unwrap_or_else(now_ts)),
             last_fired_at: None,
             version: req.version.clone().unwrap_or_default(),
         };
