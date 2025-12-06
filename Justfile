@@ -85,3 +85,6 @@ test-integration-verbose:
 # Run a specific integration test
 test-one name:
     KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests {{name}} -- --test-threads=1 --nocapture
+
+tidy:
+    cargo fmt --all -- --check

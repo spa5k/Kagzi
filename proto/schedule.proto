@@ -1,0 +1,81 @@
+syntax = "proto3";
+package kagzi;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "errors.proto";
+
+message Schedule {
+  string schedule_id = 1;
+  string namespace_id = 2;
+  string task_queue = 3;
+  string workflow_type = 4;
+  // cron::Schedule format (UTC): sec min hour dom month dow [year]
+  string cron_expr = 5;
+  bytes input = 6;
+  bytes context = 7;
+  bool enabled = 8;
+  int32 max_catchup = 9;
+  google.protobuf.Timestamp next_fire_at = 10;
+  google.protobuf.Timestamp last_fired_at = 11;
+  string version = 12;
+}
+
+message CreateScheduleRequest {
+  string namespace_id = 1;
+  string task_queue = 2;
+  string workflow_type = 3;
+  string cron_expr = 4;
+  bytes input = 5;
+  bytes context = 6;
+  google.protobuf.BoolValue enabled = 7;
+  int32 max_catchup = 8;
+  string version = 9;
+}
+
+message CreateScheduleResponse {
+  Schedule schedule = 1;
+}
+
+message GetScheduleRequest {
+  string schedule_id = 1;
+  string namespace_id = 2;
+}
+
+message GetScheduleResponse {
+  Schedule schedule = 1;
+}
+
+message ListSchedulesRequest {
+  string namespace_id = 1;
+  string task_queue = 2;
+  int32 limit = 3;
+}
+
+message ListSchedulesResponse {
+  repeated Schedule schedules = 1;
+}
+
+message UpdateScheduleRequest {
+  string schedule_id = 1;
+  string namespace_id = 2;
+  google.protobuf.StringValue task_queue = 3;
+  google.protobuf.StringValue workflow_type = 4;
+  google.protobuf.StringValue cron_expr = 5;
+  google.protobuf.BytesValue input = 6;
+  google.protobuf.BytesValue context = 7;
+  google.protobuf.BoolValue enabled = 8;
+  google.protobuf.Int32Value max_catchup = 9;
+  google.protobuf.Timestamp next_fire_at = 10;
+  google.protobuf.StringValue version = 11;
+}
+
+message UpdateScheduleResponse {
+  Schedule schedule = 1;
+}
+
+message DeleteScheduleRequest {
+  string schedule_id = 1;
+  string namespace_id = 2;
+}
+

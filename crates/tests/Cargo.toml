@@ -1,0 +1,25 @@
+[package]
+name = "tests"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+kagzi = { path = "../kagzi" }
+kagzi-proto = { path = "../kagzi-proto" }
+kagzi-server = { path = "../kagzi-server" }
+kagzi-store = { path = "../kagzi-store" }
+prost-types = { workspace = true }
+prost = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = { workspace = true, features = ["transport"] }
+uuid = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+testcontainers = "0.26.0"
+testcontainers-modules = { version = "0.14.0", features = ["postgres"] }
+

@@ -1,5 +1,5 @@
-use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::HealthCheckRequest;
+use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use tonic::transport::Channel;
 use tracing::info;
 

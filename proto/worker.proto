@@ -28,9 +28,20 @@ message Worker {
   google.protobuf.Timestamp registered_at = 13;
   google.protobuf.Timestamp last_heartbeat_at = 14;
   map<string, string> labels = 15;
+  // Optional effective queue-level concurrency limit for this worker's task queue.
+  int32 queue_concurrency_limit = 16;
+  // Optional effective per-workflow-type concurrency limits.
+  repeated WorkflowTypeConcurrency workflow_type_concurrency = 17;
 }
 
 // --- Worker Registry Messages ---
+
+// Per-workflow-type concurrency cap provided by worker; interpreted as a limit
+// on the number of RUNNING workflow runs of this type within the queue/namespace.
+message WorkflowTypeConcurrency {
+  string workflow_type = 1;
+  int32 max_concurrent = 2;
+}
 
 message RegisterWorkerRequest {
   string namespace_id = 1;
@@ -41,6 +52,11 @@ message RegisterWorkerRequest {
   string version = 6;
   int32 max_concurrent = 7;
   map<string, string> labels = 8;
+  // Optional queue-level concurrency cap supplied by the worker.
+  // If unset/0, server default applies (bounded by server caps).
+  int32 queue_concurrency_limit = 9;
+  // Optional per-workflow-type concurrency limits.
+  repeated WorkflowTypeConcurrency workflow_type_concurrency = 10;
 }
 
 message RegisterWorkerResponse {

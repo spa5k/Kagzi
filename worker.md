@@ -24,6 +24,14 @@ Currently, Kagzi workers are "fire and forget" - they connect, poll for work, an
         └──────────────────────────────────────┘
 ```
 
+## Cron Schedules
+
+- Use `cron::Schedule` format in UTC: `sec min hour dom month dow [year]`. Missed ticks after downtime are replayed up to `max_catchup` (default 100) using `(from, to]` bounds.
+- Each fire is idempotent via `schedule:{schedule_id}:{fire_at_rfc3339}`; duplicates are skipped across restarts and multiple schedulers.
+- Scheduler loop is configured via `KAGZI_SCHEDULER_INTERVAL_SECS` (default 5s), `KAGZI_SCHEDULER_BATCH_SIZE` (default 100), and `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK` (default 1000).
+- Disabling a schedule stops new fires; re-enabling catches up from the last fired time within `max_catchup`.
+- Cron schedules trigger workflows from outside; workflow-level sleeps/timers remain the right tool for intra-workflow delays and retries.
+
 ### Problems
 
 | Issue                  | Impact                                                      |

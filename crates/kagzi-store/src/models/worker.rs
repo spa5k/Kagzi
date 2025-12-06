@@ -52,6 +52,14 @@ pub struct Worker {
     pub deregistered_at: Option<DateTime<Utc>>,
 
     pub labels: serde_json::Value,
+    pub queue_concurrency_limit: Option<i32>,
+    pub workflow_type_concurrency: Vec<WorkflowTypeConcurrency>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowTypeConcurrency {
+    pub workflow_type: String,
+    pub max_concurrent: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +72,8 @@ pub struct RegisterWorkerParams {
     pub version: Option<String>,
     pub max_concurrent: i32,
     pub labels: serde_json::Value,
+    pub queue_concurrency_limit: Option<i32>,
+    pub workflow_type_concurrency: Vec<WorkflowTypeConcurrency>,
 }
 
 #[derive(Debug, Clone)]

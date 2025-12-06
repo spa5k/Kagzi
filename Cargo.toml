@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/kagzi", "crates/kagzi-proto", "crates/kagzi-server", "crates/kagzi-store"]
+members = [
+    "crates/kagzi",
+    "crates/kagzi-proto",
+    "crates/kagzi-server",
+    "crates/kagzi-store",
+    "crates/examples",
+    "crates/tests",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -41,6 +48,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+cron = "0.15.0"
 
 # Utilities
 tokio-util = "0.7"

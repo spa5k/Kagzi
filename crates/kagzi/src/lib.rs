@@ -6,11 +6,15 @@ use std::time::Duration;
 
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{
-    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, DeregisterWorkerRequest,
-    ErrorCode, ErrorDetail, FailStepRequest, FailWorkflowRequest, PollActivityRequest,
-    RegisterWorkerRequest, ScheduleSleepRequest, StartWorkflowRequest, WorkerHeartbeatRequest,
+    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, CreateScheduleRequest,
+    DeleteScheduleRequest, DeregisterWorkerRequest, ErrorCode, ErrorDetail, FailStepRequest,
+    FailWorkflowRequest, GetScheduleRequest, ListSchedulesRequest, PollActivityRequest,
+    RegisterWorkerRequest, Schedule as ProtoSchedule, ScheduleSleepRequest, StartWorkflowRequest,
+    UpdateScheduleRequest, WorkerHeartbeatRequest,
+    WorkflowTypeConcurrency as ProtoWorkflowTypeConcurrency,
 };
 use prost::Message;
+use prost_types::Timestamp;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
@@ -184,6 +188,7 @@ pub struct WorkflowContext {
     client: WorkflowServiceClient<Channel>,
     run_id: String,
     sleep_counter: u32,
+    default_step_retry: Option<RetryPolicy>,
 }
 
 impl WorkflowContext {
@@ -202,7 +207,7 @@ impl WorkflowContext {
             run_id: self.run_id.clone(),
             step_id: step_id.to_string(),
             input: vec![],
-            retry_policy: None,
+            retry_policy: self.default_step_retry.clone().map(Into::into),
         }));
 
         let begin_resp = self
@@ -274,12 +279,30 @@ impl WorkflowContext {
         R: Serialize + DeserializeOwned + Send + 'static,
         Fut: Future<Output = anyhow::Result<R>> + Send,
     {
+        self.run_with_input_with_retry(step_id, input, None, fut)
+            .await
+    }
+
+    pub async fn run_with_input_with_retry<I, R, Fut>(
+        &mut self,
+        step_id: &str,
+        input: &I,
+        retry_policy: Option<RetryPolicy>,
+        fut: Fut,
+    ) -> anyhow::Result<R>
+    where
+        I: Serialize + Send + 'static,
+        R: Serialize + DeserializeOwned + Send + 'static,
+        Fut: Future<Output = anyhow::Result<R>> + Send,
+    {
+        let effective_retry = retry_policy.or_else(|| self.default_step_retry.clone());
+
         let input_bytes = serde_json::to_vec(input)?;
         let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id.to_string(),
             input: input_bytes,
-            retry_policy: None,
+            retry_policy: effective_retry.clone().map(Into::into),
         }));
 
         let begin_resp = self
@@ -405,6 +428,9 @@ pub struct WorkerBuilder {
     hostname: Option<String>,
     version: Option<String>,
     labels: HashMap<String, String>,
+    queue_concurrency_limit: Option<i32>,
+    workflow_type_concurrency: HashMap<String, i32>,
+    default_step_retry: Option<RetryPolicy>,
 }
 
 impl WorkerBuilder {
@@ -417,6 +443,9 @@ impl WorkerBuilder {
             hostname: None,
             version: None,
             labels: HashMap::new(),
+            queue_concurrency_limit: None,
+            workflow_type_concurrency: HashMap::new(),
+            default_step_retry: None,
         }
     }
 
@@ -445,6 +474,26 @@ impl WorkerBuilder {
         self
     }
 
+    pub fn queue_concurrency_limit(mut self, limit: i32) -> Self {
+        if limit > 0 {
+            self.queue_concurrency_limit = Some(limit);
+        }
+        self
+    }
+
+    pub fn workflow_type_concurrency(mut self, workflow_type: &str, limit: i32) -> Self {
+        if limit > 0 {
+            self.workflow_type_concurrency
+                .insert(workflow_type.to_string(), limit);
+        }
+        self
+    }
+
+    pub fn default_step_retry(mut self, policy: RetryPolicy) -> Self {
+        self.default_step_retry = Some(policy);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<Worker> {
         let client = WorkflowServiceClient::connect(self.addr.clone()).await?;
 
@@ -456,6 +505,9 @@ impl WorkerBuilder {
             hostname: self.hostname,
             version: self.version,
             labels: self.labels,
+            queue_concurrency_limit: self.queue_concurrency_limit,
+            workflow_type_concurrency: self.workflow_type_concurrency,
+            default_step_retry: self.default_step_retry,
             workflows: HashMap::new(),
             workflow_types: Vec::new(),
             worker_id: None,
@@ -474,6 +526,9 @@ pub struct Worker {
     hostname: Option<String>,
     version: Option<String>,
     labels: HashMap<String, String>,
+    queue_concurrency_limit: Option<i32>,
+    workflow_type_concurrency: HashMap<String, i32>,
+    default_step_retry: Option<RetryPolicy>,
     workflows: HashMap<String, Arc<WorkflowFn>>,
     workflow_types: Vec<String>,
     worker_id: Option<Uuid>,
@@ -562,6 +617,15 @@ impl Worker {
                 version: self.version.clone().unwrap_or_default(),
                 max_concurrent: self.max_concurrent as i32,
                 labels: self.labels.clone(),
+                queue_concurrency_limit: self.queue_concurrency_limit.unwrap_or(0),
+                workflow_type_concurrency: self
+                    .workflow_type_concurrency
+                    .iter()
+                    .map(|(workflow_type, max)| ProtoWorkflowTypeConcurrency {
+                        workflow_type: workflow_type.clone(),
+                        max_concurrent: *max,
+                    })
+                    .collect(),
             })
             .await
             .map_err(map_grpc_error)?
@@ -687,6 +751,7 @@ impl Worker {
                     let input: serde_json::Value = serde_json::from_slice(&task.workflow_input)
                         .unwrap_or(serde_json::Value::Null);
                     let run_id = task.run_id.clone();
+                    let default_step_retry = self.default_step_retry.clone();
 
                     tokio::spawn(async move {
                         let _permit = permit;
@@ -703,6 +768,7 @@ impl Worker {
                                 input,
                                 correlation_id,
                                 trace_id,
+                                default_step_retry,
                             ),
                         )
                         .await;
@@ -730,11 +796,13 @@ async fn execute_workflow(
     input: serde_json::Value,
     correlation_id: String,
     trace_id: String,
+    default_step_retry: Option<RetryPolicy>,
 ) {
     let ctx = WorkflowContext {
         client: client.clone(),
         run_id: run_id.clone(),
         sleep_counter: 0,
+        default_step_retry,
     };
 
     let result = handler(ctx, input).await;
@@ -799,6 +867,104 @@ impl Client {
         input: I,
     ) -> WorkflowBuilder<'_, I> {
         WorkflowBuilder::new(self, workflow_type, task_queue, input)
+    }
+
+    pub fn schedule(
+        &mut self,
+        workflow_type: &str,
+        task_queue: &str,
+        cron_expr: &str,
+    ) -> ScheduleBuilder<'_> {
+        ScheduleBuilder::new(self, workflow_type, task_queue, cron_expr)
+    }
+
+    pub async fn get_schedule(
+        &mut self,
+        schedule_id: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<ProtoSchedule> {
+        let resp = self
+            .client
+            .get_schedule(GetScheduleRequest {
+                schedule_id: schedule_id.to_string(),
+                namespace_id: namespace_id.to_string(),
+            })
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        resp.schedule
+            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
+    }
+
+    pub async fn list_schedules(
+        &mut self,
+        namespace_id: &str,
+        task_queue: Option<&str>,
+        limit: Option<i32>,
+    ) -> anyhow::Result<Vec<ProtoSchedule>> {
+        let resp = self
+            .client
+            .list_schedules(ListSchedulesRequest {
+                namespace_id: namespace_id.to_string(),
+                task_queue: task_queue.unwrap_or_default().to_string(),
+                limit: limit.unwrap_or(0),
+            })
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        Ok(resp.schedules)
+    }
+
+    pub async fn update_schedule(
+        &mut self,
+        schedule_id: &str,
+        namespace_id: &str,
+        update: ScheduleUpdate,
+    ) -> anyhow::Result<ProtoSchedule> {
+        let req = UpdateScheduleRequest {
+            schedule_id: schedule_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            task_queue: update.task_queue,
+            workflow_type: update.workflow_type,
+            cron_expr: update.cron_expr,
+            input: update.input.map(|v| serde_json::to_vec(&v)).transpose()?,
+            context: update.context.map(|v| serde_json::to_vec(&v)).transpose()?,
+            enabled: update.enabled,
+            max_catchup: update.max_catchup,
+            next_fire_at: update.next_fire_at.map(|dt| Timestamp {
+                seconds: dt.timestamp(),
+                nanos: dt.timestamp_subsec_nanos() as i32,
+            }),
+            version: update.version,
+        };
+
+        let resp = self
+            .client
+            .update_schedule(req)
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        resp.schedule
+            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
+    }
+
+    pub async fn delete_schedule(
+        &mut self,
+        schedule_id: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<()> {
+        self.client
+            .delete_schedule(DeleteScheduleRequest {
+                schedule_id: schedule_id.to_string(),
+                namespace_id: namespace_id.to_string(),
+            })
+            .await
+            .map_err(map_grpc_error)?;
+
+        Ok(())
     }
 }
 
@@ -909,5 +1075,155 @@ impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowBuilder<'a, I> {
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.execute())
+    }
+}
+
+pub struct ScheduleBuilder<'a> {
+    client: &'a mut Client,
+    namespace_id: String,
+    task_queue: String,
+    workflow_type: String,
+    cron_expr: String,
+    input: serde_json::Value,
+    context: Option<serde_json::Value>,
+    enabled: Option<bool>,
+    max_catchup: Option<i32>,
+    version: Option<String>,
+}
+
+impl<'a> ScheduleBuilder<'a> {
+    fn new(client: &'a mut Client, workflow_type: &str, task_queue: &str, cron_expr: &str) -> Self {
+        Self {
+            client,
+            namespace_id: "default".to_string(),
+            task_queue: task_queue.to_string(),
+            workflow_type: workflow_type.to_string(),
+            cron_expr: cron_expr.to_string(),
+            input: serde_json::json!(null),
+            context: None,
+            enabled: None,
+            max_catchup: None,
+            version: None,
+        }
+    }
+
+    pub fn namespace(mut self, namespace_id: impl Into<String>) -> Self {
+        self.namespace_id = namespace_id.into();
+        self
+    }
+
+    pub fn input(mut self, input: serde_json::Value) -> Self {
+        self.input = input;
+        self
+    }
+
+    pub fn context(mut self, context: serde_json::Value) -> Self {
+        self.context = Some(context);
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    pub fn max_catchup(mut self, max_catchup: i32) -> Self {
+        self.max_catchup = Some(max_catchup);
+        self
+    }
+
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    pub async fn create(self) -> anyhow::Result<ProtoSchedule> {
+        let input_bytes = serde_json::to_vec(&self.input)?;
+        let context_bytes = self
+            .context
+            .map(|c| serde_json::to_vec(&c))
+            .transpose()?
+            .unwrap_or_default();
+
+        let resp = self
+            .client
+            .client
+            .create_schedule(CreateScheduleRequest {
+                namespace_id: self.namespace_id,
+                task_queue: self.task_queue,
+                workflow_type: self.workflow_type,
+                cron_expr: self.cron_expr,
+                input: input_bytes,
+                context: context_bytes,
+                enabled: self.enabled,
+                max_catchup: self.max_catchup.unwrap_or(0),
+                version: self.version.unwrap_or_default(),
+            })
+            .await
+            .map_err(map_grpc_error)?
+            .into_inner();
+
+        resp.schedule
+            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
+    }
+}
+
+#[derive(Default)]
+pub struct ScheduleUpdate {
+    task_queue: Option<String>,
+    workflow_type: Option<String>,
+    cron_expr: Option<String>,
+    input: Option<serde_json::Value>,
+    context: Option<serde_json::Value>,
+    enabled: Option<bool>,
+    max_catchup: Option<i32>,
+    next_fire_at: Option<chrono::DateTime<chrono::Utc>>,
+    version: Option<String>,
+}
+
+impl ScheduleUpdate {
+    pub fn task_queue(mut self, value: impl Into<String>) -> Self {
+        self.task_queue = Some(value.into());
+        self
+    }
+
+    pub fn workflow_type(mut self, value: impl Into<String>) -> Self {
+        self.workflow_type = Some(value.into());
+        self
+    }
+
+    pub fn cron_expr(mut self, value: impl Into<String>) -> Self {
+        self.cron_expr = Some(value.into());
+        self
+    }
+
+    pub fn input(mut self, value: serde_json::Value) -> Self {
+        self.input = Some(value);
+        self
+    }
+
+    pub fn context(mut self, value: serde_json::Value) -> Self {
+        self.context = Some(value);
+        self
+    }
+
+    pub fn enabled(mut self, value: bool) -> Self {
+        self.enabled = Some(value);
+        self
+    }
+
+    pub fn max_catchup(mut self, value: i32) -> Self {
+        self.max_catchup = Some(value);
+        self
+    }
+
+    pub fn next_fire_at(mut self, value: chrono::DateTime<chrono::Utc>) -> Self {
+        self.next_fire_at = Some(value);
+        self
+    }
+
+    pub fn version(mut self, value: impl Into<String>) -> Self {
+        self.version = Some(value.into());
+        self
     }
 }

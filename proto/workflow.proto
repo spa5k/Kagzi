@@ -6,6 +6,7 @@ import "errors.proto";
 import "worker.proto";
 import "health.proto";
 import "common.proto";
+import "schedule.proto";
 
 // Single service covering client and worker APIs for simplicity.
 service WorkflowService {
@@ -14,6 +15,13 @@ service WorkflowService {
   rpc GetWorkflowRun (GetWorkflowRunRequest) returns (GetWorkflowRunResponse);
   rpc ListWorkflowRuns (ListWorkflowRunsRequest) returns (ListWorkflowRunsResponse);
   rpc CancelWorkflowRun (CancelWorkflowRunRequest) returns (Empty);
+
+  // --- Schedule API ---
+  rpc CreateSchedule (CreateScheduleRequest) returns (CreateScheduleResponse);
+  rpc GetSchedule (GetScheduleRequest) returns (GetScheduleResponse);
+  rpc ListSchedules (ListSchedulesRequest) returns (ListSchedulesResponse);
+  rpc UpdateSchedule (UpdateScheduleRequest) returns (UpdateScheduleResponse);
+  rpc DeleteSchedule (DeleteScheduleRequest) returns (Empty);
 
   // --- Step Attempt API ---
   rpc GetStepAttempt (GetStepAttemptRequest) returns (GetStepAttemptResponse);

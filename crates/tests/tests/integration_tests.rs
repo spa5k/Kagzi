@@ -33,6 +33,8 @@ async fn register_worker(harness: &TestHarness, workflow_types: Vec<&str>) -> St
             version: "test".to_string(),
             max_concurrent: 5,
             labels: Default::default(),
+            queue_concurrency_limit: 0,
+            workflow_type_concurrency: vec![],
         }))
         .await
         .expect("register_worker should succeed")
