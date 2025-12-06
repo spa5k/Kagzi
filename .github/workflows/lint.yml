@@ -51,7 +51,7 @@ jobs:
           key: linux-rust-stable-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --no-default-features --features postgres,runtime-tokio-rustls
+        run: cargo install sqlx-cli --no-default-features --features rustls,postgres
 
       - name: Wait for Postgres
         run: |
