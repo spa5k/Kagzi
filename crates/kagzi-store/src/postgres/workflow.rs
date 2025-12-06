@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::{PgPool, QueryBuilder};
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -7,8 +8,9 @@ use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedWorkflows,
     RetryPolicy, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
 };
+use crate::postgres::columns;
+use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
 use crate::repository::WorkflowRepository;
-use std::collections::HashMap;
 
 const DEFAULT_QUEUE_CONCURRENCY_LIMIT: i32 = 10_000;
 
@@ -19,7 +21,7 @@ struct WorkflowRunRow {
     business_id: String,
     task_queue: String,
     workflow_type: String,
-    status: String,
+    status: WorkflowStatus,
     input: serde_json::Value,
     output: Option<serde_json::Value>,
     context: Option<serde_json::Value>,
@@ -44,7 +46,7 @@ impl WorkflowRunRow {
             business_id: self.business_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
-            status: WorkflowStatus::from_db_str(&self.status),
+            status: self.status,
             input: self.input,
             output: self.output,
             context: self.context,
@@ -99,37 +101,30 @@ impl PgWorkflowRepository {
         Ok(limit.min(DEFAULT_QUEUE_CONCURRENCY_LIMIT))
     }
 
-    #[allow(dead_code)]
-    async fn workflow_type_limits(
-        &self,
-        namespace_id: &str,
-        task_queue: &str,
-    ) -> Result<HashMap<String, i32>, StoreError> {
-        let rows = sqlx::query!(
+    async fn set_failed(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
+        sqlx::query!(
             r#"
-            SELECT workflow_type, max_concurrent
-            FROM kagzi.workflow_type_configs
-            WHERE namespace_id = $1 AND task_queue = $2
+            UPDATE kagzi.workflow_runs
+            SET status = 'FAILED',
+                error = $2,
+                finished_at = NOW(),
+                locked_by = NULL,
+                locked_until = NULL
+            WHERE run_id = $1
             "#,
-            namespace_id,
-            task_queue
+            run_id,
+            error
         )
-        .fetch_all(&self.pool)
+        .execute(&self.pool)
         .await?;
 
-        let mut map = HashMap::new();
-        for r in rows {
-            if let Some(limit) = r.max_concurrent {
-                map.insert(r.workflow_type, limit);
-            }
-        }
-
-        Ok(map)
+        Ok(())
     }
 }
 
 #[async_trait]
 impl WorkflowRepository for PgWorkflowRepository {
+    #[instrument(skip(self, params))]
     async fn create(&self, params: CreateWorkflow) -> Result<Uuid, StoreError> {
         let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
         let mut tx = self.pool.begin().await?;
@@ -172,30 +167,28 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(row.run_id)
     }
 
+    #[instrument(skip(self))]
     async fn find_by_id(
         &self,
         run_id: Uuid,
         namespace_id: &str,
     ) -> Result<Option<WorkflowRun>, StoreError> {
-        let row = sqlx::query_as::<_, WorkflowRunRow>(
-            r#"
-            SELECT w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, w.status,
-                   p.input, p.output, p.context, w.locked_by, w.attempts, w.error,
-                   w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at,
-                   w.version, w.parent_step_attempt_id, w.retry_policy
-            FROM kagzi.workflow_runs w
-            JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-            WHERE w.run_id = $1 AND w.namespace_id = $2
-            "#,
-        )
-        .bind(run_id)
-        .bind(namespace_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let query = format!(
+            "SELECT {} FROM kagzi.workflow_runs w \
+             JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id \
+             WHERE w.run_id = $1 AND w.namespace_id = $2",
+            columns::workflow::WITH_PAYLOAD
+        );
+        let row = sqlx::query_as::<_, WorkflowRunRow>(&query)
+            .bind(run_id)
+            .bind(namespace_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.map(|r| r.into_model()))
     }
 
+    #[instrument(skip(self))]
     async fn get_retry_policy(&self, run_id: Uuid) -> Result<Option<RetryPolicy>, StoreError> {
         let row = sqlx::query!(
             r#"
@@ -213,6 +206,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             .and_then(|v| serde_json::from_value::<RetryPolicy>(v).ok()))
     }
 
+    #[instrument(skip(self))]
     async fn find_by_idempotency_key(
         &self,
         namespace_id: &str,
@@ -232,93 +226,38 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(row.map(|r| r.run_id))
     }
 
+    #[instrument(skip(self, params))]
     async fn list(&self, params: ListWorkflowsParams) -> Result<PaginatedWorkflows, StoreError> {
         let limit = (params.page_size + 1) as i64;
 
-        let rows: Vec<WorkflowRunRow> = match (&params.cursor, &params.filter_status) {
-            (None, None) => {
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, w.status,
-                           p.input, p.output, p.context, w.locked_by, w.attempts, w.error,
-                           w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at,
-                           w.version, w.parent_step_attempt_id, w.retry_policy
-                    FROM kagzi.workflow_runs w
-                    JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-                    WHERE w.namespace_id = $1
-                    ORDER BY w.created_at DESC, w.run_id DESC
-                    LIMIT $2
-                    "#,
-                )
-                .bind(&params.namespace_id)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?
-            }
-            (None, Some(status)) => {
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, w.status,
-                           p.input, p.output, p.context, w.locked_by, w.attempts, w.error,
-                           w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at,
-                           w.version, w.parent_step_attempt_id, w.retry_policy
-                    FROM kagzi.workflow_runs w
-                    JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-                    WHERE w.namespace_id = $1 AND w.status = $2
-                    ORDER BY w.created_at DESC, w.run_id DESC
-                    LIMIT $3
-                    "#,
-                )
-                .bind(&params.namespace_id)
-                .bind(status)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?
-            }
-            (Some(cursor), None) => {
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, w.status,
-                           p.input, p.output, p.context, w.locked_by, w.attempts, w.error,
-                           w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at,
-                           w.version, w.parent_step_attempt_id, w.retry_policy
-                    FROM kagzi.workflow_runs w
-                    JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-                    WHERE w.namespace_id = $1 AND (w.created_at, w.run_id) < ($2, $3)
-                    ORDER BY w.created_at DESC, w.run_id DESC
-                    LIMIT $4
-                    "#,
-                )
-                .bind(&params.namespace_id)
-                .bind(cursor.created_at)
-                .bind(cursor.run_id)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?
-            }
-            (Some(cursor), Some(status)) => {
-                sqlx::query_as::<_, WorkflowRunRow>(
-                    r#"
-                    SELECT w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, w.status,
-                           p.input, p.output, p.context, w.locked_by, w.attempts, w.error,
-                           w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at,
-                           w.version, w.parent_step_attempt_id, w.retry_policy
-                    FROM kagzi.workflow_runs w
-                    JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-                    WHERE w.namespace_id = $1 AND w.status = $2 AND (w.created_at, w.run_id) < ($3, $4)
-                    ORDER BY w.created_at DESC, w.run_id DESC
-                    LIMIT $5
-                    "#,
-                )
-                .bind(&params.namespace_id)
-                .bind(status)
-                .bind(cursor.created_at)
-                .bind(cursor.run_id)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?
-            }
-        };
+        let mut filters = FilterBuilder::select(
+            columns::workflow::WITH_PAYLOAD,
+            "kagzi.workflow_runs w JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id",
+        );
+        filters.and_eq("w.namespace_id", &params.namespace_id);
+
+        if let Some(ref status) = params.filter_status {
+            filters.and_eq("w.status", status);
+        }
+
+        if let Some(ref cursor) = params.cursor {
+            push_tuple_cursor(
+                filters.builder(),
+                &["w.created_at", "w.run_id"],
+                "<",
+                |b: &mut QueryBuilder<'_, _>| {
+                    b.push_bind(cursor.created_at)
+                        .push(", ")
+                        .push_bind(cursor.run_id);
+                },
+            );
+        }
+
+        let mut builder = filters.finalize();
+        builder.push(" ORDER BY w.created_at DESC, w.run_id DESC");
+        push_limit(&mut builder, limit);
+
+        let rows: Vec<WorkflowRunRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
         let has_more = rows.len() > params.page_size as usize;
         let workflows: Vec<WorkflowRun> = rows
@@ -345,6 +284,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         })
     }
 
+    #[instrument(skip(self))]
     async fn check_exists(
         &self,
         run_id: Uuid,
@@ -352,7 +292,7 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<WorkflowExistsResult, StoreError> {
         let row = sqlx::query!(
             r#"
-            SELECT status, locked_by FROM kagzi.workflow_runs
+            SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
             WHERE run_id = $1 AND namespace_id = $2
             "#,
             run_id,
@@ -364,7 +304,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(WorkflowStatus::from_db_str(&r.status)),
+                status: Some(r.status),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {
@@ -375,6 +315,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         }
     }
 
+    #[instrument(skip(self))]
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError> {
         let result = sqlx::query!(
             r#"
@@ -397,6 +338,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(result.is_some())
     }
 
+    #[instrument(skip(self))]
     async fn complete(&self, run_id: Uuid, output: serde_json::Value) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
 
@@ -431,26 +373,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn fail(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
-        sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET status = 'FAILED',
-                error = $2,
-                finished_at = NOW(),
-                locked_by = NULL,
-                locked_until = NULL
-            WHERE run_id = $1
-            "#,
-            run_id,
-            error
-        )
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        self.set_failed(run_id, error).await
     }
 
+    #[instrument(skip(self))]
     async fn schedule_sleep(&self, run_id: Uuid, duration_secs: u64) -> Result<(), StoreError> {
         let duration = duration_secs as f64;
         sqlx::query!(
@@ -471,78 +399,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(())
     }
 
-    async fn claim_next(
-        &self,
-        task_queue: &str,
-        namespace_id: &str,
-        worker_id: &str,
-    ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        let queue_limit = self.queue_limit(namespace_id, task_queue).await?;
-
-        let row = sqlx::query_as::<_, ClaimedRow>(
-            r#"
-            WITH limits AS (
-                SELECT $4::INT AS queue_limit
-            ),
-            eligible AS (
-                SELECT run_id, workflow_type
-                FROM kagzi.workflow_runs wr
-                WHERE task_queue = $2
-                  AND namespace_id = $3
-                  AND (
-                    (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
-                    OR (status = 'SLEEPING' AND wake_up_at <= NOW())
-                  )
-                  AND (SELECT queue_limit FROM limits) > (
-                    SELECT COUNT(*) FROM kagzi.workflow_runs r
-                    WHERE r.task_queue = $2 AND r.namespace_id = $3 AND r.status = 'RUNNING'
-                  )
-                  AND (
-                    COALESCE(
-                      (SELECT max_concurrent FROM kagzi.workflow_type_configs cfg
-                       WHERE cfg.namespace_id = $3 AND cfg.task_queue = $2 AND cfg.workflow_type = wr.workflow_type),
-                      (SELECT queue_limit FROM limits)
-                    ) > (
-                      SELECT COUNT(*) FROM kagzi.workflow_runs r
-                      WHERE r.task_queue = $2 AND r.namespace_id = $3
-                        AND r.workflow_type = wr.workflow_type
-                        AND r.status = 'RUNNING'
-                    )
-                  )
-                ORDER BY COALESCE(wake_up_at, created_at) ASC
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-            ),
-            claimed AS (
-                UPDATE kagzi.workflow_runs
-                SET status = 'RUNNING',
-                    locked_by = $1,
-                    locked_until = NOW() + INTERVAL '30 seconds',
-                    started_at = COALESCE(started_at, NOW()),
-                    attempts = attempts + 1
-                WHERE run_id = (SELECT run_id FROM eligible)
-                RETURNING run_id, workflow_type, locked_by
-            )
-            SELECT c.run_id, c.workflow_type, p.input, c.locked_by
-            FROM claimed c
-            JOIN kagzi.workflow_payloads p ON c.run_id = p.run_id
-            "#,
-        )
-        .bind(worker_id)
-        .bind(task_queue)
-        .bind(namespace_id)
-        .bind(queue_limit)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.map(|r| ClaimedWorkflow {
-            run_id: r.run_id,
-            workflow_type: r.workflow_type,
-            input: r.input,
-            locked_by: r.locked_by,
-        }))
-    }
-
+    #[instrument(skip(self, supported_types))]
     async fn claim_next_filtered(
         &self,
         task_queue: &str,
@@ -552,6 +409,8 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
         let queue_limit = self.queue_limit(namespace_id, task_queue).await?;
 
+        // Count predicates align with partial index `idx_workflow_runs_running` on
+        // (task_queue, namespace_id, workflow_type) WHERE status = 'RUNNING'.
         let row = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH limits AS (
@@ -562,7 +421,11 @@ impl WorkflowRepository for PgWorkflowRepository {
                 FROM kagzi.workflow_runs wr
                 WHERE task_queue = $2
                   AND namespace_id = $3
-                  AND workflow_type = ANY($4::TEXT[])
+                  AND (
+                    array_length($4::TEXT[], 1) IS NULL
+                    OR array_length($4::TEXT[], 1) = 0
+                    OR workflow_type = ANY($4::TEXT[])
+                  )
                   AND (
                     (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
                     OR (status = 'SLEEPING' AND wake_up_at <= NOW())
@@ -618,76 +481,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         }))
     }
 
-    async fn claim_batch(
-        &self,
-        task_queue: &str,
-        namespace_id: &str,
-        limit: i32,
-    ) -> Result<Vec<ClaimedWorkflow>, StoreError> {
-        let mut claimed = Vec::new();
-        for _ in 0..limit {
-            if let Some(item) = self
-                .claim_next(
-                    task_queue,
-                    namespace_id,
-                    &format!("batch-{}", uuid::Uuid::new_v4()),
-                )
-                .await?
-            {
-                claimed.push(item);
-            } else {
-                break;
-            }
-        }
-
-        Ok(claimed)
-    }
-
-    async fn transfer_lock(
-        &self,
-        run_id: Uuid,
-        from_worker_id: &str,
-        to_worker_id: &str,
-    ) -> Result<bool, StoreError> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET locked_by = $3,
-                locked_until = NOW() + INTERVAL '30 seconds'
-            WHERE run_id = $1
-              AND locked_by = $2
-              AND status = 'RUNNING'
-            RETURNING run_id
-            "#,
-            run_id,
-            from_worker_id,
-            to_worker_id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(result.is_some())
-    }
-
-    async fn extend_lock(&self, run_id: Uuid, worker_id: &str) -> Result<bool, StoreError> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET locked_until = NOW() + INTERVAL '30 seconds'
-            WHERE run_id = $1
-              AND locked_by = $2
-              AND status = 'RUNNING'
-            RETURNING run_id
-            "#,
-            run_id,
-            worker_id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(result.is_some())
-    }
-
+    #[instrument(skip(self))]
     async fn extend_locks_for_worker(
         &self,
         worker_id: &str,
@@ -709,6 +503,84 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(result.rows_affected())
     }
 
+    #[instrument(skip(self, run_ids))]
+    async fn extend_locks_batch(
+        &self,
+        run_ids: &[Uuid],
+        duration_secs: i64,
+    ) -> Result<u64, StoreError> {
+        if run_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET locked_until = NOW() + ($2 * INTERVAL '1 second')
+            WHERE run_id = ANY($1)
+            "#,
+            run_ids,
+            duration_secs as f64
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    #[instrument(skip(self, params))]
+    async fn create_batch(&self, params: Vec<CreateWorkflow>) -> Result<Vec<Uuid>, StoreError> {
+        if params.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let mut ids = Vec::with_capacity(params.len());
+
+        for p in params {
+            let retry_policy_json = p.retry_policy.map(serde_json::to_value).transpose()?;
+            let row = sqlx::query!(
+                r#"
+                INSERT INTO kagzi.workflow_runs (
+                    business_id, task_queue, workflow_type, status,
+                    namespace_id, idempotency_key, deadline_at, version, retry_policy
+                )
+                VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8)
+                RETURNING run_id
+                "#,
+                p.business_id,
+                p.task_queue,
+                p.workflow_type,
+                p.namespace_id,
+                p.idempotency_key,
+                p.deadline_at,
+                p.version,
+                retry_policy_json
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO kagzi.workflow_payloads (run_id, input, context)
+                VALUES ($1, $2, $3)
+                "#,
+            )
+            .bind(row.run_id)
+            .bind(&p.input)
+            .bind(&p.context)
+            .execute(&mut *tx)
+            .await?;
+
+            ids.push(row.run_id);
+        }
+
+        tx.commit().await?;
+
+        Ok(ids)
+    }
+
+    #[instrument(skip(self))]
     async fn wake_sleeping(&self) -> Result<u64, StoreError> {
         let result = sqlx::query!(
             r#"
@@ -731,6 +603,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(result.rows_affected())
     }
 
+    #[instrument(skip(self))]
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError> {
         let rows = sqlx::query!(
             r#"
@@ -758,6 +631,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             .collect())
     }
 
+    #[instrument(skip(self))]
     async fn schedule_retry(&self, run_id: Uuid, delay_ms: u64) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
@@ -778,23 +652,8 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn mark_exhausted(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
-        sqlx::query!(
-            r#"
-            UPDATE kagzi.workflow_runs
-            SET status = 'FAILED',
-                error = $2,
-                finished_at = NOW(),
-                locked_by = NULL,
-                locked_until = NULL
-            WHERE run_id = $1
-            "#,
-            run_id,
-            error
-        )
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        self.set_failed(run_id, error).await
     }
 }

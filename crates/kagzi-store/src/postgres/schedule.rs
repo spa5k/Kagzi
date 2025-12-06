@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
     CreateSchedule, ListSchedulesParams, Schedule, UpdateSchedule, clamp_max_catchup,
 };
+use crate::postgres::columns;
+use crate::postgres::query::{FilterBuilder, push_limit};
 use crate::repository::ScheduleRepository;
 
 #[derive(sqlx::FromRow)]
@@ -61,6 +64,7 @@ impl PgScheduleRepository {
 
 #[async_trait]
 impl ScheduleRepository for PgScheduleRepository {
+    #[instrument(skip(self, params))]
     async fn create(&self, params: CreateSchedule) -> Result<Uuid, StoreError> {
         let max_catchup = clamp_max_catchup(params.max_catchup);
 
@@ -90,6 +94,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(schedule_id)
     }
 
+    #[instrument(skip(self))]
     async fn find_by_id(
         &self,
         id: Uuid,
@@ -112,48 +117,22 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(row.map(|r| r.into_model()))
     }
 
+    #[instrument(skip(self, params))]
     async fn list(&self, params: ListSchedulesParams) -> Result<Vec<Schedule>, StoreError> {
-        let rows = match params.task_queue {
-            Some(ref task_queue) => {
-                sqlx::query_as::<_, ScheduleRow>(
-                    r#"
-                    SELECT schedule_id, namespace_id, task_queue, workflow_type, cron_expr,
-                           input, context, enabled, max_catchup, next_fire_at, last_fired_at,
-                           version, created_at, updated_at
-                    FROM kagzi.schedules
-                    WHERE namespace_id = $1 AND task_queue = $2
-                    ORDER BY created_at DESC, schedule_id DESC
-                    LIMIT $3
-                    "#,
-                )
-                .bind(&params.namespace_id)
-                .bind(task_queue)
-                .bind(params.limit.unwrap_or(100))
-                .fetch_all(&self.pool)
-                .await?
-            }
-            None => {
-                sqlx::query_as::<_, ScheduleRow>(
-                    r#"
-                    SELECT schedule_id, namespace_id, task_queue, workflow_type, cron_expr,
-                           input, context, enabled, max_catchup, next_fire_at, last_fired_at,
-                           version, created_at, updated_at
-                    FROM kagzi.schedules
-                    WHERE namespace_id = $1
-                    ORDER BY created_at DESC, schedule_id DESC
-                    LIMIT $2
-                    "#,
-                )
-                .bind(&params.namespace_id)
-                .bind(params.limit.unwrap_or(100))
-                .fetch_all(&self.pool)
-                .await?
-            }
-        };
+        let mut filters = FilterBuilder::select(columns::schedule::BASE, "kagzi.schedules");
+        filters.and_eq("namespace_id", &params.namespace_id);
+        filters.and_optional_eq("task_queue", params.task_queue.as_deref());
+
+        let mut builder = filters.finalize();
+        builder.push(" ORDER BY created_at DESC, schedule_id DESC");
+        push_limit(&mut builder, params.limit.unwrap_or(100));
+
+        let rows: Vec<ScheduleRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
         Ok(rows.into_iter().map(|r| r.into_model()).collect())
     }
 
+    #[instrument(skip(self, params))]
     async fn update(
         &self,
         id: Uuid,
@@ -195,6 +174,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn delete(&self, id: Uuid, namespace_id: &str) -> Result<bool, StoreError> {
         let result = sqlx::query(
             r#"
@@ -210,6 +190,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    #[instrument(skip(self))]
     async fn due_schedules(
         &self,
         now: DateTime<Utc>,
@@ -239,6 +220,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(rows.into_iter().map(|r| r.into_model()).collect())
     }
 
+    #[instrument(skip(self))]
     async fn advance_schedule(
         &self,
         id: Uuid,
@@ -263,6 +245,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn record_firing(
         &self,
         schedule_id: Uuid,

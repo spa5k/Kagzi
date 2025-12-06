@@ -168,6 +168,13 @@ fn unavailable(message: impl Into<String>) -> Status {
     )
 }
 
+fn deadline_exceeded(message: impl Into<String>) -> Status {
+    status_with_detail(
+        Code::DeadlineExceeded,
+        detail(ErrorCode::Unavailable, message, false, 0, "", ""),
+    )
+}
+
 fn permission_denied(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::PermissionDenied,
@@ -377,6 +384,7 @@ fn map_store_error(e: kagzi_store::StoreError) -> Status {
         kagzi_store::StoreError::PreconditionFailed { message } => precondition_failed(message),
         kagzi_store::StoreError::Unauthorized { message } => permission_denied(message),
         kagzi_store::StoreError::Unavailable { message } => unavailable(message),
+        kagzi_store::StoreError::Timeout { message } => deadline_exceeded(message),
         kagzi_store::StoreError::Database(e) => {
             tracing::error!("Database error: {:?}", e);
             internal("Database error")

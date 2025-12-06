@@ -39,13 +39,6 @@ pub trait WorkflowRepository: Send + Sync {
 
     async fn schedule_sleep(&self, run_id: Uuid, duration_secs: u64) -> Result<(), StoreError>;
 
-    async fn claim_next(
-        &self,
-        task_queue: &str,
-        namespace_id: &str,
-        worker_id: &str,
-    ) -> Result<Option<ClaimedWorkflow>, StoreError>;
-
     /// Claim next workflow filtered by supported types
     async fn claim_next_filtered(
         &self,
@@ -57,29 +50,22 @@ pub trait WorkflowRepository: Send + Sync {
 
     /// Claim a batch of workflows for distribution to workers
     /// This is used by the work distributor to fetch multiple items in one query
-    async fn claim_batch(
-        &self,
-        task_queue: &str,
-        namespace_id: &str,
-        limit: i32,
-    ) -> Result<Vec<ClaimedWorkflow>, StoreError>;
-
-    /// Transfer the lock from one worker to another (used by work distributor)
-    async fn transfer_lock(
-        &self,
-        run_id: Uuid,
-        from_worker_id: &str,
-        to_worker_id: &str,
-    ) -> Result<bool, StoreError>;
-
-    async fn extend_lock(&self, run_id: Uuid, worker_id: &str) -> Result<bool, StoreError>;
-
     /// Bulk extend locks for all workflows owned by a worker
     async fn extend_locks_for_worker(
         &self,
         worker_id: &str,
         duration_secs: i64,
     ) -> Result<u64, StoreError>;
+
+    /// Extend locks for a specific set of workflow run_ids
+    async fn extend_locks_batch(
+        &self,
+        run_ids: &[Uuid],
+        duration_secs: i64,
+    ) -> Result<u64, StoreError>;
+
+    /// Create multiple workflows in a single transaction
+    async fn create_batch(&self, params: Vec<CreateWorkflow>) -> Result<Vec<Uuid>, StoreError>;
 
     async fn wake_sleeping(&self) -> Result<u64, StoreError>;
 
