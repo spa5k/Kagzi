@@ -1,5 +1,7 @@
+use std::collections::{HashMap, HashSet};
+
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -255,11 +257,31 @@ impl WorkerRepository for PgWorkerRepository {
         .fetch_all(&self.pool)
         .await?;
 
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Collect unique (namespace_id, task_queue) pairs to batch concurrency lookups.
+        let mut seen = HashSet::new();
+        let mut pairs = Vec::new();
+        for r in &rows {
+            let key = (r.namespace_id.clone(), r.task_queue.clone());
+            if seen.insert(key.clone()) {
+                pairs.push(key);
+            }
+        }
+
+        let queue_limits = self.fetch_queue_limits_for_pairs(&pairs).await?;
+        let workflow_limits = self.fetch_workflow_limits_for_pairs(&pairs).await?;
+
         let mut workers = Vec::with_capacity(rows.len());
         for r in rows {
-            let (queue_limit, type_limits) = self
-                .fetch_concurrency(&r.namespace_id, &r.task_queue)
-                .await?;
+            let key = (r.namespace_id.clone(), r.task_queue.clone());
+            let queue_limit = queue_limits.get(&key).cloned().flatten();
+            let type_limits = workflow_limits
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(Vec::new);
             workers.push(r.into_model(queue_limit, type_limits));
         }
 
@@ -359,6 +381,87 @@ impl WorkerRepository for PgWorkerRepository {
 }
 
 impl PgWorkerRepository {
+    async fn fetch_queue_limits_for_pairs(
+        &self,
+        pairs: &[(String, String)],
+    ) -> Result<HashMap<(String, String), Option<i32>>, StoreError> {
+        if pairs.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct QueueLimitRow {
+            namespace_id: String,
+            task_queue: String,
+            max_concurrent: Option<i32>,
+        }
+
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT namespace_id, task_queue, max_concurrent \
+             FROM kagzi.queue_configs \
+             WHERE (namespace_id, task_queue) IN (",
+        );
+        builder.push_tuples(pairs, |mut b, (ns, tq)| {
+            b.push_bind(ns);
+            b.push_bind(tq);
+        });
+        builder.push(")");
+
+        let rows: Vec<QueueLimitRow> = builder.build_query_as().fetch_all(&self.pool).await?;
+
+        let mut map = HashMap::with_capacity(rows.len());
+        for row in rows {
+            map.insert(
+                (row.namespace_id, row.task_queue),
+                row.max_concurrent, // keep Option<i32>, flatten later
+            );
+        }
+
+        Ok(map)
+    }
+
+    async fn fetch_workflow_limits_for_pairs(
+        &self,
+        pairs: &[(String, String)],
+    ) -> Result<HashMap<(String, String), Vec<WorkflowTypeConcurrency>>, StoreError> {
+        if pairs.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct WorkflowLimitRow {
+            namespace_id: String,
+            task_queue: String,
+            workflow_type: String,
+            max_concurrent: Option<i32>,
+        }
+
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT namespace_id, task_queue, workflow_type, max_concurrent \
+             FROM kagzi.workflow_type_configs \
+             WHERE (namespace_id, task_queue) IN (",
+        );
+        builder.push_tuples(pairs, |mut b, (ns, tq)| {
+            b.push_bind(ns);
+            b.push_bind(tq);
+        });
+        builder.push(")");
+
+        let rows: Vec<WorkflowLimitRow> = builder.build_query_as().fetch_all(&self.pool).await?;
+
+        let mut map: HashMap<(String, String), Vec<WorkflowTypeConcurrency>> = HashMap::new();
+        for row in rows {
+            map.entry((row.namespace_id, row.task_queue))
+                .or_default()
+                .push(WorkflowTypeConcurrency {
+                    workflow_type: row.workflow_type,
+                    max_concurrent: row.max_concurrent.unwrap_or(0),
+                });
+        }
+
+        Ok(map)
+    }
+
     async fn fetch_concurrency(
         &self,
         namespace_id: &str,
