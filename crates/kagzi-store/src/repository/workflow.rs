@@ -57,6 +57,16 @@ pub trait WorkflowRepository: Send + Sync {
         duration_secs: i64,
     ) -> Result<u64, StoreError>;
 
+    /// Extend locks for a specific set of workflow run_ids
+    async fn extend_locks_batch(
+        &self,
+        run_ids: &[Uuid],
+        duration_secs: i64,
+    ) -> Result<u64, StoreError>;
+
+    /// Create multiple workflows in a single transaction
+    async fn create_batch(&self, params: Vec<CreateWorkflow>) -> Result<Vec<Uuid>, StoreError>;
+
     async fn wake_sleeping(&self) -> Result<u64, StoreError>;
 
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError>;

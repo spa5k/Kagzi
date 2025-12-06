@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::Type;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WorkflowStatus {
     Pending,
     Running,

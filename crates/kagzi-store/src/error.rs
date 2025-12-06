@@ -31,6 +31,9 @@ pub enum StoreError {
 
     #[error("Service unavailable: {message}")]
     Unavailable { message: String },
+
+    #[error("Operation timed out: {message}")]
+    Timeout { message: String },
 }
 
 impl StoreError {
@@ -79,6 +82,12 @@ impl StoreError {
 
     pub fn unavailable(message: impl Into<String>) -> Self {
         Self::Unavailable {
+            message: message.into(),
+        }
+    }
+
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self::Timeout {
             message: message.into(),
         }
     }

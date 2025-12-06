@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use sqlx::{PgPool, Postgres, QueryBuilder};
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -9,6 +10,8 @@ use crate::models::{
     ListWorkersParams, RegisterWorkerParams, Worker, WorkerHeartbeatParams, WorkerStatus,
     WorkflowTypeConcurrency,
 };
+use crate::postgres::columns;
+use crate::postgres::query::{FilterBuilder, push_limit};
 use crate::repository::WorkerRepository;
 
 #[derive(sqlx::FromRow)]
@@ -16,7 +19,7 @@ struct WorkerRow {
     worker_id: Uuid,
     namespace_id: String,
     task_queue: String,
-    status: String,
+    status: WorkerStatus,
     hostname: Option<String>,
     pid: Option<i32>,
     version: Option<String>,
@@ -41,7 +44,7 @@ impl WorkerRow {
             worker_id: self.worker_id,
             namespace_id: self.namespace_id,
             task_queue: self.task_queue,
-            status: WorkerStatus::from_db_str(&self.status),
+            status: self.status,
             hostname: self.hostname,
             pid: self.pid,
             version: self.version,
@@ -73,6 +76,7 @@ impl PgWorkerRepository {
 
 #[async_trait]
 impl WorkerRepository for PgWorkerRepository {
+    #[instrument(skip(self, params))]
     async fn register(&self, params: RegisterWorkerParams) -> Result<Uuid, StoreError> {
         let mut tx = self.pool.begin().await?;
 
@@ -194,19 +198,16 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn find_by_id(&self, worker_id: Uuid) -> Result<Option<Worker>, StoreError> {
-        let row = sqlx::query_as::<_, WorkerRow>(
-            r#"
-            SELECT worker_id, namespace_id, task_queue, status, hostname, pid, version,
-                   workflow_types, max_concurrent, active_count, total_completed, total_failed,
-                   registered_at, last_heartbeat_at, deregistered_at, labels
-            FROM kagzi.workers
-            WHERE worker_id = $1
-            "#,
-        )
-        .bind(worker_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let query = format!(
+            "SELECT {} FROM kagzi.workers WHERE worker_id = $1",
+            columns::worker::BASE
+        );
+        let row = sqlx::query_as::<_, WorkerRow>(&query)
+            .bind(worker_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         if let Some(r) = row {
             let (queue_limit, type_limits) = self
@@ -218,30 +219,26 @@ impl WorkerRepository for PgWorkerRepository {
         }
     }
 
+    #[instrument(skip(self, params))]
     async fn list(&self, params: ListWorkersParams) -> Result<Vec<Worker>, StoreError> {
         let limit = (params.page_size.max(1) + 1) as i64; // fetch one extra to compute next_page_token
 
-        let rows = sqlx::query_as::<_, WorkerRow>(
-            r#"
-            SELECT worker_id, namespace_id, task_queue, status, hostname, pid, version,
-                   workflow_types, max_concurrent, active_count, total_completed, total_failed,
-                   registered_at, last_heartbeat_at, deregistered_at, labels
-            FROM kagzi.workers
-            WHERE namespace_id = $1
-              AND ($2::TEXT IS NULL OR task_queue = $2)
-              AND ($3::TEXT IS NULL OR status = $3)
-              AND ($4::UUID IS NULL OR worker_id < $4)
-            ORDER BY worker_id DESC
-            LIMIT $5
-            "#,
-        )
-        .bind(&params.namespace_id)
-        .bind(params.task_queue.as_deref())
-        .bind(params.filter_status.map(|s| s.as_db_str()))
-        .bind(params.cursor)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let mut filters = FilterBuilder::select(columns::worker::BASE, "kagzi.workers");
+        filters.and_eq("namespace_id", &params.namespace_id);
+        filters.and_optional_eq("task_queue", params.task_queue.as_deref());
+        filters.and_optional_eq("status", params.filter_status.map(|s| s.as_db_str()));
+        if let Some(cursor) = params.cursor {
+            filters
+                .builder()
+                .push(" AND worker_id < ")
+                .push_bind(cursor);
+        }
+
+        let mut builder = filters.finalize();
+        builder.push(" ORDER BY worker_id DESC");
+        push_limit(&mut builder, limit);
+
+        let rows: Vec<WorkerRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
         if rows.is_empty() {
             return Ok(Vec::new());
@@ -271,6 +268,7 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(workers)
     }
 
+    #[instrument(skip(self))]
     async fn mark_stale_offline(&self, threshold_secs: i64) -> Result<u64, StoreError> {
         let result = sqlx::query!(
             r#"
@@ -288,6 +286,7 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(result.rows_affected())
     }
 
+    #[instrument(skip(self))]
     async fn count_online(&self, namespace_id: &str, task_queue: &str) -> Result<i64, StoreError> {
         let row = sqlx::query!(
             r#"
@@ -306,6 +305,7 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(row.count.unwrap_or(0))
     }
 
+    #[instrument(skip(self))]
     async fn update_active_count(&self, worker_id: Uuid, delta: i32) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
@@ -322,6 +322,7 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn count(
         &self,
         namespace_id: &str,

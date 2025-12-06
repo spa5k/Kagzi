@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use sqlx::{PgPool, QueryBuilder};
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -7,6 +8,8 @@ use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedWorkflows,
     RetryPolicy, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
 };
+use crate::postgres::columns;
+use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
 use crate::repository::WorkflowRepository;
 
 const DEFAULT_QUEUE_CONCURRENCY_LIMIT: i32 = 10_000;
@@ -18,7 +21,7 @@ struct WorkflowRunRow {
     business_id: String,
     task_queue: String,
     workflow_type: String,
-    status: String,
+    status: WorkflowStatus,
     input: serde_json::Value,
     output: Option<serde_json::Value>,
     context: Option<serde_json::Value>,
@@ -43,7 +46,7 @@ impl WorkflowRunRow {
             business_id: self.business_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
-            status: WorkflowStatus::from_db_str(&self.status),
+            status: self.status,
             input: self.input,
             output: self.output,
             context: self.context,
@@ -121,6 +124,7 @@ impl PgWorkflowRepository {
 
 #[async_trait]
 impl WorkflowRepository for PgWorkflowRepository {
+    #[instrument(skip(self, params))]
     async fn create(&self, params: CreateWorkflow) -> Result<Uuid, StoreError> {
         let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
         let mut tx = self.pool.begin().await?;
@@ -163,30 +167,28 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(row.run_id)
     }
 
+    #[instrument(skip(self))]
     async fn find_by_id(
         &self,
         run_id: Uuid,
         namespace_id: &str,
     ) -> Result<Option<WorkflowRun>, StoreError> {
-        let row = sqlx::query_as::<_, WorkflowRunRow>(
-            r#"
-            SELECT w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, w.status,
-                   p.input, p.output, p.context, w.locked_by, w.attempts, w.error,
-                   w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at,
-                   w.version, w.parent_step_attempt_id, w.retry_policy
-            FROM kagzi.workflow_runs w
-            JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-            WHERE w.run_id = $1 AND w.namespace_id = $2
-            "#,
-        )
-        .bind(run_id)
-        .bind(namespace_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let query = format!(
+            "SELECT {} FROM kagzi.workflow_runs w \
+             JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id \
+             WHERE w.run_id = $1 AND w.namespace_id = $2",
+            columns::workflow::WITH_PAYLOAD
+        );
+        let row = sqlx::query_as::<_, WorkflowRunRow>(&query)
+            .bind(run_id)
+            .bind(namespace_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.map(|r| r.into_model()))
     }
 
+    #[instrument(skip(self))]
     async fn get_retry_policy(&self, run_id: Uuid) -> Result<Option<RetryPolicy>, StoreError> {
         let row = sqlx::query!(
             r#"
@@ -204,6 +206,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             .and_then(|v| serde_json::from_value::<RetryPolicy>(v).ok()))
     }
 
+    #[instrument(skip(self))]
     async fn find_by_idempotency_key(
         &self,
         namespace_id: &str,
@@ -223,40 +226,36 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(row.map(|r| r.run_id))
     }
 
+    #[instrument(skip(self, params))]
     async fn list(&self, params: ListWorkflowsParams) -> Result<PaginatedWorkflows, StoreError> {
         let limit = (params.page_size + 1) as i64;
 
-        let mut builder = QueryBuilder::<Postgres>::new(
-            r#"
-            SELECT w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, w.status,
-                   p.input, p.output, p.context, w.locked_by, w.attempts, w.error,
-                   w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at,
-                   w.version, w.parent_step_attempt_id, w.retry_policy
-            FROM kagzi.workflow_runs w
-            JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-            "#,
+        let mut filters = FilterBuilder::select(
+            columns::workflow::WITH_PAYLOAD,
+            "kagzi.workflow_runs w JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id",
         );
-
-        builder
-            .push(" WHERE w.namespace_id = ")
-            .push_bind(&params.namespace_id);
+        filters.and_eq("w.namespace_id", &params.namespace_id);
 
         if let Some(ref status) = params.filter_status {
-            builder.push(" AND w.status = ").push_bind(status);
+            filters.and_eq("w.status", status);
         }
 
         if let Some(ref cursor) = params.cursor {
-            builder
-                .push(" AND (w.created_at, w.run_id) < (")
-                .push_bind(cursor.created_at)
-                .push(", ")
-                .push_bind(cursor.run_id)
-                .push(")");
+            push_tuple_cursor(
+                filters.builder(),
+                &["w.created_at", "w.run_id"],
+                "<",
+                |b: &mut QueryBuilder<'_, _>| {
+                    b.push_bind(cursor.created_at)
+                        .push(", ")
+                        .push_bind(cursor.run_id);
+                },
+            );
         }
 
-        builder
-            .push(" ORDER BY w.created_at DESC, w.run_id DESC LIMIT ")
-            .push_bind(limit);
+        let mut builder = filters.finalize();
+        builder.push(" ORDER BY w.created_at DESC, w.run_id DESC");
+        push_limit(&mut builder, limit);
 
         let rows: Vec<WorkflowRunRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
@@ -285,6 +284,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         })
     }
 
+    #[instrument(skip(self))]
     async fn check_exists(
         &self,
         run_id: Uuid,
@@ -292,7 +292,7 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<WorkflowExistsResult, StoreError> {
         let row = sqlx::query!(
             r#"
-            SELECT status, locked_by FROM kagzi.workflow_runs
+            SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
             WHERE run_id = $1 AND namespace_id = $2
             "#,
             run_id,
@@ -304,7 +304,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(WorkflowStatus::from_db_str(&r.status)),
+                status: Some(r.status),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {
@@ -315,6 +315,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         }
     }
 
+    #[instrument(skip(self))]
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError> {
         let result = sqlx::query!(
             r#"
@@ -337,6 +338,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(result.is_some())
     }
 
+    #[instrument(skip(self))]
     async fn complete(&self, run_id: Uuid, output: serde_json::Value) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
 
@@ -371,10 +373,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn fail(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
         self.set_failed(run_id, error).await
     }
 
+    #[instrument(skip(self))]
     async fn schedule_sleep(&self, run_id: Uuid, duration_secs: u64) -> Result<(), StoreError> {
         let duration = duration_secs as f64;
         sqlx::query!(
@@ -395,6 +399,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(())
     }
 
+    #[instrument(skip(self, supported_types))]
     async fn claim_next_filtered(
         &self,
         task_queue: &str,
@@ -476,6 +481,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         }))
     }
 
+    #[instrument(skip(self))]
     async fn extend_locks_for_worker(
         &self,
         worker_id: &str,
@@ -497,6 +503,84 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(result.rows_affected())
     }
 
+    #[instrument(skip(self, run_ids))]
+    async fn extend_locks_batch(
+        &self,
+        run_ids: &[Uuid],
+        duration_secs: i64,
+    ) -> Result<u64, StoreError> {
+        if run_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET locked_until = NOW() + ($2 * INTERVAL '1 second')
+            WHERE run_id = ANY($1)
+            "#,
+            run_ids,
+            duration_secs as f64
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    #[instrument(skip(self, params))]
+    async fn create_batch(&self, params: Vec<CreateWorkflow>) -> Result<Vec<Uuid>, StoreError> {
+        if params.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let mut ids = Vec::with_capacity(params.len());
+
+        for p in params {
+            let retry_policy_json = p.retry_policy.map(serde_json::to_value).transpose()?;
+            let row = sqlx::query!(
+                r#"
+                INSERT INTO kagzi.workflow_runs (
+                    business_id, task_queue, workflow_type, status,
+                    namespace_id, idempotency_key, deadline_at, version, retry_policy
+                )
+                VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8)
+                RETURNING run_id
+                "#,
+                p.business_id,
+                p.task_queue,
+                p.workflow_type,
+                p.namespace_id,
+                p.idempotency_key,
+                p.deadline_at,
+                p.version,
+                retry_policy_json
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO kagzi.workflow_payloads (run_id, input, context)
+                VALUES ($1, $2, $3)
+                "#,
+            )
+            .bind(row.run_id)
+            .bind(&p.input)
+            .bind(&p.context)
+            .execute(&mut *tx)
+            .await?;
+
+            ids.push(row.run_id);
+        }
+
+        tx.commit().await?;
+
+        Ok(ids)
+    }
+
+    #[instrument(skip(self))]
     async fn wake_sleeping(&self) -> Result<u64, StoreError> {
         let result = sqlx::query!(
             r#"
@@ -519,6 +603,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(result.rows_affected())
     }
 
+    #[instrument(skip(self))]
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError> {
         let rows = sqlx::query!(
             r#"
@@ -546,6 +631,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             .collect())
     }
 
+    #[instrument(skip(self))]
     async fn schedule_retry(&self, run_id: Uuid, delay_ms: u64) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
@@ -566,6 +652,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn mark_exhausted(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
         self.set_failed(run_id, error).await
     }

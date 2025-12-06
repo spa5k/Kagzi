@@ -1,3 +1,5 @@
+mod pagination;
+mod query;
 mod schedule;
 mod step;
 mod worker;
@@ -5,6 +7,8 @@ mod workflow;
 
 use sqlx::PgPool;
 
+pub use pagination::PaginatedResult;
+pub use query::{FilterBuilder, columns};
 pub use schedule::PgScheduleRepository;
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;

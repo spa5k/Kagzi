@@ -377,6 +377,7 @@ fn map_store_error(e: kagzi_store::StoreError) -> Status {
         kagzi_store::StoreError::PreconditionFailed { message } => precondition_failed(message),
         kagzi_store::StoreError::Unauthorized { message } => permission_denied(message),
         kagzi_store::StoreError::Unavailable { message } => unavailable(message),
+        kagzi_store::StoreError::Timeout { message } => unavailable(message),
         kagzi_store::StoreError::Database(e) => {
             tracing::error!("Database error: {:?}", e);
             internal("Database error")
