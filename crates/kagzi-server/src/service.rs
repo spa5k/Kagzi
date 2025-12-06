@@ -24,7 +24,7 @@ use kagzi_store::{
     ListSchedulesParams, ListWorkersParams, ListWorkflowsParams, PgStore, RegisterWorkerParams,
     ScheduleRepository, StepRepository, UpdateSchedule as StoreUpdateSchedule,
     WorkerHeartbeatParams, WorkerRepository, WorkerStatus, WorkflowCursor, WorkflowRepository,
-    WorkflowTypeConcurrency,
+    WorkflowTypeConcurrency, clamp_max_catchup,
 };
 use prost::Message;
 use std::collections::HashMap;
@@ -386,10 +386,6 @@ fn map_store_error(e: kagzi_store::StoreError) -> Status {
             internal("Serialization error")
         }
     }
-}
-
-fn clamp_max_catchup(raw: i32) -> i32 {
-    raw.clamp(1, 10_000)
 }
 
 fn parse_cron_expr(expr: &str) -> Result<CronSchedule, Status> {

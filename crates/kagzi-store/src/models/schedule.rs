@@ -2,6 +2,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Clamps max_catchup to a reasonable range to prevent excessive workflow creation
+pub fn clamp_max_catchup(max_catchup: i32) -> i32 {
+    max_catchup.clamp(1, 10_000)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schedule {
     pub schedule_id: Uuid,

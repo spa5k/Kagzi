@@ -278,10 +278,7 @@ impl WorkerRepository for PgWorkerRepository {
         for r in rows {
             let key = (r.namespace_id.clone(), r.task_queue.clone());
             let queue_limit = queue_limits.get(&key).cloned().flatten();
-            let type_limits = workflow_limits
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(Vec::new);
+            let type_limits = workflow_limits.get(&key).cloned().unwrap_or_else(Vec::new);
             workers.push(r.into_model(queue_limit, type_limits));
         }
 

@@ -133,14 +133,14 @@ async fn user_onboarding_workflow(
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing for detailed logs
     tracing_subscriber::fmt()
-        .with_env_filter("kagzi=info,observability_test=info")
+        .with_env_filter("kagzi=info,observability_demo=info")
         .init();
 
     let server_url =
         std::env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".to_string());
 
     println!("╔════════════════════════════════════════════════════════════════╗");
-    println!("║           Kagzi Observability Test Example                     ║");
+    println!("║           Kagzi Observability Demo Example                     ║");
     println!("╚════════════════════════════════════════════════════════════════╝");
     println!();
     println!("This example tests all the new observability fields:");

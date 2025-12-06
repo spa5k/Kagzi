@@ -4,7 +4,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::StoreError;
-use crate::models::{CreateSchedule, ListSchedulesParams, Schedule, UpdateSchedule};
+use crate::models::{
+    CreateSchedule, ListSchedulesParams, Schedule, UpdateSchedule, clamp_max_catchup,
+};
 use crate::repository::ScheduleRepository;
 
 #[derive(sqlx::FromRow)]
@@ -55,16 +57,12 @@ impl PgScheduleRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
-
-    fn clamp_max_catchup(max_catchup: i32) -> i32 {
-        max_catchup.clamp(1, 10_000)
-    }
 }
 
 #[async_trait]
 impl ScheduleRepository for PgScheduleRepository {
     async fn create(&self, params: CreateSchedule) -> Result<Uuid, StoreError> {
-        let max_catchup = Self::clamp_max_catchup(params.max_catchup);
+        let max_catchup = clamp_max_catchup(params.max_catchup);
 
         let schedule_id: Uuid = sqlx::query_scalar(
             r#"
@@ -162,7 +160,7 @@ impl ScheduleRepository for PgScheduleRepository {
         namespace_id: &str,
         params: UpdateSchedule,
     ) -> Result<(), StoreError> {
-        let max_catchup = params.max_catchup.map(Self::clamp_max_catchup);
+        let max_catchup = params.max_catchup.map(clamp_max_catchup);
 
         sqlx::query(
             r#"
