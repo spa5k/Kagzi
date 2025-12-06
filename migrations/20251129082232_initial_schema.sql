@@ -1,6 +1,6 @@
--- Add migration script here
-
--- Schema creation handled by init.sql
+-- Ensure schema and required extension exist
+CREATE SCHEMA IF NOT EXISTS kagzi;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Workflow Runs Table
 CREATE TABLE kagzi.workflow_runs (
