@@ -3,6 +3,24 @@ use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use tonic::transport::Channel;
 use tracing::info;
 
+/// Application entry point that initializes structured tracing, connects to the workflow gRPC server,
+/// performs a health check for "kagzi-server", and logs the returned status and message.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use std::error::Error;
+/// /// Call the program's async entry point (runs the same initialization and health check).
+/// #[tokio::main]
+/// async fn example() -> Result<(), Box<dyn Error>> {
+///     crate::main().await?;
+///     Ok(())
+/// }
+/// ```
+///
+/// # Returns
+///
+/// `Ok(())` on success, `Err` if establishing the gRPC connection or performing the RPC fails.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()

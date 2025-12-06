@@ -18,6 +18,23 @@ use uuid::Uuid;
 const NAMESPACE: &str = "test-ns";
 const TASK_QUEUE: &str = "default";
 
+/// Register a synthetic worker for tests and obtain its worker ID.
+///
+/// The worker is created with a generated hostname and PID, the provided workflow
+/// types, and default registration options suitable for integration tests.
+///
+/// # Returns
+///
+/// The created worker's `worker_id` as a `String`.
+///
+/// # Examples
+///
+/// ```
+/// # async fn example(harness: &TestHarness) {
+/// let worker_id = register_worker(harness, vec!["TypeA"]).await;
+/// assert!(!worker_id.is_empty());
+/// # }
+/// ```
 async fn register_worker(harness: &TestHarness, workflow_types: Vec<&str>) -> String {
     let host = format!("test-host-{}", Uuid::new_v4());
     let pid = ((Uuid::new_v4().as_u128() % 30_000) as i32).max(1);

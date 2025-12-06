@@ -43,6 +43,19 @@ async fn my_workflow(mut ctx: WorkflowContext, input: MyInput) -> anyhow::Result
     })
 }
 
+/// Starts a Kagzi worker, registers the "my_workflow" handler, and demonstrates starting workflows.
+///
+/// This function initializes tracing, builds a Worker configured with queue and workflow concurrency limits
+/// and a default step retry policy, registers the `my_workflow` implementation, spawns the worker loop,
+/// connects a Client, submits a simple workflow and an advanced workflow with options (idempotency, version,
+/// context payload, and deadline), waits briefly to allow work to run, and then exits.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Run the program which will spawn a worker and submit example workflows.
+/// main().await.unwrap();
+/// ```
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()

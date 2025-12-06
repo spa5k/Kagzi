@@ -192,11 +192,40 @@ pub struct WorkflowContext {
 }
 
 impl WorkflowContext {
+    /// Begins a workflow step, executes the provided future if the step should run, and reports the step's outcome to the server.
+    ///
+    /// This method:
+    /// - Sends a BeginStepRequest for `step_id` (including the workflow context's default step retry policy).
+    /// - If the server indicates the step should not be executed, returns the cached result embedded in the server response without polling `fut`.
+    /// - Otherwise awaits `fut`; on success it sends a CompleteStepRequest with the serialized result, and on failure it sends a FailStepRequest with the mapped `KagziError`.
+    ///
+    /// # Parameters
+    ///
+    /// - `step_id`: identifier of the step within the running workflow.
+    /// - `fut`: a future that yields the step's result value of type `R`.
+    ///
+    /// # Returns
+    ///
+    /// The deserialized result value of type `R` when the step completes successfully; an error otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use serde_json::json;
+    /// # use anyhow::Result;
+    /// # async fn example(ctx: &mut crate::WorkflowContext<'_>) -> Result<()> {
+    /// let value: serde_json::Value = ctx.run("step-1", async move {
+    ///     // perform work...
+    ///     Ok::<_, anyhow::Error>(json!({"ok": true}))
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[instrument(skip(self, fut), fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        run_id = %self.run_id,
-        step_id = %step_id
+    correlation_id = %get_or_generate_correlation_id(),
+    trace_id = %get_or_generate_trace_id(),
+    run_id = %self.run_id,
+    step_id = %step_id
     ))]
     pub async fn run<R, Fut>(&mut self, step_id: &str, fut: Fut) -> anyhow::Result<R>
     where
@@ -262,11 +291,35 @@ impl WorkflowContext {
         }
     }
 
+    /// Execute a workflow step using the provided input and future, completing the step on success or failing it on error.
+    ///
+    /// The step input is serialized and sent to the server as part of the step begin request; if the server returns a cached result the cached value is returned instead of executing the future.
+    ///
+    /// # Returns
+    ///
+    /// `R` deserialized from the step's successful result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when input/output serialization fails, any RPC call fails, or the provided future returns an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use serde_json::json;
+    /// # async fn _example(mut ctx: crate::WorkflowContext) -> anyhow::Result<()> {
+    /// let input = json!({ "value": 1 });
+    /// let fut = async { Ok::<_, anyhow::Error>(json!({ "result": 2 })) };
+    /// let out: serde_json::Value = ctx.run_with_input("step-1", &input, fut).await?;
+    /// assert_eq!(out["result"], 2);
+    /// # Ok(())
+    /// # }
+    /// ```
     #[instrument(skip(self, input, fut), fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        run_id = %self.run_id,
-        step_id = %step_id
+    correlation_id = %get_or_generate_correlation_id(),
+    trace_id = %get_or_generate_trace_id(),
+    run_id = %self.run_id,
+    step_id = %step_id
     ))]
     pub async fn run_with_input<I, R, Fut>(
         &mut self,
@@ -283,6 +336,34 @@ impl WorkflowContext {
             .await
     }
 
+    /// Begins a workflow step with the given input, executes the provided future if the server indicates it should run, and then completes or fails the step based on the future's outcome.
+    ///
+    /// If `retry_policy` is `None`, the workflow context's `default_step_retry` is used when beginning the step. If the server responds with a cached result, that result is returned without executing `fut`.
+    ///
+    /// # Parameters
+    ///
+    /// - `step_id`: Identifier for the step within the run.
+    /// - `input`: Serializable input passed to the step.
+    /// - `retry_policy`: Optional per-step `RetryPolicy` to apply for this BeginStep; when `None`, the context's default is used.
+    /// - `fut`: Future performing the step's work and producing the step output.
+    ///
+    /// # Returns
+    ///
+    /// The deserialized step output `R` on success.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use serde_json::json;
+    /// # async fn example(ctx: &mut crate::WorkflowContext) -> anyhow::Result<()> {
+    /// let input = json!({ "x": 1 });
+    /// let fut = async { Ok::<_, anyhow::Error>(json!({ "y": 2 })) };
+    /// let out: serde_json::Value = ctx
+    ///     .run_with_input_with_retry("step-1", &input, None, fut)
+    ///     .await?;
+    /// assert_eq!(out, json!({ "y": 2 }));
+    /// # Ok(()) }
+    /// ```
     pub async fn run_with_input_with_retry<I, R, Fut>(
         &mut self,
         step_id: &str,
@@ -434,6 +515,29 @@ pub struct WorkerBuilder {
 }
 
 impl WorkerBuilder {
+    /// Create a WorkerBuilder targeting the specified gRPC server address and task queue.
+    ///
+    /// The builder is initialized with sensible defaults:
+    /// - `namespace_id` set to `"default"`,
+    /// - `max_concurrent` set to `DEFAULT_MAX_CONCURRENT_WORKFLOWS`,
+    /// - empty `labels` and `workflow_type_concurrency`,
+    /// - `hostname`, `version`, `queue_concurrency_limit`, and `default_step_retry` unset.
+    ///
+    /// # Parameters
+    ///
+    /// - `addr`: gRPC server address the worker will connect to.
+    /// - `task_queue`: name of the task queue the worker will poll.
+    ///
+    /// # Returns
+    ///
+    /// A `WorkerBuilder` configured to connect to `addr` and poll `task_queue`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = WorkerBuilder::new("http://127.0.0.1:50051", "my-task-queue");
+    /// assert_eq!(builder.task_queue, "my-task-queue");
+    /// ```
     pub fn new(addr: &str, task_queue: &str) -> Self {
         Self {
             addr: addr.to_string(),
@@ -469,11 +573,33 @@ impl WorkerBuilder {
         self
     }
 
+    /// Adds a label to the worker configuration.
+    ///
+    /// The label will be included when the worker registers with the server; if the key
+    /// already exists its value is replaced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = WorkerBuilder::new("http://localhost:50051", "default")
+    ///     .label("env", "production")
+    ///     .label("region", "us-west");
+    /// ```
     pub fn label(mut self, key: &str, value: &str) -> Self {
         self.labels.insert(key.to_string(), value.to_string());
         self
     }
 
+    /// Configure the maximum number of concurrent workflows to poll from the task queue.
+    ///
+    /// The provided `limit` is applied only if it is greater than zero; non-positive values are ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = WorkerBuilder::new("http://localhost:50051", "default-queue")
+    ///     .queue_concurrency_limit(10);
+    /// ```
     pub fn queue_concurrency_limit(mut self, limit: i32) -> Self {
         if limit > 0 {
             self.queue_concurrency_limit = Some(limit);
@@ -481,6 +607,25 @@ impl WorkerBuilder {
         self
     }
 
+    /// Sets a per-workflow-type concurrency limit for the builder when `limit` is greater than zero.
+    ///
+    /// If `limit` is less than or equal to zero, the setting is ignored.
+    ///
+    /// # Parameters
+    ///
+    /// - `workflow_type`: The name of the workflow type to apply the limit to.
+    /// - `limit`: Maximum concurrent executions allowed for the specified workflow type; only positive values are applied.
+    ///
+    /// # Returns
+    ///
+    /// The modified builder for method chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = WorkerBuilder::new("http://localhost:50051", "default_queue")
+    ///     .workflow_type_concurrency("email_sender", 5);
+    /// ```
     pub fn workflow_type_concurrency(mut self, workflow_type: &str, limit: i32) -> Self {
         if limit > 0 {
             self.workflow_type_concurrency
@@ -489,11 +634,36 @@ impl WorkerBuilder {
         self
     }
 
+    /// Sets the default retry policy to apply to step begin requests when no per-step policy is provided.
+    ///
+    /// The configured policy will be sent with BeginStepRequest messages for steps that do not specify their own retry policy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = WorkerBuilder::new("http://127.0.0.1:50051", "default")
+    ///     .default_step_retry(RetryPolicy { maximum_attempts: Some(5), ..Default::default() });
+    /// ```
     pub fn default_step_retry(mut self, policy: RetryPolicy) -> Self {
         self.default_step_retry = Some(policy);
         self
     }
 
+    /// Build the Worker by connecting to the configured gRPC server and initializing runtime state.
+    ///
+    /// On success this returns a fully constructed `Worker` ready to be registered and run. The
+    /// operation fails if the client cannot connect to the configured address.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use kagzi::WorkerBuilder;
+    /// # #[tokio::main]
+    /// # async fn main() -> anyhow::Result<()> {
+    /// let builder = WorkerBuilder::new("http://127.0.0.1:50051".to_string(), "default".to_string());
+    /// let worker = builder.build().await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn build(self) -> anyhow::Result<Worker> {
         let client = WorkflowServiceClient::connect(self.addr.clone()).await?;
 
@@ -587,11 +757,29 @@ impl Worker {
         self.shutdown.clone()
     }
 
+    /// Registers this worker with the server, starts its heartbeat and polling loop, and
+    /// runs until a shutdown signal is received, after which it drains active workflows
+    /// and deregisters the worker.
+    ///
+    /// This function requires at least one workflow be registered prior to calling; it
+    /// will return an error if no workflows are registered. While running, the worker
+    /// will accept and dispatch workflow tasks, maintain a periodic heartbeat, and
+    /// respect the configured concurrency and shutdown semantics. On shutdown it waits
+    /// for any active workflows to complete before deregistering.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// // assuming `worker` is a configured Worker with at least one registered workflow
+    /// // worker.run().await.unwrap();
+    /// # });
+    /// ```
     #[instrument(skip(self), fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        task_queue = %self.task_queue,
-        max_concurrent = %self.max_concurrent
+    correlation_id = %get_or_generate_correlation_id(),
+    trace_id = %get_or_generate_trace_id(),
+    task_queue = %self.task_queue,
+    max_concurrent = %self.max_concurrent
     ))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
         if self.workflows.is_empty() {
@@ -721,6 +909,20 @@ impl Worker {
         })
     }
 
+    /// Polls the server for an activity task and, when a task is received, spawns its execution
+    /// while enforcing the worker's concurrency limits.
+    ///
+    /// If no task is returned or the server indicates an empty run, the method releases its permit
+    /// and returns. When a task matches a registered workflow handler, the handler is executed in a
+    /// new task with tracing context and the permit held for the lifetime of that spawned task.
+    /// Poll errors that are not deadline expirations are logged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Called from an async context; the worker will attempt to fetch and execute one task.
+    /// // worker.poll_and_execute().await;
+    /// ```
     async fn poll_and_execute(&mut self) {
         let permit = match self.semaphore.clone().acquire_owned().await {
             Ok(p) => p,
@@ -788,7 +990,31 @@ impl Worker {
     }
 }
 
-/// Execute a workflow with proper tracing context
+/// Run a workflow handler with tracing, then report its result to the server.
+///
+/// Invokes the provided `handler` with a `WorkflowContext` (built from the given `client`,
+/// `run_id`, and `default_step_retry`) and the supplied JSON `input`. If the handler returns
+/// `Ok(output)`, the function sends a `CompleteWorkflowRequest` containing the serialized
+/// output. If the handler returns an error that is or wraps `WorkflowPaused`, the function
+/// logs the pause and returns without failing the workflow. For any other error, the function
+/// converts it to a `KagziError` (using `Internal` as a fallback), sends a `FailWorkflowRequest`
+/// with the error detail, and logs the failure using the provided `correlation_id` and
+/// `trace_id`.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use kagzi::client::Client;
+/// # use kagzi::{execute_workflow, WorkflowFn, WorkflowContext, RetryPolicy};
+/// # use tokio::runtime::Runtime;
+/// # let rt = Runtime::new().unwrap();
+/// # rt.block_on(async {
+/// // `client`, `handler`, `run_id`, `input`, `correlation_id`, `trace_id` would come from
+/// // the worker loop; this shows the shape of a call:
+/// // execute_workflow(client, handler, run_id, input, correlation_id, trace_id, None).await;
+/// # });
+/// ```
 async fn execute_workflow(
     mut client: WorkflowServiceClient<Channel>,
     handler: Arc<WorkflowFn>,
@@ -860,6 +1086,20 @@ impl Client {
         Ok(Self { client })
     }
 
+    /// Creates a WorkflowBuilder configured to start a workflow run of the given type on the specified task queue.
+    ///
+    /// The returned builder is pre-populated with the provided `input` and can be further configured (for example with
+    /// `id`, `idempotent`, `context`, `deadline`, `version`, or `retry_policy`) before executing the workflow.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use serde_json::json;
+    ///
+    /// // `client` is a `Client` connected to the kagzi server.
+    /// let builder = client.workflow("email_send", "default", json!({"to": "user@example.com"}));
+    /// // further configuration: `builder.id("my-id")`, `builder.execute().await`, etc.
+    /// ```
     pub fn workflow<I: Serialize>(
         &mut self,
         workflow_type: &str,
@@ -869,6 +1109,16 @@ impl Client {
         WorkflowBuilder::new(self, workflow_type, task_queue, input)
     }
 
+    /// Begins building a cron schedule for a workflow.
+    ///
+    /// Returns a ScheduleBuilder configured with the given workflow type, task queue, and cron expression.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut client = Client::connect("http://127.0.0.1:50051");
+    /// let _builder = client.schedule("invoice_processor", "default", "0 0 * * *");
+    /// ```
     pub fn schedule(
         &mut self,
         workflow_type: &str,
@@ -878,6 +1128,19 @@ impl Client {
         ScheduleBuilder::new(self, workflow_type, task_queue, cron_expr)
     }
 
+    /// Fetches a schedule by ID within the given namespace.
+    ///
+    /// Returns an error if the RPC fails or if the server response does not include a schedule.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let mut client = Client::connect("http://localhost:50051").await?;
+    /// let schedule = client.get_schedule("schedule-id", "default").await?;
+    /// // use `schedule` (a `ProtoSchedule`) here
+    /// # Ok(()) }
+    /// ```
     pub async fn get_schedule(
         &mut self,
         schedule_id: &str,
@@ -897,6 +1160,28 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
     }
 
+    /// Lists schedules for a namespace, optionally filtered by task queue and limited by count.
+    ///
+    /// The `task_queue` argument, if `None`, is sent as an empty string; the `limit` argument,
+    /// if `None`, is sent as `0`. The server interprets those values according to its policy.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<ProtoSchedule>` containing schedules returned by the server.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn _example() -> anyhow::Result<()> {
+    /// let mut client = Client::connect("http://localhost:50051").await?;
+    /// // List up to 10 schedules for the "emails" task queue in the "default" namespace.
+    /// let schedules = client
+    ///     .list_schedules("default", Some("emails"), Some(10))
+    ///     .await?;
+    /// assert!(schedules.len() <= 10);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn list_schedules(
         &mut self,
         namespace_id: &str,
@@ -917,6 +1202,40 @@ impl Client {
         Ok(resp.schedules)
     }
 
+    /// Updates fields of an existing cron schedule and returns the updated schedule.
+    ///
+    /// The provided `ScheduleUpdate` supplies optional fields to modify; only those set on
+    /// `update` will be applied. The function serializes `input` and `context` to JSON bytes
+    /// when present and forwards the update to the server.
+    ///
+    /// # Parameters
+    ///
+    /// - `schedule_id`: Identifier of the schedule to update.
+    /// - `namespace_id`: Namespace containing the schedule.
+    /// - `update`: `ScheduleUpdate` with the fields to change.
+    ///
+    /// # Returns
+    ///
+    /// `ProtoSchedule` containing the updated schedule on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization of `input`/`context` fails, if the RPC call fails,
+    /// or if the server response does not include an updated schedule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use anyhow::Result;
+    /// # use kagzi::Client;
+    /// # use kagzi::ScheduleUpdate;
+    /// # async fn doc_example(client: &mut Client) -> Result<()> {
+    /// let update = ScheduleUpdate::default().enabled(false);
+    /// let updated = client.update_schedule("sched-123", "default", update).await?;
+    /// println!("Updated schedule id: {}", updated.schedule_id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn update_schedule(
         &mut self,
         schedule_id: &str,
@@ -951,6 +1270,24 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
     }
 
+    /// Delete the schedule identified by `schedule_id` in the given `namespace_id`.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the schedule was deleted successfully, an error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying gRPC delete request fails or is translated into a `KagziError`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let mut client = Client::connect("http://localhost:50051").await?;
+    /// client.delete_schedule("schedule-123", "default").await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn delete_schedule(
         &mut self,
         schedule_id: &str,
@@ -1073,6 +1410,20 @@ impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowBuilder<'a, I> {
     type Output = anyhow::Result<String>;
     type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + 'a>>;
 
+    /// Consume the builder and begin workflow execution.
+    ///
+    /// # Returns
+    ///
+    /// A pinned, boxed future that resolves to the started workflow's run ID on success or an error.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // await the builder to start the workflow and obtain its run id
+    /// let builder = client.workflow("my_workflow", "default", serde_json::json!(null));
+    /// let run_id = futures::executor::block_on(builder);
+    /// println!("started run: {}", run_id.unwrap());
+    /// ```
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.execute())
     }
@@ -1092,6 +1443,20 @@ pub struct ScheduleBuilder<'a> {
 }
 
 impl<'a> ScheduleBuilder<'a> {
+    /// Creates a new ScheduleBuilder for the given workflow type, task queue, and cron expression.
+    ///
+    /// The builder is initialized with:
+    /// - `namespace_id` set to `"default"`,
+    /// - `input` set to JSON `null`,
+    /// - `context`, `enabled`, `max_catchup`, and `version` set to `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // `client` must be an existing `Client` instance.
+    /// let mut client = /* existing Client */;
+    /// let builder = ScheduleBuilder::new(&mut client, "send_email", "emails", "0 0 * * *");
+    /// ```
     fn new(client: &'a mut Client, workflow_type: &str, task_queue: &str, cron_expr: &str) -> Self {
         Self {
             client,
@@ -1107,36 +1472,121 @@ impl<'a> ScheduleBuilder<'a> {
         }
     }
 
+    /// Set the namespace identifier used when registering the worker.
+    ///
+    /// # Returns
+    ///
+    /// The builder with `namespace_id` set to the provided value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = WorkerBuilder::new("http://localhost:50051", "default_queue")
+    ///     .namespace("production");
+    /// ```
     pub fn namespace(mut self, namespace_id: impl Into<String>) -> Self {
         self.namespace_id = namespace_id.into();
         self
     }
 
+    /// Sets the JSON input payload for the schedule and returns the modified builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = ScheduleBuilder::new(&client, "my_workflow", "default", "0 0 * * *")
+    ///     .input(serde_json::json!({"key": "value"}));
+    /// assert_eq!(builder.input, serde_json::json!({"key": "value"}));
+    /// ```
     pub fn input(mut self, input: serde_json::Value) -> Self {
         self.input = input;
         self
     }
 
+    /// Sets the schedule's context JSON.
+    ///
+    /// The provided `context` is stored on the builder and will be sent as the schedule's context when creating or updating the schedule.
+    ///
+    /// # Returns
+    ///
+    /// The builder with the context set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use serde_json::json;
+    /// let builder = ScheduleBuilder::new(&client, "my_workflow", "default_queue", "0 0 * * *")
+    ///     .context(json!({ "env": "prod", "owner": "team-a" }));
+    /// ```
     pub fn context(mut self, context: serde_json::Value) -> Self {
         self.context = Some(context);
         self
     }
 
+    /// Sets whether the schedule should be enabled.
+    ///
+    /// This records the enabled state on the update and returns the modified `ScheduleUpdate` for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let upd = ScheduleUpdate::default().enabled(true);
+    /// assert_eq!(upd.enabled, Some(true));
+    /// ```
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = Some(enabled);
         self
     }
 
+    /// Set the maximum number of missed schedule firings that may be caught up.
+    ///
+    /// When a schedule is resumed, the system will attempt to run missed executions up to this count.
+    /// Passing a non-negative integer limits how many past firings will be executed; use `0` to disable catch-up.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let upd = crate::ScheduleUpdate::default().max_catchup(5);
+    /// assert_eq!(upd.max_catchup, Some(5));
+    /// ```
     pub fn max_catchup(mut self, max_catchup: i32) -> Self {
         self.max_catchup = Some(max_catchup);
         self
     }
 
+    /// Sets the worker version string reported to the server.
+    ///
+    /// This value is included during worker registration and heartbeats to identify the
+    /// worker binary or deployment version.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let _ = WorkerBuilder::new("http://127.0.0.1:50051", "default").version("1.2.3");
+    /// ```
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
         self
     }
 
+    /// Creates the schedule on the server and returns the created protobuf schedule.
+    ///
+    /// Serializes the builder's `input` and optional `context` to JSON bytes, sends a
+    /// CreateSchedule RPC with the builder fields, and returns the `ProtoSchedule` from
+    /// the server response. Errors if serialization fails, the RPC returns an error,
+    /// or the server response does not include a schedule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn _example() -> anyhow::Result<()> {
+    /// let mut client = Client::connect("http://localhost:50051").await?;
+    /// let builder = client.schedule("my_workflow", "default", "0 * * * *");
+    /// let schedule = builder.create().await?;
+    /// // Use `schedule` (a `ProtoSchedule`) as needed.
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create(self) -> anyhow::Result<ProtoSchedule> {
         let input_bytes = serde_json::to_vec(&self.input)?;
         let context_bytes = self
@@ -1182,46 +1632,139 @@ pub struct ScheduleUpdate {
 }
 
 impl ScheduleUpdate {
+    /// Sets the task queue name that the worker will poll for tasks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = WorkerBuilder::new("http://localhost:50051", "default")
+    ///     .task_queue("my-queue");
+    /// assert_eq!(builder.task_queue.as_deref(), Some("my-queue"));
+    /// ```
     pub fn task_queue(mut self, value: impl Into<String>) -> Self {
         self.task_queue = Some(value.into());
         self
     }
 
+    /// Sets the workflow type for this update and returns the modified builder for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let upd = ScheduleUpdate::default().workflow_type("my_workflow");
+    /// assert_eq!(upd.workflow_type.as_deref(), Some("my_workflow"));
+    /// ```
     pub fn workflow_type(mut self, value: impl Into<String>) -> Self {
         self.workflow_type = Some(value.into());
         self
     }
 
+    /// Set the cron expression to use for the schedule.
+    ///
+    — Accepts any value convertible to `String` and stores it as the builder's cron expression.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let builder = ScheduleBuilder::new(&client, "my_workflow", "default", "0 0 * * *")
+    ///     .cron_expr("0 0 * * *");
+    /// ```
+    pub fn cron_expr(mut self, value: impl Into<String>) -> Self {
+    self.cron_expr = Some(value.into());
+    self
+    }
     pub fn cron_expr(mut self, value: impl Into<String>) -> Self {
         self.cron_expr = Some(value.into());
         self
     }
 
+    /// Sets the schedule's input payload to the provided JSON value.
+    ///
+    /// The value will be serialized and sent as the schedule's `input` when the schedule is created or updated.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let value = serde_json::json!({ "user_id": 42 });
+    /// let builder = ScheduleBuilder::new(&client, "email_workflow", "default", "0 0 * * *")
+    ///     .input(value);
+    /// ```
     pub fn input(mut self, value: serde_json::Value) -> Self {
         self.input = Some(value);
         self
     }
 
+    /// Sets the execution context for the builder.
+    ///
+    /// The provided JSON value will be attached to the request as the workflow/schedule context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use serde_json::json;
+    ///
+    /// let builder = ScheduleBuilder::new(&client, "my_workflow", "default_queue", "@daily")
+    ///     .context(json!({"user_id": 42, "env": "prod"}));
+    /// ```
     pub fn context(mut self, value: serde_json::Value) -> Self {
         self.context = Some(value);
         self
     }
 
+    /// Set whether the schedule should be enabled.
+    ///
+    /// Sets the update's `enabled` flag to the provided value and returns the updated `ScheduleUpdate`
+    /// for method chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let update = ScheduleUpdate::default().enabled(false);
+    /// assert_eq!(update.enabled, Some(false));
+    /// ```
     pub fn enabled(mut self, value: bool) -> Self {
         self.enabled = Some(value);
         self
     }
 
+    /// Configure how many missed schedule firings should be caught up when the schedule is (re)enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let update = crates::kagzi::ScheduleUpdate::default().max_catchup(5);
+    /// assert_eq!(update.max_catchup, Some(5));
+    /// ```
+    ///
+    /// @returns The updated `ScheduleUpdate` with `max_catchup` set to `value`.
     pub fn max_catchup(mut self, value: i32) -> Self {
         self.max_catchup = Some(value);
         self
     }
 
+    /// Sets the next time the schedule should fire when applying this update.
+    ///
+    /// The provided `value` replaces any previous `next_fire_at` value in the builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use chrono::Utc;
+    /// let update = ScheduleUpdate::default().next_fire_at(Utc::now());
+    /// ```
     pub fn next_fire_at(mut self, value: chrono::DateTime<chrono::Utc>) -> Self {
         self.next_fire_at = Some(value);
         self
     }
 
+    /// Sets the version to attach to the resulting workflow or schedule operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Example usage when building a workflow or schedule:
+    /// let builder = WorkflowBuilder::new(client, "my_workflow", "default_queue").version("v1.2.3");
+    /// ```
     pub fn version(mut self, value: impl Into<String>) -> Self {
         self.version = Some(value.into());
         self

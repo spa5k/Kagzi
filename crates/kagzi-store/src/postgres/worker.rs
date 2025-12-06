@@ -30,6 +30,19 @@ struct WorkerRow {
 }
 
 impl WorkerRow {
+    /// Converts this database row representation into the public `Worker` model,
+    /// attaching queue-level and per-workflow-type concurrency limits.
+    ///
+    /// The returned `Worker` preserves all fields from the row and sets
+    /// `queue_concurrency_limit` and `workflow_type_concurrency` to the provided values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // given a `WorkerRow` named `row` loaded from the DB:
+    /// let worker = row.into_model(Some(10), vec![]);
+    /// assert_eq!(worker.queue_concurrency_limit, Some(10));
+    /// ```
     fn into_model(
         self,
         queue_concurrency_limit: Option<i32>,
@@ -71,6 +84,30 @@ impl PgWorkerRepository {
 
 #[async_trait]
 impl WorkerRepository for PgWorkerRepository {
+    /// Registers a new worker and persists optional concurrency configuration.
+    ///
+    /// Inserts a row into `kagzi.workers` for the provided `params`. If `params.queue_concurrency_limit` is set,
+    /// upserts the queue-level concurrency in `kagzi.queue_configs`. For each entry in
+    /// `params.workflow_type_concurrency`, upserts a per-workflow-type concurrency row in
+    /// `kagzi.workflow_type_configs`. All operations are executed in a single transaction.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - Registration parameters containing namespace, task queue, host/pid, version, workflow types,
+    ///   max concurrent workers, labels, and optional queue/workflow-type concurrency limits.
+    ///
+    /// # Returns
+    ///
+    /// The newly created worker's `Uuid`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(repo: &PgWorkerRepository, params: RegisterWorkerParams) -> Result<(), Box<dyn std::error::Error>> {
+    /// let worker_id = repo.register(params).await?;
+    /// println!("created worker: {}", worker_id);
+    /// # Ok(()) }
+    /// ```
     async fn register(&self, params: RegisterWorkerParams) -> Result<Uuid, StoreError> {
         let mut tx = self.pool.begin().await?;
 
@@ -192,6 +229,25 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(())
     }
 
+    /// Fetches a worker by its UUID and attaches the queue-level and per-workflow-type concurrency settings.
+    ///
+    /// The lookup returns the worker row from storage and enriches it with the queue concurrency limit
+    /// and the workflow-type concurrency configuration before converting to the public `Worker` model.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # async fn example(repo: &crate::PgWorkerRepository, id: Uuid) -> anyhow::Result<()> {
+    /// let maybe_worker = repo.find_by_id(id).await?;
+    /// if let Some(worker) = maybe_worker {
+    ///     println!("Found worker: {}", worker.worker_id);
+    /// } else {
+    ///     println!("Worker not found");
+    /// }
+    /// # Ok(()) }
+    /// ```
+    —
     async fn find_by_id(&self, worker_id: Uuid) -> Result<Option<Worker>, StoreError> {
         let row = sqlx::query_as::<_, WorkerRow>(
             r#"
@@ -216,6 +272,19 @@ impl WorkerRepository for PgWorkerRepository {
         }
     }
 
+    /// Check whether a worker is currently ONLINE.
+    ///
+    /// Returns `true` if a worker with the provided `worker_id` exists and its status is `ONLINE`, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(repo: &crate::postgres::PgWorkerRepository, id: uuid::Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    /// let is_online = repo.validate_online(id).await?;
+    /// assert!(matches!(is_online, true | false));
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn validate_online(&self, worker_id: Uuid) -> Result<bool, StoreError> {
         let row = sqlx::query!(
             r#"
@@ -230,6 +299,36 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(row.is_some())
     }
 
+    /// Lists workers that match the provided filters and supports cursor-based pagination.
+    ///
+    /// The `params` filters results by `namespace_id`, optional `task_queue`, optional `filter_status`,
+    /// and an optional `cursor` (exclusive upper bound on `worker_id`). The method fetches up to
+    /// `page_size + 1` rows so callers can detect whether a next page exists.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<Worker>` containing the matched workers. When `page_size` is set, the result may contain
+    /// one additional worker beyond `page_size` to indicate there is a next page.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(repo: &crate::PgWorkerRepository) -> Result<(), crate::StoreError> {
+    /// use crate::store::ListWorkersParams;
+    ///
+    /// let params = ListWorkersParams {
+    ///     namespace_id: "default".to_string(),
+    ///     task_queue: None,
+    ///     filter_status: None,
+    ///     cursor: None,
+    ///     page_size: 50,
+    /// };
+    ///
+    /// let workers = repo.list(params).await?;
+    /// assert!(workers.len() <= 51); // page_size + 1
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn list(&self, params: ListWorkersParams) -> Result<Vec<Worker>, StoreError> {
         let limit = (params.page_size.max(1) + 1) as i64; // fetch one extra to compute next_page_token
 
@@ -266,6 +365,24 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(workers)
     }
 
+    /// Marks workers whose last heartbeat is older than the given threshold as offline.
+    ///
+    /// Updates any worker with status not equal to `OFFLINE` and `last_heartbeat_at` earlier than
+    /// now minus `threshold_secs` seconds, setting `status` to `OFFLINE` and `deregistered_at` to now.
+    ///
+    /// # Returns
+    ///
+    /// The number of rows that were updated.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(repo: &crate::PgWorkerRepository) -> Result<(), crate::StoreError> {
+    /// let changed = repo.mark_stale_offline(60).await?; // mark workers stale for > 60 seconds
+    /// assert!(changed >= 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn mark_stale_offline(&self, threshold_secs: i64) -> Result<u64, StoreError> {
         let result = sqlx::query!(
             r#"
@@ -333,6 +450,24 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(())
     }
 
+    /// Counts workers for a namespace, optionally restricted to a task queue and/or status.
+    ///
+    /// If `task_queue` is `Some`, only workers assigned to that queue are counted.
+    /// If `filter_status` is `Some`, only workers with that status are counted.
+    ///
+    /// # Returns
+    ///
+    /// The number of workers that match the provided criteria (0 if none).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// // `repo` is a `PgWorkerRepository`.
+    /// let n = repo.count("namespace-a", Some("default"), None).await.unwrap();
+    /// assert!(n >= 0);
+    /// # });
+    /// ```
     async fn count(
         &self,
         namespace_id: &str,
@@ -359,6 +494,24 @@ impl WorkerRepository for PgWorkerRepository {
 }
 
 impl PgWorkerRepository {
+    /// Fetches configured concurrency limits for a namespace and task queue.
+    ///
+    /// Returns a tuple with the optional per-queue `max_concurrent` (if configured) as the first element,
+    /// and a `Vec<WorkflowTypeConcurrency>` listing per-workflow-type `max_concurrent` values for that queue.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn example(repo: &PgWorkerRepository) -> Result<(), StoreError> {
+    /// let (queue_limit, type_limits) = repo.fetch_concurrency("namespace", "tasks").await?;
+    /// if let Some(limit) = queue_limit {
+    ///     println!("queue limit: {}", limit);
+    /// }
+    /// for tl in type_limits {
+    ///     println!("workflow_type={} max_concurrent={}", tl.workflow_type, tl.max_concurrent);
+    /// }
+    /// # Ok(()) }
+    /// ```
     async fn fetch_concurrency(
         &self,
         namespace_id: &str,

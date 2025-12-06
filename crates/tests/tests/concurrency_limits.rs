@@ -93,6 +93,20 @@ async fn queue_concurrency_limit_is_enforced() {
     assert_eq!(second.run_id.to_string(), run_b);
 }
 
+/// Starts a workflow run of the given type and returns its run identifier.
+///
+/// The started workflow uses the module's test namespace and task queue, a generated unique
+/// workflow_id, version "1.0", and no input or retry policy.
+///
+/// # Examples
+///
+/// ```no_run
+/// # // `harness` is a prepared `TestHarness` available in the test context.
+/// # async fn example(harness: &TestHarness) {
+/// let run_id = start_workflow(harness, "TypeA").await;
+/// assert!(!run_id.is_empty());
+/// # }
+/// ```
 async fn start_workflow(harness: &TestHarness, workflow_type: &str) -> String {
     harness
         .service

@@ -36,6 +36,65 @@ use tracing::{debug, info, instrument};
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
 
+/// Merge a protobuf `RetryPolicy` with an optional store-side fallback policy.
+///
+/// When `proto` is `Some`, fields with zero/empty values in the proto are treated as
+/// "unspecified" and do not override corresponding fields from `fallback`. If `fallback`
+/// is `None`, missing proto fields are populated with sensible defaults:
+/// - `maximum_attempts` => 5
+/// - `initial_interval_ms` => 1000
+/// - `backoff_coefficient` => 2.0
+/// - `maximum_interval_ms` => 60000
+/// - `non_retryable_errors` => whatever is present in `proto` (empty list remains empty)
+///
+/// # Parameters
+///
+/// - `proto`: optional protobuf `RetryPolicy` carrying requested overrides.
+/// - `fallback`: optional reference to an existing store `RetryPolicy` to use as base.
+///
+/// # Returns
+///
+/// `Some(kagzi_store::RetryPolicy)` containing the merged policy when either input is present, `None` if both are `None`.
+///
+/// # Examples
+///
+/// ```
+/// // Example: proto provides overrides, fallback supplies defaults for unspecified fields.
+/// let proto = kagzi_proto::RetryPolicy {
+///     maximum_attempts: 3,
+///     initial_interval_ms: 0, // treated as unspecified
+///     backoff_coefficient: 1.5,
+///     maximum_interval_ms: 0,
+///     non_retryable_errors: vec!["fatal".to_string()],
+/// };
+/// let fallback = kagzi_store::RetryPolicy {
+///     maximum_attempts: 10,
+///     initial_interval_ms: 2000,
+///     backoff_coefficient: 2.0,
+///     maximum_interval_ms: 120_000,
+///     non_retryable_errors: vec![],
+/// };
+/// let merged = merge_proto_policy(Some(proto), Some(&fallback)).unwrap();
+/// assert_eq!(merged.maximum_attempts, 3); // overridden
+/// assert_eq!(merged.initial_interval_ms, 2000); // taken from fallback
+/// assert_eq!(merged.backoff_coefficient, 1.5); // overridden
+/// assert_eq!(merged.maximum_interval_ms, 120_000); // taken from fallback
+/// assert_eq!(merged.non_retryable_errors, vec!["fatal".to_string()]); // overridden
+///
+/// // Example: proto provided but no fallback — defaults fill unspecified fields.
+/// let proto2 = kagzi_proto::RetryPolicy {
+///     maximum_attempts: 0,
+///     initial_interval_ms: 0,
+///     backoff_coefficient: 0.0,
+///     maximum_interval_ms: 0,
+///     non_retryable_errors: vec![],
+/// };
+/// let merged2 = merge_proto_policy(Some(proto2), None).unwrap();
+/// assert_eq!(merged2.maximum_attempts, 5);
+/// assert_eq!(merged2.initial_interval_ms, 1000);
+/// assert_eq!(merged2.backoff_coefficient, 2.0);
+/// assert_eq!(merged2.maximum_interval_ms, 60000);
+/// ```
 fn merge_proto_policy(
     proto: Option<RetryPolicy>,
     fallback: Option<&kagzi_store::RetryPolicy>,
@@ -87,6 +146,18 @@ fn merge_proto_policy(
     }
 }
 
+/// Maps a store-level workflow status to its corresponding Protobuf `WorkflowStatus`.
+///
+/// # Returns
+///
+/// The `WorkflowStatus` enum value that corresponds to the provided `kagzi_store::WorkflowStatus`.
+///
+/// # Examples
+///
+/// ```
+/// let proto = map_workflow_status(kagzi_store::WorkflowStatus::Running);
+/// assert_eq!(proto, WorkflowStatus::Running);
+/// ```
 fn map_workflow_status(status: kagzi_store::WorkflowStatus) -> WorkflowStatus {
     match status {
         kagzi_store::WorkflowStatus::Pending => WorkflowStatus::Pending,
@@ -98,6 +169,18 @@ fn map_workflow_status(status: kagzi_store::WorkflowStatus) -> WorkflowStatus {
     }
 }
 
+/// Convert a store `StepStatus` into its corresponding Protobuf `StepAttemptStatus`.
+///
+/// # Returns
+///
+/// `StepAttemptStatus` matching the provided store `StepStatus`.
+///
+/// # Examples
+///
+/// ```
+/// let proto = map_step_status(kagzi_store::StepStatus::Running);
+/// assert_eq!(proto, kagzi_proto::kagzi::StepAttemptStatus::Running);
+/// ```
 fn map_step_status(status: kagzi_store::StepStatus) -> StepAttemptStatus {
     match status {
         kagzi_store::StepStatus::Pending => StepAttemptStatus::Pending,
@@ -182,6 +265,18 @@ fn internal(message: impl Into<String>) -> Status {
     )
 }
 
+/// Create an ErrorDetail with the unspecified error code and the given message.
+///
+/// The message defaults to an empty string when `None`.
+///
+/// # Examples
+///
+/// ```
+/// let d = string_error_detail(Some("oops".to_string()));
+/// assert_eq!(d.message, "oops");
+/// let empty = string_error_detail(None);
+/// assert_eq!(empty.message, "");
+/// ```
 fn string_error_detail(message: Option<String>) -> ErrorDetail {
     detail(
         ErrorCode::Unspecified,
@@ -193,6 +288,20 @@ fn string_error_detail(message: Option<String>) -> ErrorDetail {
     )
 }
 
+/// Convert a store-layer `WorkflowRun` into its Protobuf `WorkflowRun` representation.
+///
+/// Serializes the workflow input, optional output, and optional context to JSON bytes,
+/// maps timestamps and status, and embeds any stored error detail. Returns a gRPC `Status`
+/// error if JSON serialization of input/output/context fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Given a `kagzi_store::WorkflowRun` named `w`:
+/// let proto = workflow_to_proto(w)?;
+/// assert_eq!(proto.run_id, w.run_id.to_string());
+/// # Ok::<(), tonic::Status>(())
+/// ```
 fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status> {
     let input_bytes = serde_json::to_vec(&w.input).map_err(|e| {
         tracing::error!("Failed to serialize workflow input: {:?}", e);
@@ -259,6 +368,26 @@ fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status>
     })
 }
 
+/// Convert a store StepRun into its Protobuf StepAttempt representation.
+///
+/// The resulting `StepAttempt` mirrors the source `StepRun`: fields such as IDs,
+/// timestamps, status, kind, serialized JSON output, error details, and namespace
+/// are populated from the store model. Serialization failures for the step
+/// output produce an internal gRPC `Status` error.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Given a `kagzi_store::StepRun` named `step_run`:
+/// let proto = step_to_proto(step_run)?;
+/// assert_eq!(proto.step_id, "example_step");
+/// ```
+///
+/// # Returns
+///
+/// `Ok(StepAttempt)` with fields populated from the provided `StepRun`, or an
+/// `Err(tonic::Status)` with code `Internal` if the step output fails to
+/// serialize.
 fn step_to_proto(s: kagzi_store::StepRun) -> Result<StepAttempt, Status> {
     let kind = if s.step_id.contains("sleep") || s.step_id.contains("wait") {
         StepKind::Sleep
@@ -310,6 +439,18 @@ fn step_to_proto(s: kagzi_store::StepRun) -> Result<StepAttempt, Status> {
     })
 }
 
+/// Converts a store `kagzi_store::Worker` into its Protobuf `Worker` representation.
+///
+/// The returned proto has timestamps converted to `prost_types::Timestamp`, JSON labels
+/// extracted into a string map, and optional fields populated with sensible defaults.
+///
+/// # Examples
+///
+/// ```no_run
+/// // `store_worker` is a kagzi_store::Worker retrieved from the store.
+/// let proto = worker_to_proto(store_worker);
+/// assert_eq!(proto.worker_id, proto.worker_id);
+/// ```
 fn worker_to_proto(w: kagzi_store::Worker) -> Worker {
     let labels = match w.labels {
         serde_json::Value::Object(map) => map
@@ -357,6 +498,18 @@ fn worker_to_proto(w: kagzi_store::Worker) -> Worker {
     }
 }
 
+/// Normalize a numeric limit to an allowed positive range.
+///
+/// Returns `None` when `raw` is less than or equal to zero; otherwise returns `Some` containing
+/// `raw` capped to `max_allowed`.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(normalize_limit(5, 10), Some(5));
+/// assert_eq!(normalize_limit(20, 10), Some(10));
+/// assert_eq!(normalize_limit(0, 10), None);
+/// ```
 fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
     if raw <= 0 {
         None
@@ -365,6 +518,22 @@ fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
     }
 }
 
+/// Maps a kagzi_store::StoreError into an appropriate gRPC `tonic::Status`.
+///
+/// The returned status encodes an equivalent gRPC error code and message for the provided
+/// store-level error, so callers can return it directly from service handlers.
+///
+/// # Returns
+///
+/// A `tonic::Status` representing the corresponding gRPC error for `e`.
+///
+/// # Examples
+///
+/// ```
+/// use tonic::Code;
+/// let status = map_store_error(kagzi_store::StoreError::NotFound { entity: "workflow".into(), id: "r1".into() });
+/// assert_eq!(status.code(), Code::NotFound);
+/// ```
 fn map_store_error(e: kagzi_store::StoreError) -> Status {
     match e {
         kagzi_store::StoreError::NotFound { entity, id } => {
@@ -388,10 +557,32 @@ fn map_store_error(e: kagzi_store::StoreError) -> Status {
     }
 }
 
+/// Clamp a max-catchup value to the allowed range.
+///
+/// Ensures the returned value is at least 1 and at most 10,000.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(clamp_max_catchup(0), 1);
+/// assert_eq!(clamp_max_catchup(500), 500);
+/// assert_eq!(clamp_max_catchup(20_000), 10_000);
+/// ```
 fn clamp_max_catchup(raw: i32) -> i32 {
     raw.clamp(1, 10_000)
 }
 
+/// Parses and validates a cron expression, returning a CronSchedule on success.
+///
+/// Returns an `InvalidArgument` gRPC `Status` if the expression is empty or fails to parse.
+///
+/// # Examples
+///
+/// ```
+/// let ok = parse_cron_expr("*/5 * * * *").unwrap();
+/// let err = parse_cron_expr("   ").unwrap_err();
+/// assert!(err.code() == tonic::Code::InvalidArgument);
+/// ```
 fn parse_cron_expr(expr: &str) -> Result<CronSchedule, Status> {
     if expr.trim().is_empty() {
         return Err(invalid_argument("cron_expr cannot be empty"));
@@ -400,6 +591,24 @@ fn parse_cron_expr(expr: &str) -> Result<CronSchedule, Status> {
     CronSchedule::from_str(expr).map_err(|e| invalid_argument(format!("Invalid cron: {}", e)))
 }
 
+/// Compute the next scheduled UTC time after `now` for a cron expression.
+///
+/// Parses `cron_expr` as a cron schedule and returns the next occurrence strictly after
+/// `now`, converted to UTC.
+///
+/// # Errors
+///
+/// Returns a gRPC `Status` with `INVALID_ARGUMENT` if the cron expression is invalid
+/// or if the schedule has no future occurrences.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::Utc;
+/// // returns the next fire time after now for a cron that runs every minute
+/// let next = next_fire_from_now("* * * * *", Utc::now()).unwrap();
+/// assert!(next > Utc::now());
+/// ```
 fn next_fire_from_now(
     cron_expr: &str,
     now: chrono::DateTime<chrono::Utc>,
@@ -412,6 +621,17 @@ fn next_fire_from_now(
     Ok(next.with_timezone(&chrono::Utc))
 }
 
+/// Convert a `chrono::DateTime<Utc>` into a `prost_types::Timestamp`.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::TimeZone;
+/// let dt = chrono::Utc.ymd(2020, 1, 2).and_hms_nano(03, 04, 05, 6);
+/// let ts = to_proto_timestamp(dt);
+/// assert_eq!(ts.seconds, dt.timestamp());
+/// assert_eq!(ts.nanos as u32, dt.timestamp_subsec_nanos());
+/// ```
 fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
     prost_types::Timestamp {
         seconds: ts.timestamp(),
@@ -419,6 +639,23 @@ fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timesta
     }
 }
 
+/// Convert a store `Schedule` into its Protobuf `Schedule` representation.
+///
+/// This serializes the schedule's `input` and optional `context` to JSON bytes and maps store fields
+/// (IDs, task queue, cron expression, timestamps, flags and limits) into the Protobuf `Schedule`.
+///
+/// # Returns
+///
+/// `Ok(ProtoSchedule)` on success, or an `Err(Status)` with code `Internal` if JSON serialization of
+/// the schedule's `input` or `context` fails.
+///
+/// # Examples
+///
+/// ```
+/// // Given a `schedule` value from the store:
+/// let proto = schedule_to_proto(schedule).unwrap();
+/// assert_eq!(proto.schedule_id, schedule.schedule_id.to_string());
+/// ```
 fn schedule_to_proto(s: kagzi_store::Schedule) -> Result<ProtoSchedule, Status> {
     let input_bytes = serde_json::to_vec(&s.input).map_err(|e| {
         tracing::error!("Failed to serialize schedule input: {:?}", e);
@@ -470,6 +707,44 @@ impl MyWorkflowService {
 
 #[tonic::async_trait]
 impl WorkflowService for MyWorkflowService {
+    /// Register a new worker and persist its metadata in the store.
+    ///
+    /// The request's empty `namespace_id` defaults to `"default"`. `workflow_types` must be non-empty.
+    /// Optional fields (`hostname`, `pid`, `version`) are omitted when empty/zero. `max_concurrent` is
+    /// normalized to at least 1. `labels` are stored as JSON. Queue and per-type concurrency limits
+    /// are normalized and bounded by configured maximums.
+    ///
+    /// # Returns
+    ///
+    /// A `RegisterWorkerResponse` containing the assigned `worker_id` and the heartbeat interval in
+    /// seconds (`heartbeat_interval_secs`).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tonic::Request;
+    /// # // placeholder imports; replace with actual types when running
+    /// # use kagzi_proto::kagzi::RegisterWorkerRequest;
+    /// # use kagzi_service::MyWorkflowService;
+    /// # async fn example(svc: &MyWorkflowService) {
+    /// let req = RegisterWorkerRequest {
+    ///     namespace_id: "".into(), // will default to "default"
+    ///     task_queue: "default-queue".into(),
+    ///     workflow_types: vec!["email_send".into()],
+    ///     hostname: "".into(),
+    ///     pid: 0,
+    ///     version: "".into(),
+    ///     max_concurrent: 4,
+    ///     labels: std::collections::HashMap::new(),
+    ///     queue_concurrency_limit: 0,
+    ///     workflow_type_concurrency: vec![],
+    /// };
+    ///
+    /// let resp = svc.register_worker(Request::new(req)).await.unwrap().into_inner();
+    /// assert!(!resp.worker_id.is_empty());
+    /// assert!(resp.heartbeat_interval_secs > 0);
+    /// # }
+    /// ```
     async fn register_worker(
         &self,
         request: Request<RegisterWorkerRequest>,
@@ -719,12 +994,37 @@ impl WorkflowService for MyWorkflowService {
         }
     }
 
+    /// Starts a new workflow run from the given request.
+    ///
+    /// The request's `input` is parsed as JSON (an empty `input` becomes `null`); `context` is parsed as JSON when present. If `namespace_id` is empty it defaults to `"default"`. If `version` is empty it defaults to `"1"`. When `idempotency_key` is provided and a matching workflow run already exists, the existing run id is returned instead of creating a new run. The request's retry policy is merged with any stored defaults before creation.
+    ///
+    /// # Returns
+    ///
+    /// A `StartWorkflowResponse` containing the created (or existing) workflow run id in `run_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use kagzi_proto::kagzi::StartWorkflowRequest;
+    /// # use tonic::Request;
+    /// # async fn example(svc: &crate::MyWorkflowService) {
+    /// let req = StartWorkflowRequest {
+    ///     workflow_id: "order-123".into(),
+    ///     task_queue: "default".into(),
+    ///     workflow_type: "process_order".into(),
+    ///     input: serde_json::json!(null).to_string().into_bytes(),
+    ///     ..Default::default()
+    /// };
+    /// let resp = svc.start_workflow(Request::new(req)).await.unwrap();
+    /// println!("{}", resp.into_inner().run_id);
+    /// # }
+    /// ```
     #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        workflow_id = %request.get_ref().workflow_id,
-        task_queue = %request.get_ref().task_queue,
-        workflow_type = %request.get_ref().workflow_type
+    correlation_id = %extract_or_generate_correlation_id(&request),
+    trace_id = %extract_or_generate_trace_id(&request),
+    workflow_id = %request.get_ref().workflow_id,
+    task_queue = %request.get_ref().task_queue,
+    workflow_type = %request.get_ref().workflow_type
     ))]
     async fn start_workflow(
         &self,
@@ -814,6 +1114,39 @@ impl WorkflowService for MyWorkflowService {
         }))
     }
 
+    /// Creates a new cron-backed schedule from the RPC request and returns the created schedule.
+    ///
+    /// Validates required fields (`task_queue`, `workflow_type`, `cron_expr`), parses JSON `input` and
+    /// optional `context`, applies defaults for `namespace_id`, `enabled`, `max_catchup`, and `version`,
+    /// computes the schedule's next fire time from the provided cron expression, persists the schedule,
+    /// and returns the created schedule converted to its protobuf representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidArgument` when required fields are missing or `input`/`context` are invalid JSON.
+    /// Store-layer errors are mapped to appropriate gRPC `Status` values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use kagzi_proto::kagzi::CreateScheduleRequest;
+    /// # async fn example() -> Result<(), tonic::Status> {
+    /// let req = CreateScheduleRequest {
+    ///     namespace_id: "".to_string(), // will default to "default"
+    ///     task_queue: "email".to_string(),
+    ///     workflow_type: "send_reminder".to_string(),
+    ///     cron_expr: "0 9 * * *".to_string(),
+    ///     input: serde_json::json!({"user_id": 42}).to_string().into_bytes(),
+    ///     context: vec![],
+    ///     enabled: Some(true),
+    ///     max_catchup: 0,
+    ///     version: "".to_string(),
+    /// };
+    /// // service: &MyWorkflowService
+    /// // let resp = service.create_schedule(tonic::Request::new(req)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn create_schedule(
         &self,
         request: Request<CreateScheduleRequest>,
@@ -900,6 +1233,27 @@ impl WorkflowService for MyWorkflowService {
         }))
     }
 
+    /// Retrieves a schedule by its ID within the specified namespace.
+    ///
+    /// If `namespace_id` is empty, the namespace defaults to `"default"`.
+    /// Returns an `InvalidArgument` error when `schedule_id` is not a valid UUID,
+    /// and a `NotFound` error when no schedule exists with the given ID in the
+    /// resolved namespace.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tonic::Request;
+    /// # use kagzi_proto::kagzi::GetScheduleRequest;
+    /// # async fn _example(svc: &crate::MyWorkflowService) {
+    /// let req = GetScheduleRequest {
+    ///     schedule_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+    ///     namespace_id: "".to_string(), // will use "default"
+    /// };
+    /// let resp = svc.get_schedule(Request::new(req)).await.unwrap();
+    /// let schedule = resp.into_inner().schedule.unwrap();
+    /// # }
+    /// ```
     async fn get_schedule(
         &self,
         request: Request<GetScheduleRequest>,
@@ -931,6 +1285,18 @@ impl WorkflowService for MyWorkflowService {
         }))
     }
 
+    /// Lists schedules in a namespace, optionally filtered by task queue.
+    ///
+    /// If `namespace_id` is empty the namespace defaults to `"default"`. The requested `limit` defaults to 100 when non-positive and is clamped to a maximum of 500. If `task_queue` is empty no task-queue filter is applied. The response contains the matching schedules converted to their protobuf representation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use kagzi_proto::kagzi::ListSchedulesRequest;
+    /// // `svc` is a `MyWorkflowService` instance behind a gRPC server; this shows the request shape.
+    /// let req = ListSchedulesRequest { namespace_id: "".into(), task_queue: "".into(), limit: 0 };
+    /// // let resp = svc.list_schedules(tonic::Request::new(req)).await.unwrap();
+    /// ```
     async fn list_schedules(
         &self,
         request: Request<ListSchedulesRequest>,
@@ -974,6 +1340,50 @@ impl WorkflowService for MyWorkflowService {
         }))
     }
 
+    /// Updates an existing schedule with the provided fields and returns the updated schedule.
+    ///
+    /// The request may modify the task queue, workflow type, cron expression, serialized input/context,
+    /// enabled flag, max catch-up, explicit next fire time, and optimistic `version`. When a new cron
+    /// expression is supplied the method computes the next firing time relative to now; if that time
+    /// equals the schedule's current `next_fire_at`, it advances to the subsequent occurrence to avoid
+    /// duplicating the same instant. JSON `input` and `context` bytes are validated and must be valid JSON.
+    ///
+    /// # Errors
+    ///
+    /// May return a gRPC `Status` with:
+    /// - `InvalidArgument` when IDs, cron, or JSON payloads are malformed or the cron has no future occurrences;
+    /// - `NotFound` if the schedule does not exist;
+    /// - Other mapped store errors (`FailedPrecondition`, `Conflict`, `Unavailable`, `Internal`, etc.) as produced by the backing store.
+    ///
+    /// # Returns
+    ///
+    /// An `UpdateScheduleResponse` containing the updated schedule.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tonic::Request;
+    /// use kagzi_proto::kagzi::UpdateScheduleRequest;
+    ///
+    /// # async fn doc_example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let svc: MyWorkflowService = /* obtain service instance */ unimplemented!();
+    /// let req = UpdateScheduleRequest {
+    ///     schedule_id: "00000000-0000-0000-0000-000000000000".to_string(),
+    ///     namespace_id: "default".to_string(),
+    ///     task_queue: "queue".to_string(),
+    ///     workflow_type: "my_workflow".to_string(),
+    ///     cron_expr: Some("0 0 * * *".to_string()),
+    ///     input: None,
+    ///     context: None,
+    ///     enabled: true,
+    ///     max_catchup: Some(10),
+    ///     next_fire_at: None,
+    ///     version: None,
+    /// };
+    ///
+    /// let _resp = svc.update_schedule(Request::new(req)).await?;
+    /// # Ok(()) }
+    /// ```
     async fn update_schedule(
         &self,
         request: Request<UpdateScheduleRequest>,
@@ -1083,6 +1493,25 @@ impl WorkflowService for MyWorkflowService {
         }))
     }
 
+    /// Deletes a schedule identified by `schedule_id` in the given namespace.
+    ///
+    /// If `namespace_id` is empty the default namespace ("default") is used. Returns an empty response when
+    /// the schedule was successfully deleted.
+    ///
+    /// # Errors
+    ///
+    /// - Returns `InvalidArgument` if `schedule_id` is not a valid UUID.
+    /// - Returns `NotFound` if no schedule with the given ID exists in the namespace.
+    /// - Other store-related failures are returned as appropriate gRPC error statuses.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # // This is illustrative; in real usage `svc` is an initialized service and call is awaited in async context.
+    /// use kagzi_proto::kagzi::DeleteScheduleRequest;
+    /// let req = DeleteScheduleRequest { schedule_id: "00000000-0000-0000-0000-000000000000".into(), namespace_id: "".into() };
+    /// // let resp = svc.delete_schedule(tonic::Request::new(req)).await;
+    /// ```
     async fn delete_schedule(
         &self,
         request: Request<DeleteScheduleRequest>,
@@ -1183,12 +1612,41 @@ impl WorkflowService for MyWorkflowService {
         }
     }
 
+    /// Lists workflow runs in a namespace with optional status filtering and cursor-based pagination.
+    ///
+    /// The RPC accepts an optional `namespace_id` (defaults to `"default"` when empty),
+    /// a `filter_status` to restrict results, a `page_size` clamped to a maximum of 100
+    /// (and a default of 20 when the provided value is zero or negative), and a `page_token`
+    /// that encodes a cursor for pagination.
+    ///
+    /// The `page_token` is expected to be a Base64-encoded string of the form
+    /// `"{timestamp_millis}:{run_id}"`. The response includes `next_page_token` encoded
+    /// with the same format when more results exist, and a `has_more` flag indicating
+    /// whether additional pages are available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use kagzi_proto::kagzi::{ListWorkflowRunsRequest, ListWorkflowRunsResponse};
+    /// # use tonic::Request;
+    /// # async fn example(svc: &super::MyWorkflowService) {
+    /// let req = ListWorkflowRunsRequest {
+    ///     namespace_id: "default".to_string(),
+    ///     filter_status: String::new(),
+    ///     page_size: 25,
+    ///     page_token: String::new(),
+    /// };
+    /// let resp = svc.list_workflow_runs(Request::new(req)).await.unwrap();
+    /// let ListWorkflowRunsResponse { workflow_runs, has_more, .. } = resp.into_inner();
+    /// // use `workflow_runs` and `has_more`
+    /// # }
+    /// ```
     #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        namespace_id = %request.get_ref().namespace_id,
-        page_size = %request.get_ref().page_size,
-        filter_status = %request.get_ref().filter_status
+    correlation_id = %extract_or_generate_correlation_id(&request),
+    trace_id = %extract_or_generate_trace_id(&request),
+    namespace_id = %request.get_ref().namespace_id,
+    page_size = %request.get_ref().page_size,
+    filter_status = %request.get_ref().filter_status
     ))]
     async fn list_workflow_runs(
         &self,
@@ -1291,11 +1749,41 @@ impl WorkflowService for MyWorkflowService {
         Ok(response)
     }
 
+    /// Cancels a workflow run identified by run_id in the specified namespace.
+    ///
+    /// Attempts to transition a workflow run to the cancelled state. The request's
+    /// `namespace_id` defaults to `"default"` when empty.
+    ///
+    /// Errors:
+    /// - `InvalidArgument` if `run_id` is not a valid UUID.
+    /// - `NotFound` if the workflow run does not exist in the namespace.
+    /// - `FailedPrecondition` if the workflow exists but cannot be cancelled due to its current status.
+    /// - Other store-related errors are mapped to appropriate gRPC `Status` codes.
+    ///
+    /// # Returns
+    ///
+    /// `Empty` on success.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use kagzi_proto::kagzi::CancelWorkflowRunRequest;
+    /// use tonic::Request;
+    ///
+    /// // Build a cancel request (defaults namespace to "default" when empty)
+    /// let req = CancelWorkflowRunRequest {
+    ///     run_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+    ///     namespace_id: "".to_string(),
+    /// };
+    ///
+    /// // Call the service method with `Request::new(req)` and handle the `Result`.
+    /// // let resp = service.cancel_workflow_run(Request::new(req)).await;
+    /// ```
     #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        namespace_id = %request.get_ref().namespace_id
+    correlation_id = %extract_or_generate_correlation_id(&request),
+    trace_id = %extract_or_generate_trace_id(&request),
+    run_id = %request.get_ref().run_id,
+    namespace_id = %request.get_ref().namespace_id
     ))]
     async fn cancel_workflow_run(
         &self,
@@ -1370,11 +1858,46 @@ impl WorkflowService for MyWorkflowService {
         }
     }
 
+    /// Claims the next available workflow run for a worker and returns the workflow's input when work is available.
+    ///
+    /// Returns an empty response when no work is available within the configured poll timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns a gRPC `InvalidArgument` error when `worker_id` is not a valid UUID or
+    /// when `supported_workflow_types` is empty.
+    ///
+    /// Returns a gRPC `FailedPrecondition` error when the worker is not registered, is offline,
+    /// is draining, is registered for a different namespace/task_queue, or is not registered for
+    /// any of the requested workflow types.
+    ///
+    /// # Returns
+    ///
+    /// A `PollActivityResponse` containing:
+    /// - `run_id`: the workflow run id, or an empty string if no work was returned.
+    /// - `workflow_type`: the workflow type, or an empty string if no work was returned.
+    /// - `workflow_input`: serialized JSON bytes of the workflow input, or an empty vec if no work was returned.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use kagzi_proto::kagzi::PollActivityRequest;
+    /// # use tonic::Request;
+    /// # async fn example(svc: &MyWorkflowService) {
+    /// let req = PollActivityRequest {
+    ///     worker_id: "00000000-0000-0000-0000-000000000000".to_string(),
+    ///     task_queue: "default".to_string(),
+    ///     supported_workflow_types: vec!["email".to_string()],
+    ///     namespace_id: "".to_string(),
+    /// };
+    /// let resp = svc.poll_activity(Request::new(req)).await;
+    /// # }
+    /// ```
     #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        task_queue = %request.get_ref().task_queue,
-        worker_id = %request.get_ref().worker_id
+    correlation_id = %extract_or_generate_correlation_id(&request),
+    trace_id = %extract_or_generate_trace_id(&request),
+    task_queue = %request.get_ref().task_queue,
+    worker_id = %request.get_ref().worker_id
     ))]
     async fn poll_activity(
         &self,
@@ -1660,11 +2183,31 @@ impl WorkflowService for MyWorkflowService {
         }))
     }
 
+    /// Begins execution of a step for a workflow run and returns whether the caller should execute it along with any cached result.
+    ///
+    /// Returns a `BeginStepResponse` containing `should_execute` and `cached_result` (serialized bytes) for the requested step. The request's `run_id` and `step_id` identify the step; any provided retry policy is merged with the workflow's stored retry policy when determining behavior.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tonic::Request;
+    /// # use kagzi_proto::kagzi::BeginStepRequest;
+    /// # async fn example(svc: &crate::MyWorkflowService) {
+    /// let req = BeginStepRequest {
+    ///     run_id: "00000000-0000-0000-0000-000000000000".into(),
+    ///     step_id: "step-1".into(),
+    ///     input: Vec::new(),
+    ///     retry_policy: None,
+    /// };
+    /// let resp = svc.begin_step(Request::new(req)).await.unwrap().into_inner();
+    /// println!("should_execute={}", resp.should_execute);
+    /// # }
+    /// ```
     #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        step_id = %request.get_ref().step_id
+    correlation_id = %extract_or_generate_correlation_id(&request),
+    trace_id = %extract_or_generate_trace_id(&request),
+    run_id = %request.get_ref().run_id,
+    step_id = %request.get_ref().step_id
     ))]
     async fn begin_step(
         &self,

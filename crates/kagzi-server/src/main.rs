@@ -6,6 +6,22 @@ use std::env;
 use tonic::transport::Server;
 use tracing::info;
 
+/// Starts the Kagzi gRPC server and its background workers.
+///
+/// This function initializes tracing, obtains `DATABASE_URL` from the environment,
+/// creates a Postgres connection pool (max 50 connections), runs database migrations,
+/// constructs the `PgStore`, and spawns background tasks for the watchdog and scheduler.
+/// It then binds to 0.0.0.0:50051, registers gRPC services (including reflection), and serves requests.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Ensure DATABASE_URL is set before running the server.
+/// std::env::set_var("DATABASE_URL", "postgres://user:pass@localhost/kagzi");
+/// // Start the server (blocks until the server exits).
+/// // `main` is the crate's async entry point annotated with `#[tokio::main]`.
+/// crate::main().await.unwrap();
+/// ```
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_utils::init_tracing("kagzi-server")?;

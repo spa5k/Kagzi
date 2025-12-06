@@ -13,6 +13,31 @@ struct SchedulerConfig {
 }
 
 impl SchedulerConfig {
+    /// Constructs a SchedulerConfig from environment variables, using sensible defaults when variables are absent or invalid.
+    ///
+    /// Reads these environment variables:
+    /// - `KAGZI_SCHEDULER_INTERVAL_SECS`: positive integer seconds for the scheduler tick interval (default: 5).
+    /// - `KAGZI_SCHEDULER_BATCH_SIZE`: positive integer batch size for fetching due schedules (default: 100).
+    /// - `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK`: positive integer cap on workflows created per tick (default: 1000).
+    ///
+    /// # Returns
+    ///
+    /// A `SchedulerConfig` populated from the environment or with default values when parsing fails or values are non-positive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// std::env::set_var("KAGZI_SCHEDULER_INTERVAL_SECS", "2");
+    /// std::env::set_var("KAGZI_SCHEDULER_BATCH_SIZE", "50");
+    /// std::env::set_var("KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK", "200");
+    ///
+    /// let cfg = SchedulerConfig::from_env();
+    /// assert_eq!(cfg.interval, Duration::from_secs(2));
+    /// assert_eq!(cfg.batch_size, 50);
+    /// assert_eq!(cfg.max_workflows_per_tick, 200);
+    /// ```
     fn from_env() -> Self {
         let interval = std::env::var("KAGZI_SCHEDULER_INTERVAL_SECS")
             .ok()
@@ -41,16 +66,62 @@ impl SchedulerConfig {
     }
 }
 
+/// Parse a cron expression into a CronSchedule.
+///
+/// Returns `Some(CronSchedule)` when `expr` is a valid cron expression, `None` when parsing fails.
+///
+/// # Examples
+///
+/// ```
+/// let sched = parse_cron("0 */2 * * * *");
+/// assert!(sched.is_some());
+/// ```
 fn parse_cron(expr: &str) -> Option<CronSchedule> {
     CronSchedule::from_str(expr).ok()
 }
 
+/// Compute the next scheduled fire time after a given instant for a cron expression.
+///
+/// If `expr` parses as a cron schedule and has an occurrence strictly after `after`,
+/// returns that occurrence converted to UTC; otherwise returns `None`.
+///
+/// # Parameters
+///
+/// - `expr`: a cron expression string.
+/// - `after`: the instant after which to find the next occurrence (UTC).
+///
+/// # Examples
+///
+/// ```
+/// use chrono::{DateTime, Utc, TimeZone};
+/// let expr = "0 0 0 * * *"; // daily at midnight
+/// let after: DateTime<Utc> = Utc.ymd(2025, 12, 5).and_hms(0, 0, 0);
+/// let next = compute_next_tick(expr, after).unwrap();
+/// assert_eq!(next, Utc.ymd(2025, 12, 6).and_hms(0, 0, 0));
+/// ```
 fn compute_next_tick(expr: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
     parse_cron(expr)
         .and_then(|sched| sched.after(&after).next())
         .map(|dt| dt.with_timezone(&Utc))
 }
 
+/// Computes at most `max_count` scheduled firing times for `cron_expr` that occur after `from` and not later than `to`.
+///
+/// If `cron_expr` is invalid, an empty vector is returned. The function returns occurrences that are strictly after `from` and less than or equal to `to`, in ascending order, up to `max_count`.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::{TimeZone, Utc};
+/// let cron = "0 */2 * * * *"; // every 2 minutes at second 0
+/// let from = Utc.ymd(2025, 12, 6).and_hms(12, 0, 0);
+/// let to = Utc.ymd(2025, 12, 6).and_hms(12, 10, 0);
+/// let fires = compute_missed_fires(cron, from, to, 3);
+/// assert_eq!(fires.len(), 3);
+/// assert_eq!(fires[0].minute(), 2);
+/// assert_eq!(fires[1].minute(), 4);
+/// assert_eq!(fires[2].minute(), 6);
+/// ```
 fn compute_missed_fires(
     cron_expr: &str,
     from: DateTime<Utc>,
@@ -72,6 +143,30 @@ fn compute_missed_fires(
     fires
 }
 
+/// Attempts to create a workflow run for the given schedule at the specified firing time, ensuring idempotency.
+///
+/// The function uses an idempotency key derived from the schedule's ID and `fire_at` to avoid creating duplicate runs:
+/// if a workflow with the same idempotency key already exists in the schedule's namespace, the call is skipped.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use chrono::Utc;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let workflows = /* impl of WorkflowRepository */ unimplemented!();
+/// let schedule = /* Schedule instance */ unimplemented!();
+/// let fire_at = Utc::now();
+/// let created = fire_workflow(&workflows, &schedule, fire_at).await?;
+/// match created {
+///     Some(run_id) => println!("Created workflow run {}", run_id),
+///     None => println!("Skipped: idempotency hit"),
+/// }
+/// # Ok(()) }
+/// ```
+—
+/// # Returns
+///
+/// `Some(run_id)` if a new workflow run was created, `None` if a run with the same idempotency key already exists.
 async fn fire_workflow(
     workflows: &impl WorkflowRepository,
     schedule: &Schedule,
@@ -110,6 +205,21 @@ async fn fire_workflow(
     Ok(Some(run_id))
 }
 
+/// Starts the scheduler loop that periodically scans due schedules and fires workflows.
+///
+/// This function runs indefinitely. On each tick it queries `store` for schedules due to run, computes any missed cron firings within configured limits, attempts idempotent workflow creation for each firing, records successful firings, and advances schedules to their next occurrence.
+///
+/// # Parameters
+/// - `store`: Postgres-backed repository implementing schedule and workflow operations used by the scheduler.
+///
+/// # Examples
+///
+/// ```
+/// // Spawn the scheduler on the tokio runtime.
+/// tokio::spawn(async move {
+///     run(store).await;
+/// });
+/// ```
 pub async fn run(store: PgStore) {
     let config = SchedulerConfig::from_env();
     let mut ticker = tokio::time::interval(config.interval);

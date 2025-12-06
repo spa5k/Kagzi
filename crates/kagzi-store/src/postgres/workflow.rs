@@ -79,10 +79,41 @@ pub struct PgWorkflowRepository {
 }
 
 impl PgWorkflowRepository {
+    /// Creates a new PostgreSQL-backed workflow repository using the provided connection pool.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let pool: sqlx::PgPool = /* obtain a PgPool */;
+    /// let repo = PgWorkflowRepository::new(pool);
+    /// ```
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
+    /// Resolve the maximum concurrent workflows allowed for a namespace and task queue.
+    ///
+    /// If a per-queue configuration exists, that value is used; otherwise the global
+    /// DEFAULT_QUEUE_CONCURRENCY_LIMIT is used. The returned value is never greater
+    /// than DEFAULT_QUEUE_CONCURRENCY_LIMIT.
+    ///
+    /// # Returns
+    ///
+    /// The concurrency limit for the specified namespace and task queue, capped at
+    /// `DEFAULT_QUEUE_CONCURRENCY_LIMIT`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use kagzi_store::PgWorkflowRepository;
+    /// # use sqlx::PgPool;
+    /// # async fn doc_example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let pool = PgPool::connect("postgres://user:pass@localhost/db").await?;
+    /// let repo = PgWorkflowRepository::new(pool);
+    /// let limit = repo.queue_limit("my-namespace", "default").await?;
+    /// assert!(limit > 0);
+    /// # Ok(()) }
+    /// ```
     async fn queue_limit(&self, namespace_id: &str, task_queue: &str) -> Result<i32, StoreError> {
         let limit = sqlx::query_scalar!(
             r#"
@@ -99,6 +130,31 @@ impl PgWorkflowRepository {
         Ok(limit.min(DEFAULT_QUEUE_CONCURRENCY_LIMIT))
     }
 
+    /// Fetches configured per-workflow-type concurrency limits for the given namespace and task queue.
+    ///
+    /// Returns a map where each key is a workflow type and the value is that type's `max_concurrent` limit
+    /// as stored in `kagzi.workflow_type_configs`. Entries with a NULL `max_concurrent` are omitted.
+    ///
+    /// # Parameters
+    ///
+    /// - `namespace_id`: namespace identifier to scope the lookup.
+    /// - `task_queue`: task queue name to scope the lookup.
+    ///
+    /// # Returns
+    ///
+    /// A `HashMap<String, i32>` mapping workflow type to its configured maximum concurrent runs.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(repo: &crate::PgWorkflowRepository) -> Result<(), crate::StoreError> {
+    /// let limits = repo.workflow_type_limits("my-namespace", "default").await?;
+    /// if let Some(&max) = limits.get("email_send") {
+    ///     println!("email_send max concurrent: {}", max);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     #[allow(dead_code)]
     async fn workflow_type_limits(
         &self,
@@ -172,6 +228,25 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(row.run_id)
     }
 
+    /// Fetches a workflow run by its ID within the given namespace.
+    ///
+    /// Returns `Ok(Some(workflow))` when a matching workflow run is found, `Ok(None)` when no matching run exists, or `Err(StoreError)` if the database query fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # async fn example(repo: &impl crate::store::WorkflowRepository) {
+    /// let run_id = Uuid::new_v4();
+    /// let namespace = "default";
+    /// let result = repo.find_by_id(run_id, namespace).await;
+    /// match result {
+    ///     Ok(Some(workflow)) => println!("Found workflow: {:?}", workflow.run_id),
+    ///     Ok(None) => println!("No workflow found"),
+    ///     Err(e) => eprintln!("Query failed: {:?}", e),
+    /// }
+    /// # }
+    /// ```
     async fn find_by_id(
         &self,
         run_id: Uuid,
@@ -196,6 +271,27 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(row.map(|r| r.into_model()))
     }
 
+    /// Fetches the retry policy for a workflow run from the database.
+    ///
+    /// Retrieves the `retry_policy` JSON stored for the given `run_id` and deserializes it into a
+    /// `RetryPolicy`. If no row exists, the column is NULL, or deserialization fails, `None` is
+    /// returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use uuid::Uuid;
+    /// # async fn doc_example(repo: &crate::pg::PgWorkflowRepository, run_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+    /// let policy = repo.get_retry_policy(run_id).await?;
+    /// // `policy` is `Some(RetryPolicy)` when a valid policy is stored, otherwise `None`.
+    /// assert!(policy.is_none() || policy.is_some());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Some(RetryPolicy)` when a valid retry policy JSON is present for the run, `None` otherwise.
     async fn get_retry_policy(&self, run_id: Uuid) -> Result<Option<RetryPolicy>, StoreError> {
         let row = sqlx::query!(
             r#"
@@ -213,6 +309,24 @@ impl WorkflowRepository for PgWorkflowRepository {
             .and_then(|v| serde_json::from_value::<RetryPolicy>(v).ok()))
     }
 
+    /// Finds a workflow run by its idempotency key within the given namespace.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # async fn example(repo: &crate::PgWorkflowRepository) -> Result<(), Box<dyn std::error::Error>> {
+    /// let result = repo.find_by_idempotency_key("namespace-a", "idem-key-123").await?;
+    /// if let Some(run_id) = result {
+    ///     println!("Found run: {}", run_id);
+    /// } else {
+    ///     println!("No run found for that idempotency key");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// @returns `Some(run_id)` if a matching workflow exists, `None` otherwise.
     async fn find_by_idempotency_key(
         &self,
         namespace_id: &str,
@@ -471,6 +585,27 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(())
     }
 
+    /// Attempts to claim the next eligible workflow run from the given task queue for the specified worker.
+    ///
+    /// Respects per-queue and per-workflow-type concurrency limits, sets the run's status to `RUNNING`,
+    /// assigns the lock to `worker_id`, extends the lock timeout, and returns the claimed workflow payload when successful.
+    ///
+    /// # Returns
+    ///
+    /// `Some(ClaimedWorkflow)` with the run's ID, type, input payload, and lock owner if a run was claimed, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # async fn example(repo: &crate::PgWorkflowRepository) -> Result<(), Box<dyn std::error::Error>> {
+    /// let claimed = repo.claim_next("default", "my-namespace", "worker-1").await?;
+    /// if let Some(c) = claimed {
+    ///     println!("claimed run {}", c.run_id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn claim_next(
         &self,
         task_queue: &str,
@@ -543,6 +678,30 @@ impl WorkflowRepository for PgWorkflowRepository {
         }))
     }
 
+    /// Claims the next eligible workflow from a task queue that matches any of the provided workflow types and marks it as `RUNNING`.
+    ///
+    /// The selected workflow will be locked to `worker_id`, its `locked_until` extended by 30 seconds, `started_at` set if not already, and `attempts` incremented. Eligibility respects per-queue and per-workflow-type concurrency limits and wakes/sleep conditions.
+    ///
+    /// # Parameters
+    ///
+    /// * `supported_types` — slice of workflow type names used to filter which workflows are eligible to be claimed.
+    ///
+    /// # Returns
+    ///
+    /// `Some(ClaimedWorkflow)` with the claimed run's id, type, input, and lock owner when a workflow was successfully claimed, `None` if no eligible workflow was found.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(repo: &impl kagzi_store::WorkflowRepository) -> Result<(), kagzi_store::StoreError> {
+    /// let supported = vec!["email".to_string(), "pdf".to_string()];
+    /// let claimed = repo.claim_next_filtered("default", "acct-1", "worker-42", &supported).await?;
+    /// if let Some(claim) = claimed {
+    ///     println!("Claimed run: {}", claim.run_id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn claim_next_filtered(
         &self,
         task_queue: &str,
@@ -618,6 +777,29 @@ impl WorkflowRepository for PgWorkflowRepository {
         }))
     }
 
+    /// Attempts to claim up to `limit` workflows from the given task queue for the namespace.
+    ///
+    /// Repeatedly calls `claim_next` with unique batch worker IDs until `limit` items are claimed or no more eligible workflows are available.
+    ///
+    /// # Parameters
+    ///
+    /// - `task_queue`: the task queue to claim workflows from.
+    /// - `namespace_id`: namespace to scope the claim to.
+    /// - `limit`: maximum number of workflows to claim.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<ClaimedWorkflow>` containing the claimed workflows, with length at most `limit`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # async fn run_example(repo: &impl crate::store::WorkflowRepository, tq: &str, ns: &str) -> Result<(), crate::store::StoreError> {
+    /// let items = repo.claim_batch(tq, ns, 5).await?;
+    /// assert!(items.len() <= 5);
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn claim_batch(
         &self,
         task_queue: &str,
@@ -643,6 +825,26 @@ impl WorkflowRepository for PgWorkflowRepository {
         Ok(claimed)
     }
 
+    /// Transfers the lock for a running workflow from one worker to another.
+    ///
+    /// Attempts to set `locked_by` to `to_worker_id` and extend `locked_until` by 30 seconds
+    /// for the given `run_id` when the lock is currently held by `from_worker_id` and the
+    /// workflow's status is `RUNNING`.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the lock was transferred, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use uuid::Uuid;
+    /// # async fn example(repo: &crate::PgWorkflowRepository) -> Result<(), crate::StoreError> {
+    /// let run_id = Uuid::new_v4();
+    /// let transferred = repo.transfer_lock(run_id, "worker-a", "worker-b").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn transfer_lock(
         &self,
         run_id: Uuid,
