@@ -94,12 +94,6 @@ impl<'q> FilterBuilder<'q> {
         self
     }
 
-    /// Push raw SQL (use sparingly).
-    pub fn push_raw(&mut self, sql: &str) -> &mut Self {
-        self.builder.push(sql);
-        self
-    }
-
     /// Access the inner builder for final ordering/limits.
     pub fn builder(&mut self) -> &mut QueryBuilder<'q, Postgres> {
         &mut self.builder
