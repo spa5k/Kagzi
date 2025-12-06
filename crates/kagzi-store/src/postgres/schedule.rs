@@ -94,6 +94,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(schedule_id)
     }
 
+    #[instrument(skip(self))]
     async fn find_by_id(
         &self,
         id: Uuid,
@@ -116,6 +117,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(row.map(|r| r.into_model()))
     }
 
+    #[instrument(skip(self, params))]
     async fn list(&self, params: ListSchedulesParams) -> Result<Vec<Schedule>, StoreError> {
         let mut filters = FilterBuilder::select(columns::schedule::BASE, "kagzi.schedules");
         filters.and_eq("namespace_id", &params.namespace_id);
@@ -130,6 +132,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(rows.into_iter().map(|r| r.into_model()).collect())
     }
 
+    #[instrument(skip(self, params))]
     async fn update(
         &self,
         id: Uuid,
@@ -171,6 +174,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn delete(&self, id: Uuid, namespace_id: &str) -> Result<bool, StoreError> {
         let result = sqlx::query(
             r#"
@@ -186,6 +190,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    #[instrument(skip(self))]
     async fn due_schedules(
         &self,
         now: DateTime<Utc>,
@@ -215,6 +220,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(rows.into_iter().map(|r| r.into_model()).collect())
     }
 
+    #[instrument(skip(self))]
     async fn advance_schedule(
         &self,
         id: Uuid,
@@ -239,6 +245,7 @@ impl ScheduleRepository for PgScheduleRepository {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn record_firing(
         &self,
         schedule_id: Uuid,

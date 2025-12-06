@@ -80,7 +80,7 @@ impl PgStepRepository {
             INSERT INTO kagzi.step_runs (run_id, step_id, status, output, error, finished_at, is_latest, attempt_number, namespace_id)
             VALUES ($1, $2, $3, $4, $5, NOW(), true, 
                     COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'))
+                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1))
             "#,
             run_id,
             step_id,
@@ -125,22 +125,19 @@ impl PgStepRepository {
 impl StepRepository for PgStepRepository {
     #[instrument(skip(self))]
     async fn find_by_id(&self, attempt_id: Uuid) -> Result<Option<StepRun>, StoreError> {
-        let row = sqlx::query_as::<_, StepRunRow>(
-            r#"
-            SELECT attempt_id, run_id, step_id, namespace_id, attempt_number, status,
-                   input, output, error, child_workflow_run_id,
-                   created_at, started_at, finished_at, retry_at, retry_policy
-            FROM kagzi.step_runs
-            WHERE attempt_id = $1
-            "#,
-        )
-        .bind(attempt_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let query = format!(
+            "SELECT {} FROM kagzi.step_runs WHERE attempt_id = $1",
+            columns::step::BASE
+        );
+        let row = sqlx::query_as::<_, StepRunRow>(&query)
+            .bind(attempt_id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row.map(|r| r.into_model()))
     }
 
+    #[instrument(skip(self))]
     async fn list_by_workflow(
         &self,
         run_id: Uuid,
@@ -164,6 +161,7 @@ impl StepRepository for PgStepRepository {
         Ok(rows.into_iter().map(|r| r.into_model()).collect())
     }
 
+    #[instrument(skip(self, params))]
     async fn begin(&self, params: BeginStepParams) -> Result<BeginStepResult, StoreError> {
         let mut tx = self.pool.begin().await?;
 
@@ -213,7 +211,7 @@ impl StepRepository for PgStepRepository {
             INSERT INTO kagzi.step_runs (run_id, step_id, status, input, started_at, is_latest, attempt_number, namespace_id, retry_policy)
             VALUES ($1, $2, 'RUNNING', $3, NOW(), true, 
                     COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    COALESCE((SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1), 'default'),
+                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1),
                     $4)
             "#,
             params.run_id,
@@ -232,6 +230,7 @@ impl StepRepository for PgStepRepository {
         })
     }
 
+    #[instrument(skip(self, output))]
     async fn complete(
         &self,
         run_id: Uuid,
@@ -271,6 +270,7 @@ impl StepRepository for PgStepRepository {
         Ok(())
     }
 
+    #[instrument(skip(self, params))]
     async fn fail(&self, params: FailStepParams) -> Result<FailStepResult, StoreError> {
         let retry_info = self.get_retry_info(params.run_id, &params.step_id).await?;
 
@@ -353,6 +353,7 @@ impl StepRepository for PgStepRepository {
         })
     }
 
+    #[instrument(skip(self))]
     async fn process_pending_retries(&self) -> Result<Vec<RetryTriggered>, StoreError> {
         let rows = sqlx::query!(
             r#"
