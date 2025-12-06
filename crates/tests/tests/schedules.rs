@@ -112,7 +112,8 @@ async fn update_schedule_cron_recomputes_next_fire() {
         .schedule
         .expect("schedule should be present");
 
-    assert_eq!(updated.cron_expr, "*/1 * * * *");
+    // Server normalizes to full 6-field cron (seconds included).
+    assert_eq!(updated.cron_expr, "0 */1 * * * *");
     assert!(updated.next_fire_at.is_some());
     assert_ne!(
         updated.next_fire_at.unwrap().seconds,

@@ -989,18 +989,46 @@ impl WorkflowService for MyWorkflowService {
             req.namespace_id
         };
 
-        let cron_expr = req.cron_expr.clone();
-        if let Some(ref expr) = cron_expr {
-            parse_cron_expr(expr)?;
-        }
+        let current_schedule = self
+            .store
+            .schedules()
+            .find_by_id(schedule_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found("Schedule not found", "schedule", req.schedule_id.clone()))?;
 
-        let next_fire_at = if let Some(ref expr) = cron_expr {
-            Some(next_fire_from_now(expr, chrono::Utc::now())?)
+        let cron_expr = req.cron_expr.clone();
+        let parsed_cron = if let Some(ref expr) = cron_expr {
+            Some(parse_cron_expr(expr)?)
+        } else {
+            None
+        };
+
+        let mut next_fire_at = if let Some(ref cron) = parsed_cron {
+            Some(
+                cron.after(&chrono::Utc::now())
+                    .next()
+                    .ok_or_else(|| invalid_argument("Cron expression has no future occurrences"))?
+                    .with_timezone(&chrono::Utc),
+            )
         } else if let Some(ts) = req.next_fire_at {
             chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
         } else {
             None
         };
+
+        if let (Some(ref cron), Some(existing_next)) =
+            (parsed_cron.as_ref(), Some(current_schedule.next_fire_at))
+        {
+            if let Some(ref new_next) = next_fire_at {
+                if *new_next == existing_next {
+                    next_fire_at = cron
+                        .after(&existing_next)
+                        .next()
+                        .map(|dt| dt.with_timezone(&chrono::Utc));
+                }
+            }
+        }
 
         let input_json = match req.input {
             Some(bytes) => Some(

@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn missed_fires_respects_bounds_and_limit() {
-        let cron = "*/2 * * * *"; // every 2 minutes
+        let cron = "0 */2 * * * *"; // every 2 minutes at second 0
         let from = Utc
             .with_ymd_and_hms(2025, 12, 6, 12, 0, 0)
             .single()
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn compute_next_tick_advances_after_last_fire() {
-        let cron = "0 0 * * *"; // daily
+        let cron = "0 0 0 * * *"; // daily at midnight
         let last = Utc.with_ymd_and_hms(2025, 12, 5, 0, 0, 0).single().unwrap();
         let next = compute_next_tick(cron, last).unwrap();
         assert_eq!(next.date_naive(), last.date_naive() + Days::new(1));

@@ -1,4 +1,4 @@
-//! Comprehensive example to test all major features of the Kagzi server.
+//! Comprehensive example to exercise all major features of the Kagzi server.
 //!
 //! This example demonstrates and validates:
 //! - Workflow lifecycle (start → poll → execute → complete/fail)
@@ -14,7 +14,7 @@
 //! - Concurrent workflow execution
 //!
 //! Run with:
-//!   cargo run --example comprehensive_test
+//!   cargo run --example comprehensive_demo
 //!
 //! Requirements:
 //!   - Kagzi server running on localhost:50051

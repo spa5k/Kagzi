@@ -1,4 +1,4 @@
-//! Comprehensive example to test all observability fields in workflow and step runs.
+//! Comprehensive example to exercise observability fields in workflow and step runs.
 //!
 //! This example demonstrates:
 //! - Workflow `version` field (defaults to "1")
@@ -9,7 +9,7 @@
 //! - Step `finished_at` timestamp
 //!
 //! Run with:
-//!   cargo run --example observability_test
+//!   cargo run --example observability_demo
 //!
 //! Then check the database:
 //!   psql -d kagzi -c "SELECT run_id, status, version, attempts, started_at, finished_at FROM kagzi.workflow_runs ORDER BY created_at DESC LIMIT 5;"
