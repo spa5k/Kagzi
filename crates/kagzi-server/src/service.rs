@@ -1004,31 +1004,29 @@ impl WorkflowService for MyWorkflowService {
             None
         };
 
-        let mut next_fire_at = if let Some(ref cron) = parsed_cron {
-            Some(
-                cron.after(&chrono::Utc::now())
+        let next_fire_at = if let Some(cron) = parsed_cron.as_ref() {
+            // Cron was updated; compute next fire from now.
+            let candidate = cron
+                .after(&chrono::Utc::now())
+                .next()
+                .ok_or_else(|| invalid_argument("Cron expression has no future occurrences"))?
+                .with_timezone(&chrono::Utc);
+
+            // If the computed time equals the existing next_fire_at (e.g., same cron),
+            // advance to the subsequent occurrence to avoid scheduling the same instant.
+            if candidate == current_schedule.next_fire_at {
+                cron.after(&candidate)
                     .next()
-                    .ok_or_else(|| invalid_argument("Cron expression has no future occurrences"))?
-                    .with_timezone(&chrono::Utc),
-            )
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+            } else {
+                Some(candidate)
+            }
         } else if let Some(ts) = req.next_fire_at {
+            // Explicit next_fire_at override without cron change.
             chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
         } else {
             None
         };
-
-        if let (Some(ref cron), Some(existing_next)) =
-            (parsed_cron.as_ref(), Some(current_schedule.next_fire_at))
-        {
-            if let Some(ref new_next) = next_fire_at {
-                if *new_next == existing_next {
-                    next_fire_at = cron
-                        .after(&existing_next)
-                        .next()
-                        .map(|dt| dt.with_timezone(&chrono::Utc));
-                }
-            }
-        }
 
         let input_json = match req.input {
             Some(bytes) => Some(

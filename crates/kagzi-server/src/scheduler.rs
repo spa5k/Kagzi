@@ -159,7 +159,11 @@ pub async fn run(store: PgStore) {
             }
 
             let remaining_budget = (config.max_workflows_per_tick - created_this_tick) as usize;
-            let from = schedule.last_fired_at.unwrap_or(schedule.next_fire_at);
+            // Use `last_fired_at` if available; otherwise, shift `next_fire_at` back by 1ns
+            // so that `schedule.after(&from)` includes the scheduled fire time itself.
+            let from = schedule
+                .last_fired_at
+                .unwrap_or_else(|| schedule.next_fire_at - chrono::Duration::nanoseconds(1));
             let max_count = remaining_budget.min(schedule.max_catchup.max(1) as usize);
             let fires = compute_missed_fires(&schedule.cron_expr, from, now, max_count);
 
