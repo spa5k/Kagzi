@@ -1,4 +1,3 @@
-mod payload;
 mod schedule;
 mod step;
 mod worker;
@@ -6,7 +5,6 @@ mod workflow;
 
 use sqlx::PgPool;
 
-pub use payload::PgPayloadRepository;
 pub use schedule::PgScheduleRepository;
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;
@@ -28,10 +26,6 @@ impl PgStore {
 
     pub fn steps(&self) -> PgStepRepository {
         PgStepRepository::new(self.pool.clone())
-    }
-
-    pub fn payloads(&self) -> PgPayloadRepository {
-        PgPayloadRepository::new(self.pool.clone())
     }
 
     pub fn workers(&self) -> PgWorkerRepository {

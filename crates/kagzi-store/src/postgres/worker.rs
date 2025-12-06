@@ -218,20 +218,6 @@ impl WorkerRepository for PgWorkerRepository {
         }
     }
 
-    async fn validate_online(&self, worker_id: Uuid) -> Result<bool, StoreError> {
-        let row = sqlx::query!(
-            r#"
-            SELECT 1 AS one FROM kagzi.workers
-            WHERE worker_id = $1 AND status = 'ONLINE'
-            "#,
-            worker_id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.is_some())
-    }
-
     async fn list(&self, params: ListWorkersParams) -> Result<Vec<Worker>, StoreError> {
         let limit = (params.page_size.max(1) + 1) as i64; // fetch one extra to compute next_page_token
 
@@ -300,22 +286,6 @@ impl WorkerRepository for PgWorkerRepository {
         .await?;
 
         Ok(result.rows_affected())
-    }
-
-    async fn find_stale_worker_ids(&self, threshold_secs: i64) -> Result<Vec<Uuid>, StoreError> {
-        let rows = sqlx::query!(
-            r#"
-            SELECT worker_id
-            FROM kagzi.workers
-            WHERE status != 'OFFLINE'
-              AND last_heartbeat_at < NOW() - ($1 * INTERVAL '1 second')
-            "#,
-            threshold_secs as f64
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(|r| r.worker_id).collect())
     }
 
     async fn count_online(&self, namespace_id: &str, task_queue: &str) -> Result<i64, StoreError> {
