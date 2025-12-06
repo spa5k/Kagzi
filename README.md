@@ -181,6 +181,18 @@ let workflows = client.list_workflow_runs("namespace").await?;
 
 ```rust
 let mut worker = Worker::builder("http://localhost:50051", "task_queue")
+    // Optional: cap total concurrent RUNNING workflows for this queue
+    .queue_concurrency_limit(32)
+    // Optional: cap a specific workflow type inside the queue
+    .workflow_type_concurrency("payment_capture", 16)
+    // Optional: default step-level retry if a step does not provide one
+    .default_step_retry(kagzi::RetryPolicy {
+        maximum_attempts: Some(3),
+        initial_interval: Some(std::time::Duration::from_millis(500)),
+        backoff_coefficient: Some(2.0),
+        maximum_interval: Some(std::time::Duration::from_secs(10)),
+        non_retryable_errors: vec![],
+    })
     .build()
     .await?;
 
@@ -200,6 +212,23 @@ async fn workflow_function(mut ctx: WorkflowContext, input: Input) -> anyhow::Re
     
     // Run a step with explicit input tracking (for observability)
     let result2 = ctx.run_with_input("step_name", &input, my_async_function(input.value)).await?;
+
+    // Run a step with an explicit retry policy; unspecified fields inherit
+    // from workflow-level retry (if set) or the worker's default_step_retry.
+    let result_with_retry = ctx
+        .run_with_input_with_retry(
+            "step_with_retry",
+            &input,
+            Some(kagzi::RetryPolicy {
+                maximum_attempts: Some(5),
+                initial_interval: None,
+                backoff_coefficient: None,
+                maximum_interval: None,
+                non_retryable_errors: vec![],
+            }),
+            my_async_function(input.value),
+        )
+        .await?;
     
     // Durable sleep - survives server restarts
     ctx.sleep(Duration::from_secs(10)).await?;

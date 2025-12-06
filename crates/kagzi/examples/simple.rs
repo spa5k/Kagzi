@@ -1,4 +1,4 @@
-use kagzi::{Client, KagziError, Worker, WorkflowContext};
+use kagzi::{Client, KagziError, RetryPolicy, Worker, WorkflowContext};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::info;
@@ -52,6 +52,15 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let mut worker = Worker::builder("http://localhost:50051", "default")
+        .queue_concurrency_limit(4)
+        .workflow_type_concurrency("my_workflow", 2)
+        .default_step_retry(RetryPolicy {
+            maximum_attempts: Some(3),
+            initial_interval: Some(Duration::from_millis(500)),
+            backoff_coefficient: Some(2.0),
+            maximum_interval: Some(Duration::from_secs(10)),
+            non_retryable_errors: vec![],
+        })
         .build()
         .await?;
     worker.register("my_workflow", my_workflow);

@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedWorkflows,
-    WorkflowExistsResult, WorkflowRun,
+    RetryPolicy, WorkflowExistsResult, WorkflowRun,
 };
 
 #[async_trait]
@@ -88,4 +88,6 @@ pub trait WorkflowRepository: Send + Sync {
     async fn schedule_retry(&self, run_id: Uuid, delay_ms: u64) -> Result<(), StoreError>;
 
     async fn mark_exhausted(&self, run_id: Uuid, error: &str) -> Result<(), StoreError>;
+
+    async fn get_retry_policy(&self, run_id: Uuid) -> Result<Option<RetryPolicy>, StoreError>;
 }

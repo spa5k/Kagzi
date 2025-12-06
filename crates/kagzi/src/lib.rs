@@ -9,6 +9,7 @@ use kagzi_proto::kagzi::{
     BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, DeregisterWorkerRequest,
     ErrorCode, ErrorDetail, FailStepRequest, FailWorkflowRequest, PollActivityRequest,
     RegisterWorkerRequest, ScheduleSleepRequest, StartWorkflowRequest, WorkerHeartbeatRequest,
+    WorkflowTypeConcurrency as ProtoWorkflowTypeConcurrency,
 };
 use prost::Message;
 use serde::Serialize;
@@ -184,6 +185,7 @@ pub struct WorkflowContext {
     client: WorkflowServiceClient<Channel>,
     run_id: String,
     sleep_counter: u32,
+    default_step_retry: Option<RetryPolicy>,
 }
 
 impl WorkflowContext {
@@ -202,7 +204,7 @@ impl WorkflowContext {
             run_id: self.run_id.clone(),
             step_id: step_id.to_string(),
             input: vec![],
-            retry_policy: None,
+            retry_policy: self.default_step_retry.clone().map(Into::into),
         }));
 
         let begin_resp = self
@@ -274,12 +276,30 @@ impl WorkflowContext {
         R: Serialize + DeserializeOwned + Send + 'static,
         Fut: Future<Output = anyhow::Result<R>> + Send,
     {
+        self.run_with_input_with_retry(step_id, input, None, fut)
+            .await
+    }
+
+    pub async fn run_with_input_with_retry<I, R, Fut>(
+        &mut self,
+        step_id: &str,
+        input: &I,
+        retry_policy: Option<RetryPolicy>,
+        fut: Fut,
+    ) -> anyhow::Result<R>
+    where
+        I: Serialize + Send + 'static,
+        R: Serialize + DeserializeOwned + Send + 'static,
+        Fut: Future<Output = anyhow::Result<R>> + Send,
+    {
+        let effective_retry = retry_policy.or_else(|| self.default_step_retry.clone());
+
         let input_bytes = serde_json::to_vec(input)?;
         let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id.to_string(),
             input: input_bytes,
-            retry_policy: None,
+            retry_policy: effective_retry.clone().map(Into::into),
         }));
 
         let begin_resp = self
@@ -405,6 +425,9 @@ pub struct WorkerBuilder {
     hostname: Option<String>,
     version: Option<String>,
     labels: HashMap<String, String>,
+    queue_concurrency_limit: Option<i32>,
+    workflow_type_concurrency: HashMap<String, i32>,
+    default_step_retry: Option<RetryPolicy>,
 }
 
 impl WorkerBuilder {
@@ -417,6 +440,9 @@ impl WorkerBuilder {
             hostname: None,
             version: None,
             labels: HashMap::new(),
+            queue_concurrency_limit: None,
+            workflow_type_concurrency: HashMap::new(),
+            default_step_retry: None,
         }
     }
 
@@ -445,6 +471,26 @@ impl WorkerBuilder {
         self
     }
 
+    pub fn queue_concurrency_limit(mut self, limit: i32) -> Self {
+        if limit > 0 {
+            self.queue_concurrency_limit = Some(limit);
+        }
+        self
+    }
+
+    pub fn workflow_type_concurrency(mut self, workflow_type: &str, limit: i32) -> Self {
+        if limit > 0 {
+            self.workflow_type_concurrency
+                .insert(workflow_type.to_string(), limit);
+        }
+        self
+    }
+
+    pub fn default_step_retry(mut self, policy: RetryPolicy) -> Self {
+        self.default_step_retry = Some(policy);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<Worker> {
         let client = WorkflowServiceClient::connect(self.addr.clone()).await?;
 
@@ -456,6 +502,9 @@ impl WorkerBuilder {
             hostname: self.hostname,
             version: self.version,
             labels: self.labels,
+            queue_concurrency_limit: self.queue_concurrency_limit,
+            workflow_type_concurrency: self.workflow_type_concurrency,
+            default_step_retry: self.default_step_retry,
             workflows: HashMap::new(),
             workflow_types: Vec::new(),
             worker_id: None,
@@ -474,6 +523,9 @@ pub struct Worker {
     hostname: Option<String>,
     version: Option<String>,
     labels: HashMap<String, String>,
+    queue_concurrency_limit: Option<i32>,
+    workflow_type_concurrency: HashMap<String, i32>,
+    default_step_retry: Option<RetryPolicy>,
     workflows: HashMap<String, Arc<WorkflowFn>>,
     workflow_types: Vec<String>,
     worker_id: Option<Uuid>,
@@ -562,6 +614,15 @@ impl Worker {
                 version: self.version.clone().unwrap_or_default(),
                 max_concurrent: self.max_concurrent as i32,
                 labels: self.labels.clone(),
+                queue_concurrency_limit: self.queue_concurrency_limit.unwrap_or(0),
+                workflow_type_concurrency: self
+                    .workflow_type_concurrency
+                    .iter()
+                    .map(|(workflow_type, max)| ProtoWorkflowTypeConcurrency {
+                        workflow_type: workflow_type.clone(),
+                        max_concurrent: *max,
+                    })
+                    .collect(),
             })
             .await
             .map_err(map_grpc_error)?
@@ -687,6 +748,7 @@ impl Worker {
                     let input: serde_json::Value = serde_json::from_slice(&task.workflow_input)
                         .unwrap_or(serde_json::Value::Null);
                     let run_id = task.run_id.clone();
+                    let default_step_retry = self.default_step_retry.clone();
 
                     tokio::spawn(async move {
                         let _permit = permit;
@@ -703,6 +765,7 @@ impl Worker {
                                 input,
                                 correlation_id,
                                 trace_id,
+                                default_step_retry,
                             ),
                         )
                         .await;
@@ -730,11 +793,13 @@ async fn execute_workflow(
     input: serde_json::Value,
     correlation_id: String,
     trace_id: String,
+    default_step_retry: Option<RetryPolicy>,
 ) {
     let ctx = WorkflowContext {
         client: client.clone(),
         run_id: run_id.clone(),
         sleep_counter: 0,
+        default_step_retry,
     };
 
     let result = handler(ctx, input).await;

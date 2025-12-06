@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::error::StoreError;
 use crate::models::{
     ListWorkersParams, RegisterWorkerParams, Worker, WorkerHeartbeatParams, WorkerStatus,
+    WorkflowTypeConcurrency,
 };
 use crate::repository::WorkerRepository;
 
@@ -29,7 +30,11 @@ struct WorkerRow {
 }
 
 impl WorkerRow {
-    fn into_model(self) -> Worker {
+    fn into_model(
+        self,
+        queue_concurrency_limit: Option<i32>,
+        workflow_type_concurrency: Vec<WorkflowTypeConcurrency>,
+    ) -> Worker {
         Worker {
             worker_id: self.worker_id,
             namespace_id: self.namespace_id,
@@ -47,6 +52,8 @@ impl WorkerRow {
             last_heartbeat_at: self.last_heartbeat_at,
             deregistered_at: self.deregistered_at,
             labels: self.labels,
+            queue_concurrency_limit,
+            workflow_type_concurrency,
         }
     }
 }
@@ -65,6 +72,8 @@ impl PgWorkerRepository {
 #[async_trait]
 impl WorkerRepository for PgWorkerRepository {
     async fn register(&self, params: RegisterWorkerParams) -> Result<Uuid, StoreError> {
+        let mut tx = self.pool.begin().await?;
+
         let row = sqlx::query!(
             r#"
             INSERT INTO kagzi.workers (
@@ -74,8 +83,8 @@ impl WorkerRepository for PgWorkerRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING worker_id
             "#,
-            params.namespace_id,
-            params.task_queue,
+            &params.namespace_id,
+            &params.task_queue,
             params.hostname,
             params.pid,
             params.version,
@@ -83,8 +92,47 @@ impl WorkerRepository for PgWorkerRepository {
             params.max_concurrent,
             params.labels
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+        // Persist queue-level concurrency if provided.
+        if let Some(limit) = params.queue_concurrency_limit {
+            sqlx::query!(
+                r#"
+                INSERT INTO kagzi.queue_configs (namespace_id, task_queue, max_concurrent)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (namespace_id, task_queue)
+                DO UPDATE SET max_concurrent = EXCLUDED.max_concurrent,
+                              updated_at = NOW()
+                "#,
+                &params.namespace_id,
+                &params.task_queue,
+                limit
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // Persist workflow-type concurrency limits.
+        for entry in params.workflow_type_concurrency {
+            sqlx::query!(
+                r#"
+                INSERT INTO kagzi.workflow_type_configs (namespace_id, task_queue, workflow_type, max_concurrent)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (namespace_id, task_queue, workflow_type)
+                DO UPDATE SET max_concurrent = EXCLUDED.max_concurrent,
+                              updated_at = NOW()
+                "#,
+                &params.namespace_id,
+                &params.task_queue,
+                entry.workflow_type,
+                entry.max_concurrent
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
 
         Ok(row.worker_id)
     }
@@ -158,7 +206,14 @@ impl WorkerRepository for PgWorkerRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| r.into_model()))
+        if let Some(r) = row {
+            let (queue_limit, type_limits) = self
+                .fetch_concurrency(&r.namespace_id, &r.task_queue)
+                .await?;
+            Ok(Some(r.into_model(queue_limit, type_limits)))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn validate_online(&self, worker_id: Uuid) -> Result<bool, StoreError> {
@@ -200,7 +255,15 @@ impl WorkerRepository for PgWorkerRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(|r| r.into_model()).collect())
+        let mut workers = Vec::with_capacity(rows.len());
+        for r in rows {
+            let (queue_limit, type_limits) = self
+                .fetch_concurrency(&r.namespace_id, &r.task_queue)
+                .await?;
+            workers.push(r.into_model(queue_limit, type_limits));
+        }
+
+        Ok(workers)
     }
 
     async fn mark_stale_offline(&self, threshold_secs: i64) -> Result<u64, StoreError> {
@@ -292,5 +355,47 @@ impl WorkerRepository for PgWorkerRepository {
         .await?;
 
         Ok(row.count.unwrap_or(0))
+    }
+}
+
+impl PgWorkerRepository {
+    async fn fetch_concurrency(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+    ) -> Result<(Option<i32>, Vec<WorkflowTypeConcurrency>), StoreError> {
+        let queue_limit = sqlx::query_scalar!(
+            r#"
+            SELECT max_concurrent
+            FROM kagzi.queue_configs
+            WHERE namespace_id = $1 AND task_queue = $2
+            "#,
+            namespace_id,
+            task_queue
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let rows = sqlx::query!(
+            r#"
+            SELECT workflow_type, max_concurrent
+            FROM kagzi.workflow_type_configs
+            WHERE namespace_id = $1 AND task_queue = $2
+            "#,
+            namespace_id,
+            task_queue
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let type_limits = rows
+            .into_iter()
+            .map(|r| WorkflowTypeConcurrency {
+                workflow_type: r.workflow_type,
+                max_concurrent: r.max_concurrent.unwrap_or(0),
+            })
+            .collect();
+
+        Ok((queue_limit.flatten(), type_limits))
     }
 }

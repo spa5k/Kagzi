@@ -19,7 +19,7 @@ use kagzi_proto::kagzi::{
 use kagzi_store::{
     BeginStepParams, CreateWorkflow, FailStepParams, ListWorkersParams, ListWorkflowsParams,
     PgStore, RegisterWorkerParams, StepRepository, WorkerHeartbeatParams, WorkerRepository,
-    WorkerStatus, WorkflowCursor, WorkflowRepository,
+    WorkerStatus, WorkflowCursor, WorkflowRepository, WorkflowTypeConcurrency,
 };
 use prost::Message;
 use std::collections::HashMap;
@@ -27,31 +27,60 @@ use std::time::Duration;
 use tonic::{Code, Request, Response, Status};
 use tracing::{debug, info, instrument};
 
-/// Convert proto RetryPolicy to store RetryPolicy
-fn proto_policy_to_store(p: Option<RetryPolicy>) -> Option<kagzi_store::RetryPolicy> {
-    p.map(|proto| kagzi_store::RetryPolicy {
-        maximum_attempts: if proto.maximum_attempts == 0 {
-            5
-        } else {
-            proto.maximum_attempts
-        },
-        initial_interval_ms: if proto.initial_interval_ms == 0 {
-            1000
-        } else {
-            proto.initial_interval_ms
-        },
-        backoff_coefficient: if proto.backoff_coefficient == 0.0 {
-            2.0
-        } else {
-            proto.backoff_coefficient
-        },
-        maximum_interval_ms: if proto.maximum_interval_ms == 0 {
-            60000
-        } else {
-            proto.maximum_interval_ms
-        },
-        non_retryable_errors: proto.non_retryable_errors,
-    })
+const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
+const MAX_TYPE_CONCURRENCY: i32 = 10_000;
+
+/// Merge a proto RetryPolicy with an optional fallback (workflow-level) policy.
+/// Zero/empty values in proto are treated as "unspecified" and fall back.
+fn merge_proto_policy(
+    proto: Option<RetryPolicy>,
+    fallback: Option<&kagzi_store::RetryPolicy>,
+) -> Option<kagzi_store::RetryPolicy> {
+    match (proto, fallback.cloned()) {
+        (None, None) => None,
+        (None, Some(base)) => Some(base),
+        (Some(p), Some(mut base)) => {
+            if p.maximum_attempts != 0 {
+                base.maximum_attempts = p.maximum_attempts;
+            }
+            if p.initial_interval_ms != 0 {
+                base.initial_interval_ms = p.initial_interval_ms;
+            }
+            if p.backoff_coefficient != 0.0 {
+                base.backoff_coefficient = p.backoff_coefficient;
+            }
+            if p.maximum_interval_ms != 0 {
+                base.maximum_interval_ms = p.maximum_interval_ms;
+            }
+            if !p.non_retryable_errors.is_empty() {
+                base.non_retryable_errors = p.non_retryable_errors;
+            }
+            Some(base)
+        }
+        (Some(p), None) => Some(kagzi_store::RetryPolicy {
+            maximum_attempts: if p.maximum_attempts == 0 {
+                5
+            } else {
+                p.maximum_attempts
+            },
+            initial_interval_ms: if p.initial_interval_ms == 0 {
+                1000
+            } else {
+                p.initial_interval_ms
+            },
+            backoff_coefficient: if p.backoff_coefficient == 0.0 {
+                2.0
+            } else {
+                p.backoff_coefficient
+            },
+            maximum_interval_ms: if p.maximum_interval_ms == 0 {
+                60000
+            } else {
+                p.maximum_interval_ms
+            },
+            non_retryable_errors: p.non_retryable_errors,
+        }),
+    }
 }
 
 /// Map store workflow status to proto status
@@ -317,6 +346,23 @@ fn worker_to_proto(w: kagzi_store::Worker) -> Worker {
             nanos: w.last_heartbeat_at.timestamp_subsec_nanos() as i32,
         }),
         labels,
+        queue_concurrency_limit: w.queue_concurrency_limit.unwrap_or(0),
+        workflow_type_concurrency: w
+            .workflow_type_concurrency
+            .into_iter()
+            .map(|c| kagzi_proto::kagzi::WorkflowTypeConcurrency {
+                workflow_type: c.workflow_type,
+                max_concurrent: c.max_concurrent,
+            })
+            .collect(),
+    }
+}
+
+fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
+    if raw <= 0 {
+        None
+    } else {
+        Some(raw.min(max_allowed))
     }
 }
 
@@ -398,6 +444,22 @@ impl WorkflowService for MyWorkflowService {
                 },
                 max_concurrent: req.max_concurrent.max(1),
                 labels: serde_json::to_value(&req.labels).unwrap_or_default(),
+                queue_concurrency_limit: normalize_limit(
+                    req.queue_concurrency_limit,
+                    MAX_QUEUE_CONCURRENCY,
+                ),
+                workflow_type_concurrency: req
+                    .workflow_type_concurrency
+                    .into_iter()
+                    .filter_map(|c| {
+                        normalize_limit(c.max_concurrent, MAX_TYPE_CONCURRENCY).map(|limit| {
+                            WorkflowTypeConcurrency {
+                                workflow_type: c.workflow_type,
+                                max_concurrent: limit,
+                            }
+                        })
+                    })
+                    .collect(),
             })
             .await
             .map_err(map_store_error)?;
@@ -672,7 +734,7 @@ impl WorkflowService for MyWorkflowService {
                         .unwrap_or_default()
                 }),
                 version,
-                retry_policy: proto_policy_to_store(req.retry_policy),
+                retry_policy: merge_proto_policy(req.retry_policy, None),
             })
             .await
             .map_err(map_store_error)?;
@@ -1266,6 +1328,13 @@ impl WorkflowService for MyWorkflowService {
         let run_id =
             uuid::Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        let workflow_retry = self
+            .store
+            .workflows()
+            .get_retry_policy(run_id)
+            .await
+            .map_err(map_store_error)?;
+
         let input: Option<serde_json::Value> = if !req.input.is_empty() {
             Some(
                 serde_json::from_slice(&req.input)
@@ -1282,7 +1351,7 @@ impl WorkflowService for MyWorkflowService {
                 run_id,
                 step_id: req.step_id,
                 input,
-                retry_policy: proto_policy_to_store(req.retry_policy),
+                retry_policy: merge_proto_policy(req.retry_policy, workflow_retry.as_ref()),
             })
             .await
             .map_err(map_store_error)?;
