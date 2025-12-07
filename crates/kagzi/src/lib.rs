@@ -5,16 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
+use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
-    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, CreateScheduleRequest,
-    DeleteScheduleRequest, DeregisterWorkerRequest, ErrorCode, ErrorDetail, FailStepRequest,
-    FailWorkflowRequest, GetScheduleRequest, ListSchedulesRequest, PollActivityRequest,
-    RegisterWorkerRequest, Schedule as ProtoSchedule, ScheduleSleepRequest, StartWorkflowRequest,
-    UpdateScheduleRequest, WorkerHeartbeatRequest,
+    BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, DeregisterRequest, ErrorCode,
+    ErrorDetail, FailStepRequest, FailWorkflowRequest, HeartbeatRequest, Payload as ProtoPayload,
+    PollTaskRequest, RegisterRequest, SleepRequest, StartWorkflowRequest, StepKind,
     WorkflowTypeConcurrency as ProtoWorkflowTypeConcurrency,
 };
 use prost::Message;
-use prost_types::Timestamp;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
@@ -210,7 +208,7 @@ impl From<RetryPolicy> for kagzi_proto::kagzi::RetryPolicy {
 }
 
 pub struct WorkflowContext {
-    client: WorkflowServiceClient<Channel>,
+    client: WorkerServiceClient<Channel>,
     run_id: String,
     sleep_counter: u32,
     default_step_retry: Option<RetryPolicy>,
@@ -230,8 +228,12 @@ impl WorkflowContext {
     {
         let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
-            step_id: step_id.to_string(),
-            input: vec![],
+            step_name: step_id.to_string(),
+            kind: StepKind::Function as i32,
+            input: Some(ProtoPayload {
+                data: Vec::new(),
+                metadata: HashMap::new(),
+            }),
             retry_policy: self.default_step_retry.clone().map(Into::into),
         }));
 
@@ -242,8 +244,18 @@ impl WorkflowContext {
             .map_err(map_grpc_error)?
             .into_inner();
 
+        let step_id_resp = if begin_resp.step_id.is_empty() {
+            step_id.to_string()
+        } else {
+            begin_resp.step_id.clone()
+        };
+
         if !begin_resp.should_execute {
-            let result: R = serde_json::from_slice(&begin_resp.cached_result)?;
+            let cached = begin_resp.cached_output.unwrap_or(ProtoPayload {
+                data: Vec::new(),
+                metadata: HashMap::new(),
+            });
+            let result: R = serde_json::from_slice(&cached.data)?;
             return Ok(result);
         }
 
@@ -254,8 +266,11 @@ impl WorkflowContext {
                 let output_bytes = serde_json::to_vec(&val)?;
                 let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
                     run_id: self.run_id.clone(),
-                    step_id: step_id.to_string(),
-                    output: output_bytes,
+                    step_id: step_id_resp.clone(),
+                    output: Some(ProtoPayload {
+                        data: output_bytes,
+                        metadata: HashMap::new(),
+                    }),
                 }));
 
                 self.client
@@ -274,7 +289,7 @@ impl WorkflowContext {
 
                 let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
-                    step_id: step_id.to_string(),
+                    step_id: step_id_resp,
                     error: Some(kagzi_err.to_detail()),
                 }));
 
@@ -325,8 +340,12 @@ impl WorkflowContext {
         let input_bytes = serde_json::to_vec(input)?;
         let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
-            step_id: step_id.to_string(),
-            input: input_bytes,
+            step_name: step_id.to_string(),
+            kind: StepKind::Function as i32,
+            input: Some(ProtoPayload {
+                data: input_bytes,
+                metadata: HashMap::new(),
+            }),
             retry_policy: effective_retry.clone().map(Into::into),
         }));
 
@@ -337,8 +356,18 @@ impl WorkflowContext {
             .map_err(map_grpc_error)?
             .into_inner();
 
+        let step_id_resp = if begin_resp.step_id.is_empty() {
+            step_id.to_string()
+        } else {
+            begin_resp.step_id.clone()
+        };
+
         if !begin_resp.should_execute {
-            let result: R = serde_json::from_slice(&begin_resp.cached_result)?;
+            let cached = begin_resp.cached_output.unwrap_or(ProtoPayload {
+                data: Vec::new(),
+                metadata: HashMap::new(),
+            });
+            let result: R = serde_json::from_slice(&cached.data)?;
             return Ok(result);
         }
 
@@ -349,8 +378,11 @@ impl WorkflowContext {
                 let output_bytes = serde_json::to_vec(&val)?;
                 let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
                     run_id: self.run_id.clone(),
-                    step_id: step_id.to_string(),
-                    output: output_bytes,
+                    step_id: step_id_resp.clone(),
+                    output: Some(ProtoPayload {
+                        data: output_bytes,
+                        metadata: HashMap::new(),
+                    }),
                 }));
 
                 self.client
@@ -369,7 +401,7 @@ impl WorkflowContext {
 
                 let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
-                    step_id: step_id.to_string(),
+                    step_id: step_id_resp,
                     error: Some(kagzi_err.to_detail()),
                 }));
 
@@ -394,8 +426,12 @@ impl WorkflowContext {
 
         let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
-            step_id: step_id.clone(),
-            input: vec![],
+            step_name: step_id.clone(),
+            kind: StepKind::Sleep as i32,
+            input: Some(ProtoPayload {
+                data: Vec::new(),
+                metadata: HashMap::new(),
+            }),
             retry_policy: None,
         }));
 
@@ -406,24 +442,34 @@ impl WorkflowContext {
             .map_err(map_grpc_error)?
             .into_inner();
 
+        let step_id_resp = if begin_resp.step_id.is_empty() {
+            step_id.clone()
+        } else {
+            begin_resp.step_id.clone()
+        };
+
         if !begin_resp.should_execute {
             return Ok(());
         }
 
-        let sleep_request = add_tracing_metadata(Request::new(ScheduleSleepRequest {
+        let sleep_request = add_tracing_metadata(Request::new(SleepRequest {
             run_id: self.run_id.clone(),
+            step_id: step_id_resp.clone(),
             duration_seconds: duration.as_secs(),
         }));
 
         self.client
-            .schedule_sleep(sleep_request)
+            .sleep(sleep_request)
             .await
             .map_err(map_grpc_error)?;
 
         let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
             run_id: self.run_id.clone(),
-            step_id,
-            output: serde_json::to_vec(&())?,
+            step_id: step_id_resp,
+            output: Some(ProtoPayload {
+                data: serde_json::to_vec(&())?,
+                metadata: HashMap::new(),
+            }),
         }));
         self.client
             .complete_step(complete_request)
@@ -520,7 +566,7 @@ impl WorkerBuilder {
     }
 
     pub async fn build(self) -> anyhow::Result<Worker> {
-        let client = WorkflowServiceClient::connect(self.addr.clone()).await?;
+        let client = WorkerServiceClient::connect(self.addr.clone()).await?;
 
         Ok(Worker {
             client,
@@ -544,7 +590,7 @@ impl WorkerBuilder {
 }
 
 pub struct Worker {
-    client: WorkflowServiceClient<Channel>,
+    client: WorkerServiceClient<Channel>,
     task_queue: String,
     namespace_id: String,
     max_concurrent: usize,
@@ -628,7 +674,7 @@ impl Worker {
 
         let resp = self
             .client
-            .register_worker(RegisterWorkerRequest {
+            .register(RegisterRequest {
                 namespace_id: self.namespace_id.clone(),
                 task_queue: self.task_queue.clone(),
                 workflow_types,
@@ -642,7 +688,7 @@ impl Worker {
                 version: self.version.clone().unwrap_or_default(),
                 max_concurrent: self.max_concurrent as i32,
                 labels: self.labels.clone(),
-                queue_concurrency_limit: self.queue_concurrency_limit.unwrap_or(0),
+                queue_concurrency_limit: self.queue_concurrency_limit,
                 workflow_type_concurrency: self
                     .workflow_type_concurrency
                     .iter()
@@ -688,7 +734,7 @@ impl Worker {
         if let Some(id) = self.worker_id {
             let _ = self
                 .client
-                .deregister_worker(DeregisterWorkerRequest {
+                .deregister(DeregisterRequest {
                     worker_id: id.to_string(),
                     drain: false,
                 })
@@ -718,7 +764,7 @@ impl Worker {
                     _ = ticker.tick() => {
                         let active = (max - semaphore.available_permits()) as i32;
 
-                        let resp = client.worker_heartbeat(WorkerHeartbeatRequest {
+                        let resp = client.heartbeat(HeartbeatRequest {
                             worker_id: worker_id.to_string(),
                             active_count: active,
                             completed_delta: completed,
@@ -754,11 +800,11 @@ impl Worker {
 
         let resp = self
             .client
-            .poll_activity(PollActivityRequest {
+            .poll_task(PollTaskRequest {
                 task_queue: self.task_queue.clone(),
                 worker_id: self.worker_id.unwrap().to_string(),
                 namespace_id: self.namespace_id.clone(),
-                supported_workflow_types: self.workflow_types.clone(),
+                workflow_types: self.workflow_types.clone(),
             })
             .await;
 
@@ -773,7 +819,11 @@ impl Worker {
                 if let Some(handler) = self.workflows.get(&task.workflow_type) {
                     let handler = handler.clone();
                     let client = self.client.clone();
-                    let input: serde_json::Value = serde_json::from_slice(&task.workflow_input)
+                    let payload = task.input.unwrap_or(ProtoPayload {
+                        data: Vec::new(),
+                        metadata: HashMap::new(),
+                    });
+                    let input: serde_json::Value = serde_json::from_slice(&payload.data)
                         .unwrap_or(serde_json::Value::Null);
                     let run_id = task.run_id.clone();
                     let default_step_retry = self.default_step_retry.clone();
@@ -815,7 +865,7 @@ impl Worker {
 
 /// Execute a workflow with proper tracing context
 async fn execute_workflow(
-    mut client: WorkflowServiceClient<Channel>,
+    mut client: WorkerServiceClient<Channel>,
     handler: Arc<WorkflowFn>,
     run_id: String,
     input: serde_json::Value,
@@ -836,7 +886,10 @@ async fn execute_workflow(
         Ok(output) => {
             let complete_request = add_tracing_metadata(Request::new(CompleteWorkflowRequest {
                 run_id,
-                output: serde_json::to_vec(&output).unwrap(),
+                output: Some(ProtoPayload {
+                    data: serde_json::to_vec(&output).unwrap_or_default(),
+                    metadata: HashMap::new(),
+                }),
             }));
 
             let _ = client.complete_workflow(complete_request).await;
@@ -893,104 +946,6 @@ impl Client {
     ) -> WorkflowBuilder<'_, I> {
         WorkflowBuilder::new(self, workflow_type, task_queue, input)
     }
-
-    pub fn schedule(
-        &mut self,
-        workflow_type: &str,
-        task_queue: &str,
-        cron_expr: &str,
-    ) -> ScheduleBuilder<'_> {
-        ScheduleBuilder::new(self, workflow_type, task_queue, cron_expr)
-    }
-
-    pub async fn get_schedule(
-        &mut self,
-        schedule_id: &str,
-        namespace_id: &str,
-    ) -> anyhow::Result<ProtoSchedule> {
-        let resp = self
-            .client
-            .get_schedule(GetScheduleRequest {
-                schedule_id: schedule_id.to_string(),
-                namespace_id: namespace_id.to_string(),
-            })
-            .await
-            .map_err(map_grpc_error)?
-            .into_inner();
-
-        resp.schedule
-            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
-    }
-
-    pub async fn list_schedules(
-        &mut self,
-        namespace_id: &str,
-        task_queue: Option<&str>,
-        limit: Option<i32>,
-    ) -> anyhow::Result<Vec<ProtoSchedule>> {
-        let resp = self
-            .client
-            .list_schedules(ListSchedulesRequest {
-                namespace_id: namespace_id.to_string(),
-                task_queue: task_queue.unwrap_or_default().to_string(),
-                limit: limit.unwrap_or(0),
-            })
-            .await
-            .map_err(map_grpc_error)?
-            .into_inner();
-
-        Ok(resp.schedules)
-    }
-
-    pub async fn update_schedule(
-        &mut self,
-        schedule_id: &str,
-        namespace_id: &str,
-        update: ScheduleUpdate,
-    ) -> anyhow::Result<ProtoSchedule> {
-        let req = UpdateScheduleRequest {
-            schedule_id: schedule_id.to_string(),
-            namespace_id: namespace_id.to_string(),
-            task_queue: update.task_queue,
-            workflow_type: update.workflow_type,
-            cron_expr: update.cron_expr,
-            input: update.input.map(|v| serde_json::to_vec(&v)).transpose()?,
-            context: update.context.map(|v| serde_json::to_vec(&v)).transpose()?,
-            enabled: update.enabled,
-            max_catchup: update.max_catchup,
-            next_fire_at: update.next_fire_at.map(|dt| Timestamp {
-                seconds: dt.timestamp(),
-                nanos: dt.timestamp_subsec_nanos() as i32,
-            }),
-            version: update.version,
-        };
-
-        let resp = self
-            .client
-            .update_schedule(req)
-            .await
-            .map_err(map_grpc_error)?
-            .into_inner();
-
-        resp.schedule
-            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
-    }
-
-    pub async fn delete_schedule(
-        &mut self,
-        schedule_id: &str,
-        namespace_id: &str,
-    ) -> anyhow::Result<()> {
-        self.client
-            .delete_schedule(DeleteScheduleRequest {
-                schedule_id: schedule_id.to_string(),
-                namespace_id: namespace_id.to_string(),
-            })
-            .await
-            .map_err(map_grpc_error)?;
-
-        Ok(())
-    }
 }
 
 pub struct WorkflowBuilder<'a, I> {
@@ -999,7 +954,6 @@ pub struct WorkflowBuilder<'a, I> {
     task_queue: String,
     input: I,
     workflow_id: Option<String>,
-    idempotency_key: Option<String>,
     context: Option<serde_json::Value>,
     deadline_at: Option<chrono::DateTime<chrono::Utc>>,
     version: Option<String>,
@@ -1014,7 +968,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             task_queue: task_queue.to_string(),
             input,
             workflow_id: None,
-            idempotency_key: None,
             context: None,
             deadline_at: None,
             version: None,
@@ -1024,11 +977,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
 
     pub fn id(mut self, workflow_id: impl Into<String>) -> Self {
         self.workflow_id = Some(workflow_id.into());
-        self
-    }
-
-    pub fn idempotent(mut self, key: impl Into<String>) -> Self {
-        self.idempotency_key = Some(key.into());
         self
     }
 
@@ -1064,8 +1012,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
         let context_bytes = self
             .context
             .map(|c| serde_json::to_vec(&c))
-            .transpose()?
-            .unwrap_or_default();
+            .transpose()?;
 
         let resp = self
             .client
@@ -1076,10 +1023,15 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 task_queue: self.task_queue,
                 workflow_type: self.workflow_type,
-                input: input_bytes,
+                input: Some(ProtoPayload {
+                    data: input_bytes,
+                    metadata: HashMap::new(),
+                }),
                 namespace_id: "default".to_string(),
-                idempotency_key: self.idempotency_key.unwrap_or_default(),
-                context: context_bytes,
+                context: context_bytes.map(|data| ProtoPayload {
+                    data,
+                    metadata: HashMap::new(),
+                }),
                 deadline_at: self.deadline_at.map(|dt| prost_types::Timestamp {
                     seconds: dt.timestamp(),
                     nanos: dt.timestamp_subsec_nanos() as i32,
@@ -1103,152 +1055,3 @@ impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowBuilder<'a, I> {
     }
 }
 
-pub struct ScheduleBuilder<'a> {
-    client: &'a mut Client,
-    namespace_id: String,
-    task_queue: String,
-    workflow_type: String,
-    cron_expr: String,
-    input: serde_json::Value,
-    context: Option<serde_json::Value>,
-    enabled: Option<bool>,
-    max_catchup: Option<i32>,
-    version: Option<String>,
-}
-
-impl<'a> ScheduleBuilder<'a> {
-    fn new(client: &'a mut Client, workflow_type: &str, task_queue: &str, cron_expr: &str) -> Self {
-        Self {
-            client,
-            namespace_id: "default".to_string(),
-            task_queue: task_queue.to_string(),
-            workflow_type: workflow_type.to_string(),
-            cron_expr: cron_expr.to_string(),
-            input: serde_json::json!(null),
-            context: None,
-            enabled: None,
-            max_catchup: None,
-            version: None,
-        }
-    }
-
-    pub fn namespace(mut self, namespace_id: impl Into<String>) -> Self {
-        self.namespace_id = namespace_id.into();
-        self
-    }
-
-    pub fn input(mut self, input: serde_json::Value) -> Self {
-        self.input = input;
-        self
-    }
-
-    pub fn context(mut self, context: serde_json::Value) -> Self {
-        self.context = Some(context);
-        self
-    }
-
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = Some(enabled);
-        self
-    }
-
-    pub fn max_catchup(mut self, max_catchup: i32) -> Self {
-        self.max_catchup = Some(max_catchup);
-        self
-    }
-
-    pub fn version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(version.into());
-        self
-    }
-
-    pub async fn create(self) -> anyhow::Result<ProtoSchedule> {
-        let input_bytes = serde_json::to_vec(&self.input)?;
-        let context_bytes = self
-            .context
-            .map(|c| serde_json::to_vec(&c))
-            .transpose()?
-            .unwrap_or_default();
-
-        let resp = self
-            .client
-            .client
-            .create_schedule(CreateScheduleRequest {
-                namespace_id: self.namespace_id,
-                task_queue: self.task_queue,
-                workflow_type: self.workflow_type,
-                cron_expr: self.cron_expr,
-                input: input_bytes,
-                context: context_bytes,
-                enabled: self.enabled,
-                max_catchup: self.max_catchup.unwrap_or(0),
-                version: self.version.unwrap_or_default(),
-            })
-            .await
-            .map_err(map_grpc_error)?
-            .into_inner();
-
-        resp.schedule
-            .ok_or_else(|| anyhow::anyhow!("Missing schedule in response"))
-    }
-}
-
-#[derive(Default)]
-pub struct ScheduleUpdate {
-    task_queue: Option<String>,
-    workflow_type: Option<String>,
-    cron_expr: Option<String>,
-    input: Option<serde_json::Value>,
-    context: Option<serde_json::Value>,
-    enabled: Option<bool>,
-    max_catchup: Option<i32>,
-    next_fire_at: Option<chrono::DateTime<chrono::Utc>>,
-    version: Option<String>,
-}
-
-impl ScheduleUpdate {
-    pub fn task_queue(mut self, value: impl Into<String>) -> Self {
-        self.task_queue = Some(value.into());
-        self
-    }
-
-    pub fn workflow_type(mut self, value: impl Into<String>) -> Self {
-        self.workflow_type = Some(value.into());
-        self
-    }
-
-    pub fn cron_expr(mut self, value: impl Into<String>) -> Self {
-        self.cron_expr = Some(value.into());
-        self
-    }
-
-    pub fn input(mut self, value: serde_json::Value) -> Self {
-        self.input = Some(value);
-        self
-    }
-
-    pub fn context(mut self, value: serde_json::Value) -> Self {
-        self.context = Some(value);
-        self
-    }
-
-    pub fn enabled(mut self, value: bool) -> Self {
-        self.enabled = Some(value);
-        self
-    }
-
-    pub fn max_catchup(mut self, value: i32) -> Self {
-        self.max_catchup = Some(value);
-        self
-    }
-
-    pub fn next_fire_at(mut self, value: chrono::DateTime<chrono::Utc>) -> Self {
-        self.next_fire_at = Some(value);
-        self
-    }
-
-    pub fn version(mut self, value: impl Into<String>) -> Self {
-        self.version = Some(value.into());
-        self
-    }
-}

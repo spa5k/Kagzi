@@ -1,5 +1,6 @@
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
-use kagzi_server::{WorkflowServiceImpl, run_scheduler, tracing_utils, watchdog};
+use kagzi_proto::kagzi::worker_service_server::WorkerServiceServer;
+use kagzi_server::{run_scheduler, tracing_utils, watchdog, WorkflowServiceImpl, WorkerServiceImpl};
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
@@ -48,7 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let addr = "0.0.0.0:50051".parse()?;
-    let service = WorkflowServiceImpl::new(store);
+    let workflow_service = WorkflowServiceImpl::new(store.clone());
+    let worker_service = WorkerServiceImpl::new(store);
 
     info!("Kagzi Server listening on {}", addr);
 
@@ -57,7 +59,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_v1()?;
 
     Server::builder()
-        .add_service(WorkflowServiceServer::new(service))
+        .add_service(WorkflowServiceServer::new(workflow_service))
+        .add_service(WorkerServiceServer::new(worker_service))
         .add_service(reflection_service)
         .serve(addr)
         .await?;

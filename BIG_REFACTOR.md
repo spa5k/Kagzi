@@ -567,12 +567,14 @@ crates/kagzi/src/lib.rs                      # MODIFIED: Update SDK for PollTask
 
 ### Checklist
 
-- [ ] Update `worker.proto` with new structure
-- [ ] Create `worker_service.rs`
-- [ ] Add explicit `StepKind` to `BeginStepRequest`
-- [ ] Update SDK to set `StepKind` explicitly
-- [ ] Remove hacky step_id string inference
+- [x] Update `worker.proto` with new structure
+- [x] Create `worker_service.rs`
+- [x] Add explicit `StepKind` to `BeginStepRequest`
+- [x] Update SDK to set `StepKind` explicitly
+- [x] Remove hacky step_id string inference
 - [ ] Test worker operations
+
+**Progress (Dec 2025):** PR3 implemented. `WorkerServiceImpl` is registered in the server; SDK now targets `WorkerService` (PollTask/BeginStep/CompleteStep/FailStep/Sleep) with explicit `StepKind` and payloads. Legacy schedule client helpers were removed from the SDK until PR4 introduces `WorkflowScheduleService`.
 
 ---
 
