@@ -9,6 +9,7 @@ use kagzi_server::{
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
 use tracing::info;
 
@@ -35,16 +36,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the store
     let store = PgStore::new(pool);
 
+    let shutdown = CancellationToken::new();
+
     // Start the background watchdog
     let watchdog_store = store.clone();
-    tokio::spawn(async move {
-        watchdog::run(watchdog_store).await;
-    });
+    let watchdog_token = shutdown.child_token();
+    watchdog::spawn(watchdog_store, watchdog_token);
 
     // Start the scheduler loop
     let scheduler_store = store.clone();
+    let scheduler_token = shutdown.child_token();
     tokio::spawn(async move {
-        run_scheduler(scheduler_store).await;
+        run_scheduler(scheduler_store, scheduler_token).await;
     });
 
     let addr = "0.0.0.0:50051".parse()?;
@@ -59,7 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
         .build_v1()?;
 
-    Server::builder()
+    let server_token = shutdown.child_token();
+    let server = Server::builder()
         .add_service(WorkflowServiceServer::new(workflow_service))
         .add_service(WorkflowScheduleServiceServer::new(
             workflow_schedule_service,
@@ -67,8 +71,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(AdminServiceServer::new(admin_service))
         .add_service(WorkerServiceServer::new(worker_service))
         .add_service(reflection_service)
-        .serve(addr)
-        .await?;
+        .serve_with_shutdown(addr, server_token.cancelled());
+
+    tokio::select! {
+        res = server => res?,
+        _ = tokio::signal::ctrl_c() => {
+            info!("Received shutdown signal");
+            shutdown.cancel();
+        }
+    }
 
     Ok(())
 }

@@ -5,6 +5,7 @@ use kagzi_store::{
 };
 use std::str::FromStr;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
@@ -116,7 +117,7 @@ async fn fire_workflow(
     Ok(Some(run_id))
 }
 
-pub async fn run(store: PgStore) {
+pub async fn run(store: PgStore, shutdown: CancellationToken) {
     let config = SchedulerConfig::from_env();
     let mut ticker = tokio::time::interval(config.interval);
 
@@ -128,7 +129,13 @@ pub async fn run(store: PgStore) {
     );
 
     loop {
-        ticker.tick().await;
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                info!("Scheduler shutting down");
+                break;
+            }
+            _ = ticker.tick() => {}
+        }
         let now = Utc::now();
 
         let due: Vec<WorkflowSchedule> = match store

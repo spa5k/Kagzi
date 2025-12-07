@@ -50,6 +50,20 @@ pub trait WorkflowRepository: Send + Sync {
         supported_types: &[String],
     ) -> Result<Option<ClaimedWorkflow>, StoreError>;
 
+    async fn scan_available(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        supported_types: &[String],
+        limit: i32,
+    ) -> Result<Vec<crate::models::WorkCandidate>, StoreError>;
+
+    async fn claim_by_id(
+        &self,
+        run_id: Uuid,
+        worker_id: &str,
+    ) -> Result<Option<ClaimedWorkflow>, StoreError>;
+
     async fn extend_locks_for_worker(
         &self,
         worker_id: &str,

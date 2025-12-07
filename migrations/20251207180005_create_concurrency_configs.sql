@@ -1,4 +1,3 @@
--- Up
 CREATE TABLE IF NOT EXISTS kagzi.queue_configs (
     namespace_id TEXT NOT NULL,
     task_queue TEXT NOT NULL,

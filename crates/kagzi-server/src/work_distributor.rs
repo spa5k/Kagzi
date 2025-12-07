@@ -1,5 +1,6 @@
 use dashmap::DashMap;
-use kagzi_store::{PgStore, WorkflowRepository};
+use kagzi_store::{PgStore, WorkCandidate, WorkflowRepository};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -29,11 +30,96 @@ pub struct WorkDistributor {
     store: PgStore,
     request_tx: mpsc::Sender<WorkRequest>,
     pending_requests: Arc<DashMap<(String, String), Vec<WorkRequest>>>,
+    cache: Arc<DashMap<(String, String), VecDeque<WorkCandidate>>>,
     poll_interval: Duration,
     shutdown: CancellationToken,
 }
 
 impl WorkDistributor {
+    fn take_candidate(
+        &self,
+        key: &(String, String),
+        supported_types: &[String],
+    ) -> Option<WorkCandidate> {
+        let mut entry = self.cache.get_mut(key)?;
+        if supported_types.is_empty() {
+            return entry.pop_front();
+        }
+
+        // Find first matching candidate
+        let pos = entry
+            .iter()
+            .position(|c| supported_types.iter().any(|t| t == &c.workflow_type))?;
+        entry.remove(pos)
+    }
+
+    async fn replenish_cache(
+        &self,
+        key: &(String, String),
+        supported_types: &[String],
+    ) -> Result<(), kagzi_store::StoreError> {
+        let (namespace_id, task_queue) = key;
+        let candidates = self
+            .store
+            .workflows()
+            .scan_available(task_queue, namespace_id, supported_types, 50)
+            .await?;
+
+        if !candidates.is_empty() {
+            self.cache
+                .entry((namespace_id.clone(), task_queue.clone()))
+                .or_default()
+                .extend(candidates);
+        }
+
+        Ok(())
+    }
+
+    async fn try_claim_from_cache(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        request: &WorkRequest,
+    ) -> Result<Option<WorkItem>, kagzi_store::StoreError> {
+        let key = (namespace_id.to_string(), task_queue.to_string());
+        let mut replenished = false;
+
+        loop {
+            if let Some(candidate) = self.take_candidate(&key, &request.supported_workflow_types) {
+                match self
+                    .store
+                    .workflows()
+                    .claim_by_id(candidate.run_id, &request.worker_id)
+                    .await?
+                {
+                    Some(item) => {
+                        let work_item = WorkItem {
+                            run_id: item.run_id,
+                            task_queue: task_queue.to_string(),
+                            namespace_id: namespace_id.to_string(),
+                            workflow_type: item.workflow_type,
+                            input: item.input,
+                            locked_by: request.worker_id.clone(),
+                        };
+                        return Ok(Some(work_item));
+                    }
+                    None => {
+                        // Race lost, try next candidate
+                        continue;
+                    }
+                }
+            }
+
+            if replenished {
+                return Ok(None);
+            }
+
+            self.replenish_cache(&key, &request.supported_workflow_types)
+                .await?;
+            replenished = true;
+        }
+    }
+
     fn new(store: PgStore, shutdown: CancellationToken) -> (Arc<Self>, mpsc::Sender<WorkRequest>) {
         let (request_tx, request_rx) = mpsc::channel::<WorkRequest>(1000);
 
@@ -41,6 +127,7 @@ impl WorkDistributor {
             store,
             request_tx: request_tx.clone(),
             pending_requests: Arc::new(DashMap::new()),
+            cache: Arc::new(DashMap::new()),
             poll_interval: Duration::from_millis(100),
             shutdown: shutdown.clone(),
         });
@@ -99,26 +186,10 @@ impl WorkDistributor {
 
                 while let Some(request) = waiters.pop() {
                     match self
-                        .store
-                        .workflows()
-                        .claim_next_filtered(
-                            &task_queue,
-                            &namespace_id,
-                            &request.worker_id,
-                            &request.supported_workflow_types,
-                        )
+                        .try_claim_from_cache(&task_queue, &namespace_id, &request)
                         .await
                     {
-                        Ok(Some(item)) => {
-                            let work_item = WorkItem {
-                                run_id: item.run_id,
-                                task_queue: task_queue.clone(),
-                                namespace_id: namespace_id.clone(),
-                                workflow_type: item.workflow_type,
-                                input: item.input,
-                                locked_by: request.worker_id.clone(),
-                            };
-
+                        Ok(Some(work_item)) => {
                             let _ = request.response_tx.send(Some(work_item));
                         }
                         Ok(None) => {
@@ -146,65 +217,21 @@ impl WorkDistributor {
         timeout: Duration,
     ) -> Option<WorkItem> {
         // Fast path: try to claim immediately without waiting for the loop to tick.
-        match self
-            .store
-            .workflows()
-            .claim_next_filtered(
+        if let Ok(Some(item)) = self
+            .try_claim_from_cache(
                 task_queue,
                 namespace_id,
-                worker_id,
-                supported_workflow_types,
+                &WorkRequest {
+                    task_queue: task_queue.to_string(),
+                    namespace_id: namespace_id.to_string(),
+                    worker_id: worker_id.to_string(),
+                    supported_workflow_types: supported_workflow_types.to_vec(),
+                    response_tx: oneshot::channel().0, // dummy, not used here
+                },
             )
             .await
         {
-            Ok(Some(item)) => {
-                return Some(WorkItem {
-                    run_id: item.run_id,
-                    task_queue: task_queue.to_string(),
-                    namespace_id: namespace_id.to_string(),
-                    workflow_type: item.workflow_type,
-                    input: item.input,
-                    locked_by: worker_id.to_string(),
-                });
-            }
-            Ok(None) => {
-                // No work right now; fall through to long-poll. Capture a quick snapshot for observability.
-                if let Ok(count) = sqlx::query_scalar!(
-                    r#"
-                    SELECT COUNT(*)::BIGINT
-                    FROM kagzi.workflow_runs
-                    WHERE task_queue = $1
-                      AND namespace_id = $2
-                      AND workflow_type = ANY($3)
-                      AND (
-                        (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
-                        OR (status = 'SLEEPING' AND wake_up_at <= NOW())
-                      )
-                    "#,
-                    task_queue,
-                    namespace_id,
-                    supported_workflow_types
-                )
-                .fetch_one(self.store.pool())
-                .await
-                {
-                    info!(
-                        task_queue = task_queue,
-                        namespace_id = namespace_id,
-                        supported = ?supported_workflow_types,
-                        pending = count,
-                        "Immediate claim miss; falling back to long-poll"
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    task_queue = task_queue,
-                    namespace_id = namespace_id,
-                    error = %e,
-                    "Immediate claim_next_filtered failed; falling back to long-poll"
-                );
-            }
+            return Some(item);
         }
 
         let (response_tx, response_rx) = oneshot::channel();

@@ -1,4 +1,3 @@
--- Up
 CREATE TABLE IF NOT EXISTS kagzi.workflow_runs (
     run_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace_id TEXT NOT NULL DEFAULT 'default',

@@ -72,8 +72,9 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     pub fn calculate_delay_ms(&self, attempt: i32) -> i64 {
+        let exponent = attempt.saturating_sub(1);
         let delay =
-            (self.initial_interval_ms as f64 * self.backoff_coefficient.powi(attempt)) as i64;
+            (self.initial_interval_ms as f64 * self.backoff_coefficient.powi(exponent)) as i64;
         delay.min(self.maximum_interval_ms)
     }
 
@@ -168,6 +169,13 @@ pub struct WorkflowExistsResult {
     pub exists: bool,
     pub status: Option<WorkflowStatus>,
     pub locked_by: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkCandidate {
+    pub run_id: Uuid,
+    pub workflow_type: String,
+    pub wake_up_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
