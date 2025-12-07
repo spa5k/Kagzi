@@ -1039,6 +1039,7 @@ pub struct WorkflowBuilder<'a, I> {
     workflow_type: String,
     task_queue: String,
     input: I,
+    namespace_id: String,
     external_id: Option<String>,
     context: Option<serde_json::Value>,
     deadline_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -1053,6 +1054,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             workflow_type: workflow_type.to_string(),
             task_queue: task_queue.to_string(),
             input,
+            namespace_id: "default".to_string(),
             external_id: None,
             context: None,
             deadline_at: None,
@@ -1063,6 +1065,11 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
 
     pub fn id(mut self, external_id: impl Into<String>) -> Self {
         self.external_id = Some(external_id.into());
+        self
+    }
+
+    pub fn namespace(mut self, ns: impl Into<String>) -> Self {
+        self.namespace_id = ns.into();
         self
     }
 
@@ -1110,7 +1117,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
                     data: input_bytes,
                     metadata: HashMap::new(),
                 }),
-                namespace_id: "default".to_string(),
+                namespace_id: self.namespace_id,
                 context: context_bytes.map(|data| ProtoPayload {
                     data,
                     metadata: HashMap::new(),
