@@ -99,6 +99,7 @@ impl PgWorkflowRepository {
         workflow_type: &str,
         max: i32,
     ) -> Result<bool, StoreError> {
+        let max = max.max(1);
         let result = sqlx::query_scalar!(
             r#"
             INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
@@ -167,7 +168,7 @@ impl PgWorkflowRepository {
                 finished_at = NOW(),
                 locked_by = NULL,
                 locked_until = NULL
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
             RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id,
@@ -406,7 +407,8 @@ impl WorkflowRepository for PgWorkflowRepository {
 
     #[instrument(skip(self))]
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError> {
-        let result = sqlx::query!(
+        // First, cancel running and decrement counters
+        let running = sqlx::query!(
             r#"
             UPDATE kagzi.workflow_runs
             SET status = 'CANCELLED',
@@ -415,7 +417,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 locked_until = NULL
             WHERE run_id = $1 
               AND namespace_id = $2
-              AND status IN ('PENDING', 'RUNNING', 'SLEEPING')
+              AND status = 'RUNNING'
             RETURNING run_id, namespace_id, task_queue, workflow_type
             "#,
             run_id,
@@ -424,12 +426,31 @@ impl WorkflowRepository for PgWorkflowRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some(row) = result {
+        if let Some(row) = running {
             self.decrement_counters(&row.namespace_id, &row.task_queue, &row.workflow_type)
                 .await?;
             Ok(true)
         } else {
-            Ok(false)
+            // Fallback: cancel non-running without touching counters
+            let non_running = sqlx::query!(
+                r#"
+                UPDATE kagzi.workflow_runs
+                SET status = 'CANCELLED',
+                    finished_at = NOW(),
+                    locked_by = NULL,
+                    locked_until = NULL
+                WHERE run_id = $1 
+                  AND namespace_id = $2
+                  AND status IN ('PENDING', 'SLEEPING')
+                RETURNING run_id
+                "#,
+                run_id,
+                namespace_id
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+
+            Ok(non_running.is_some())
         }
     }
 
@@ -444,7 +465,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 finished_at = NOW(),
                 locked_by = NULL,
                 locked_until = NULL
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
             RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id
@@ -496,7 +517,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 wake_up_at = NOW() + ($2 * INTERVAL '1 second'),
                 locked_by = NULL,
                 locked_until = NULL
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
             RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id,
@@ -581,9 +602,20 @@ impl WorkflowRepository for PgWorkflowRepository {
             type_counter AS (
                 INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
                 SELECT namespace_id, task_queue, workflow_type, 1 FROM limits
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
                 ON CONFLICT (namespace_id, task_queue, workflow_type)
                 DO UPDATE SET active_count = queue_counters.active_count + 1
                 WHERE queue_counters.active_count < (SELECT type_limit FROM limits)
+                RETURNING 1
+            ),
+            revert_queue AS (
+                UPDATE kagzi.queue_counters
+                SET active_count = GREATEST(active_count - 1, 0)
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
+                  AND NOT EXISTS (SELECT 1 FROM type_counter)
+                  AND namespace_id = (SELECT namespace_id FROM limits)
+                  AND task_queue = (SELECT task_queue FROM limits)
+                  AND workflow_type = ''
                 RETURNING 1
             ),
             claimed AS (
@@ -724,9 +756,20 @@ impl WorkflowRepository for PgWorkflowRepository {
             type_counter AS (
                 INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
                 SELECT namespace_id, task_queue, workflow_type, 1 FROM limits
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
                 ON CONFLICT (namespace_id, task_queue, workflow_type)
                 DO UPDATE SET active_count = queue_counters.active_count + 1
                 WHERE queue_counters.active_count < (SELECT type_limit FROM limits)
+                RETURNING 1
+            ),
+            revert_queue AS (
+                UPDATE kagzi.queue_counters
+                SET active_count = GREATEST(active_count - 1, 0)
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
+                  AND NOT EXISTS (SELECT 1 FROM type_counter)
+                  AND namespace_id = (SELECT namespace_id FROM limits)
+                  AND task_queue = (SELECT task_queue FROM limits)
+                  AND workflow_type = ''
                 RETURNING 1
             ),
             claimed AS (
@@ -920,7 +963,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 locked_until = NULL,
                 wake_up_at = NOW() + ($2 * INTERVAL '1 millisecond'),
                 attempts = attempts + 1
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
             RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id,
