@@ -17,10 +17,11 @@ pub trait WorkflowRepository: Send + Sync {
         namespace_id: &str,
     ) -> Result<Option<WorkflowRun>, StoreError>;
 
-    async fn find_by_idempotency_key(
+    async fn find_active_by_external_id(
         &self,
         namespace_id: &str,
-        key: &str,
+        external_id: &str,
+        idempotency_suffix: Option<&str>,
     ) -> Result<Option<Uuid>, StoreError>;
 
     async fn list(&self, params: ListWorkflowsParams) -> Result<PaginatedWorkflows, StoreError>;

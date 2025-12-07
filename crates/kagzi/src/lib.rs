@@ -1039,7 +1039,7 @@ pub struct WorkflowBuilder<'a, I> {
     workflow_type: String,
     task_queue: String,
     input: I,
-    workflow_id: Option<String>,
+    external_id: Option<String>,
     context: Option<serde_json::Value>,
     deadline_at: Option<chrono::DateTime<chrono::Utc>>,
     version: Option<String>,
@@ -1053,7 +1053,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             workflow_type: workflow_type.to_string(),
             task_queue: task_queue.to_string(),
             input,
-            workflow_id: None,
+            external_id: None,
             context: None,
             deadline_at: None,
             version: None,
@@ -1061,8 +1061,8 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
         }
     }
 
-    pub fn id(mut self, workflow_id: impl Into<String>) -> Self {
-        self.workflow_id = Some(workflow_id.into());
+    pub fn id(mut self, external_id: impl Into<String>) -> Self {
+        self.external_id = Some(external_id.into());
         self
     }
 
@@ -1101,8 +1101,8 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             .client
             .workflow_client
             .start_workflow(StartWorkflowRequest {
-                workflow_id: self
-                    .workflow_id
+                external_id: self
+                    .external_id
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 task_queue: self.task_queue,
                 workflow_type: self.workflow_type,

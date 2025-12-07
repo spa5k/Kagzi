@@ -109,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
                 email: "user@example.com".to_string(),
             },
         )
-        .idempotent(format!("user-signup-{}", Uuid::new_v4()))
+        .id(format!("user-signup-{}", Uuid::new_v4()))
         .await?;
 
     info!("Started idempotent workflow: {}", run_id);

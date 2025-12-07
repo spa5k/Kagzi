@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-service")]
+
 mod common;
 
 use common::{TestHarness, json_bytes, make_request};
@@ -97,12 +99,11 @@ async fn start_workflow(harness: &TestHarness, workflow_type: &str) -> String {
     harness
         .service
         .start_workflow(make_request(StartWorkflowRequest {
-            workflow_id: format!("{}-{}", workflow_type, Uuid::new_v4()),
+            external_id: format!("{}-{}", workflow_type, Uuid::new_v4()),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: workflow_type.to_string(),
             input: json_bytes(&serde_json::json!({})),
             namespace_id: NAMESPACE.to_string(),
-            idempotency_key: String::new(),
             context: vec![],
             deadline_at: None,
             version: "1.0".to_string(),

@@ -31,7 +31,7 @@ impl WorkflowServiceImpl {
 fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<Workflow, Status> {
     Ok(Workflow {
         run_id: w.run_id.to_string(),
-        workflow_id: w.business_id,
+        external_id: w.external_id,
         namespace_id: w.namespace_id,
         task_queue: w.task_queue,
         workflow_type: w.workflow_type,
@@ -88,7 +88,7 @@ impl WorkflowService for WorkflowServiceImpl {
     #[instrument(skip(self), fields(
         correlation_id = %extract_or_generate_correlation_id(&request),
         trace_id = %extract_or_generate_trace_id(&request),
-        workflow_id = %request.get_ref().workflow_id,
+        external_id = %request.get_ref().external_id,
         task_queue = %request.get_ref().task_queue,
         workflow_type = %request.get_ref().workflow_type
     ))]
@@ -103,8 +103,8 @@ impl WorkflowService for WorkflowServiceImpl {
 
         let req = request.into_inner();
 
-        if req.workflow_id.is_empty() {
-            return Err(invalid_argument("workflow_id is required"));
+        if req.external_id.is_empty() {
+            return Err(invalid_argument("external_id is required"));
         }
 
         let input_json = payload_to_json(req.input)?;
@@ -119,7 +119,7 @@ impl WorkflowService for WorkflowServiceImpl {
         let workflows = self.store.workflows();
 
         if let Some(existing_id) = workflows
-            .find_by_idempotency_key(&namespace_id, &req.workflow_id)
+            .find_active_by_external_id(&namespace_id, &req.external_id, None)
             .await
             .map_err(map_store_error)?
         {
@@ -137,12 +137,12 @@ impl WorkflowService for WorkflowServiceImpl {
 
         let run_id = workflows
             .create(CreateWorkflow {
-                business_id: req.workflow_id.clone(),
+                external_id: req.external_id.clone(),
                 task_queue: req.task_queue,
                 workflow_type: req.workflow_type,
                 input: input_json,
                 namespace_id,
-                idempotency_key: Some(req.workflow_id),
+                idempotency_suffix: None,
                 context: context_json,
                 deadline_at: req.deadline_at.map(|ts| {
                     chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)

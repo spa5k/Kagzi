@@ -871,64 +871,58 @@ crates/kagzi-server/src/main.rs             # MODIFIED: Register AdminService
 
 ## PR 6: ID & Idempotency Refactor
 
-**Goal**: Unify workflow identification and make `workflow_id` the idempotency key.
+**Goal**: Unify workflow identification and make `external_id` the user-facing idempotency key (with optional `idempotency_suffix` for scheduler-fired runs).
 
 ### Changes
 
 #### 6.1 Database Migration
 
 ```sql
--- Migration: 20251207_workflow_id_refactor.sql
+-- Migration: 20251207120000_external_id_refactor.sql
 
 -- Step 1: Rename column
-ALTER TABLE workflow_runs RENAME COLUMN business_id TO workflow_id;
+ALTER TABLE kagzi.workflow_runs RENAME COLUMN business_id TO external_id;
 
--- Step 2: Drop old indexes
-DROP INDEX IF EXISTS idx_workflow_runs_business_id;
-DROP INDEX IF EXISTS idx_workflow_runs_idempotency;
+-- Step 2: Rename idempotency_key to idempotency_suffix (for scheduler runs)
+ALTER TABLE kagzi.workflow_runs RENAME COLUMN idempotency_key TO idempotency_suffix;
 
--- Step 3: Create new index
-CREATE INDEX idx_workflow_runs_workflow_id ON workflow_runs(workflow_id);
+-- Step 3: Drop old index
+DROP INDEX IF EXISTS kagzi.idx_workflow_idempotency;
 
--- Step 4: Add idempotency constraint (only one active workflow per workflow_id per namespace)
-CREATE UNIQUE INDEX uq_active_workflow_per_namespace
-ON workflow_runs(workflow_id, namespace_id)
+-- Step 4: Add active-unique constraint (namespace, external_id, suffix)
+CREATE UNIQUE INDEX uq_active_workflow
+ON kagzi.workflow_runs(namespace_id, external_id, COALESCE(idempotency_suffix, ''))
 WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED');
-
--- Step 5: Remove idempotency_key column
-ALTER TABLE workflow_runs DROP COLUMN IF EXISTS idempotency_key;
 ```
 
 #### 6.2 Update Store Models
 
 ```rust
-// crates/kagzi-store/src/models/workflow.rs
-
 pub struct WorkflowRun {
     pub run_id: Uuid,
-    pub workflow_id: String,  // Renamed from business_id
+    pub external_id: String,  // was: business_id
     pub namespace_id: String,
-    // ... rest unchanged
-    // REMOVED: idempotency_key
+    // ...
+    // idempotency_key removed
 }
 
 pub struct CreateWorkflow {
-    pub workflow_id: String,  // Renamed from business_id
-    // REMOVED: idempotency_key
+    pub external_id: String,              // was: business_id
+    pub idempotency_suffix: Option<String>, // was: idempotency_key (scheduler only)
     // ...
 }
 ```
 
 #### 6.3 Update Proto
 
-Already done in PR 2, but ensure `StartWorkflowRequest` uses `workflow_id` as idempotency key:
+Already done in PR 2, but ensure `StartWorkflowRequest` uses `external_id` as idempotency key:
 
 ```protobuf
 message StartWorkflowRequest {
   // User-provided business identifier. Acts as idempotency key.
   // If a workflow with this ID is already running, returns existing run_id.
   // If empty, server generates UUID.
-  string workflow_id = 1;
+  string external_id = 1;
   // ...
 }
 
@@ -941,22 +935,27 @@ message StartWorkflowResponse {
 ### Files Changed
 
 ```
-migrations/20251207_workflow_id_refactor.sql           # NEW
+migrations/20251207120000_external_id_refactor.sql     # NEW/RENAMED
 crates/kagzi-store/src/models/workflow.rs              # MODIFIED
 crates/kagzi-store/src/postgres/workflow.rs            # MODIFIED
-crates/kagzi-server/src/workflow_service.rs            # MODIFIED: Idempotency logic
-crates/kagzi-server/src/scheduler.rs                   # MODIFIED: Use workflow_id
+crates/kagzi-store/src/repository/workflow.rs          # MODIFIED
+crates/kagzi-store/src/postgres/query.rs               # MODIFIED
+crates/kagzi-server/src/workflow_service.rs            # MODIFIED
+crates/kagzi-server/src/scheduler.rs                   # MODIFIED
+crates/kagzi/src/lib.rs                                # MODIFIED
+README.md                                              # MODIFIED
+examples/tests updated for external_id
 ```
 
 ### Checklist
 
-- [ ] Create database migration
-- [ ] Rename `business_id` → `workflow_id` in store models
-- [ ] Remove `idempotency_key` field
-- [ ] Update queries to use `workflow_id` for idempotency
-- [ ] Update `StartWorkflow` to return `already_exists` flag
-- [ ] Update scheduler to use `workflow_id`
-- [ ] Test idempotency behavior
+- [x] Create database migration
+- [x] Rename `business_id` → `external_id` in store models
+- [x] Remove `idempotency_key` field (replaced by optional `idempotency_suffix`)
+- [x] Update queries to use `external_id` (+suffix) for idempotency
+- [x] Update `StartWorkflow` to return `already_exists` flag
+- [x] Update scheduler to use `external_id` + `idempotency_suffix`
+- [ ] Test idempotency behavior (manual/grpcurl)
 
 ---
 

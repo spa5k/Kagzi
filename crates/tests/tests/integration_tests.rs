@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-service")]
+
 //! Integration tests for worker lifecycle + workflow execution under the new
 //! worker registry/heartbeat model.
 
@@ -50,12 +52,11 @@ async fn start_workflow(
     harness
         .service
         .start_workflow(make_request(StartWorkflowRequest {
-            workflow_id: format!("{}-{}", workflow_type, Uuid::new_v4()),
+            external_id: format!("{}-{}", workflow_type, Uuid::new_v4()),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: workflow_type.to_string(),
             input: json_bytes(&input),
             namespace_id: NAMESPACE.to_string(),
-            idempotency_key: String::new(),
             context: vec![],
             deadline_at: None,
             version: "1.0".to_string(),

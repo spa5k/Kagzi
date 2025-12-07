@@ -18,7 +18,7 @@ const DEFAULT_QUEUE_CONCURRENCY_LIMIT: i32 = 10_000;
 struct WorkflowRunRow {
     run_id: Uuid,
     namespace_id: String,
-    business_id: String,
+    external_id: String,
     task_queue: String,
     workflow_type: String,
     status: WorkflowStatus,
@@ -43,7 +43,7 @@ impl WorkflowRunRow {
         WorkflowRun {
             run_id: self.run_id,
             namespace_id: self.namespace_id,
-            business_id: self.business_id,
+            external_id: self.external_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
             status: self.status,
@@ -132,17 +132,17 @@ impl WorkflowRepository for PgWorkflowRepository {
         let row = sqlx::query!(
             r#"
             INSERT INTO kagzi.workflow_runs (
-                business_id, task_queue, workflow_type, status,
-                namespace_id, idempotency_key, deadline_at, version, retry_policy
+                external_id, task_queue, workflow_type, status,
+                namespace_id, idempotency_suffix, deadline_at, version, retry_policy
             )
             VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8)
             RETURNING run_id
             "#,
-            params.business_id,
+            params.external_id,
             params.task_queue,
             params.workflow_type,
             params.namespace_id,
-            params.idempotency_key,
+            params.idempotency_suffix,
             params.deadline_at,
             params.version,
             retry_policy_json
@@ -207,18 +207,23 @@ impl WorkflowRepository for PgWorkflowRepository {
     }
 
     #[instrument(skip(self))]
-    async fn find_by_idempotency_key(
+    async fn find_active_by_external_id(
         &self,
         namespace_id: &str,
-        key: &str,
+        external_id: &str,
+        idempotency_suffix: Option<&str>,
     ) -> Result<Option<Uuid>, StoreError> {
         let row = sqlx::query!(
             r#"
             SELECT run_id FROM kagzi.workflow_runs
-            WHERE namespace_id = $1 AND idempotency_key = $2
+            WHERE namespace_id = $1
+              AND external_id = $2
+              AND COALESCE(idempotency_suffix, '') = COALESCE($3, '')
+              AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
             "#,
             namespace_id,
-            key
+            external_id,
+            idempotency_suffix
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -542,17 +547,17 @@ impl WorkflowRepository for PgWorkflowRepository {
             let row = sqlx::query!(
                 r#"
                 INSERT INTO kagzi.workflow_runs (
-                    business_id, task_queue, workflow_type, status,
-                    namespace_id, idempotency_key, deadline_at, version, retry_policy
+                    external_id, task_queue, workflow_type, status,
+                    namespace_id, idempotency_suffix, deadline_at, version, retry_policy
                 )
                 VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8)
                 RETURNING run_id
                 "#,
-                p.business_id,
+                p.external_id,
                 p.task_queue,
                 p.workflow_type,
                 p.namespace_id,
-                p.idempotency_key,
+                p.idempotency_suffix,
                 p.deadline_at,
                 p.version,
                 retry_policy_json

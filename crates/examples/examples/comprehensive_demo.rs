@@ -805,7 +805,7 @@ async fn main() -> anyhow::Result<()> {
     println!("TEST 2: Idempotency");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    let idempotency_key = format!("idem-key-{}", test_id);
+    let external_id = format!("idem-key-{}", test_id);
 
     // First request
     let run_id_1 = check_client
@@ -816,7 +816,7 @@ async fn main() -> anyhow::Result<()> {
                 message: "First request".to_string(),
             },
         )
-        .idempotent(&idempotency_key)
+        .id(&external_id)
         .await?;
 
     println!("  📋 First request run_id: {}", run_id_1);
@@ -830,7 +830,7 @@ async fn main() -> anyhow::Result<()> {
                 message: "Second request - should return same run_id".to_string(),
             },
         )
-        .idempotent(&idempotency_key)
+        .id(&external_id)
         .await?;
 
     println!("  📋 Second request run_id: {}", run_id_2);
@@ -850,7 +850,7 @@ async fn main() -> anyhow::Result<()> {
                 message: "Third request".to_string(),
             },
         )
-        .idempotent(format!("different-key-{}", test_id))
+        .id(format!("different-key-{}", test_id))
         .await?;
 
     println!("  📋 Third request (different key) run_id: {}", run_id_3);

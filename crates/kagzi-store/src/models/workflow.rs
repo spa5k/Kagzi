@@ -92,7 +92,7 @@ impl RetryPolicy {
 pub struct WorkflowRun {
     pub run_id: Uuid,
     pub namespace_id: String,
-    pub business_id: String,
+    pub external_id: String,
     pub task_queue: String,
     pub workflow_type: String,
     pub status: WorkflowStatus,
@@ -114,12 +114,12 @@ pub struct WorkflowRun {
 
 #[derive(Debug, Clone)]
 pub struct CreateWorkflow {
-    pub business_id: String,
+    pub external_id: String,
     pub task_queue: String,
     pub workflow_type: String,
     pub input: serde_json::Value,
     pub namespace_id: String,
-    pub idempotency_key: Option<String>,
+    pub idempotency_suffix: Option<String>,
     pub context: Option<serde_json::Value>,
     pub deadline_at: Option<DateTime<Utc>>,
     pub version: String,

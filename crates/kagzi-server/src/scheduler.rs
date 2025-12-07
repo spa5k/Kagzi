@@ -79,10 +79,14 @@ async fn fire_workflow(
     schedule: &WorkflowSchedule,
     fire_at: DateTime<Utc>,
 ) -> Result<Option<uuid::Uuid>, kagzi_store::StoreError> {
-    let idempotency_key = format!("schedule:{}:{}", schedule.schedule_id, fire_at.to_rfc3339());
+    let idempotency_suffix = fire_at.to_rfc3339();
 
     if let Some(existing) = workflows
-        .find_by_idempotency_key(&schedule.namespace_id, &idempotency_key)
+        .find_active_by_external_id(
+            &schedule.namespace_id,
+            &schedule.schedule_id.to_string(),
+            Some(&idempotency_suffix),
+        )
         .await?
     {
         warn!(
@@ -96,12 +100,12 @@ async fn fire_workflow(
 
     let run_id = workflows
         .create(CreateWorkflow {
-            business_id: schedule.schedule_id.to_string(),
+            external_id: schedule.schedule_id.to_string(),
             task_queue: schedule.task_queue.clone(),
             workflow_type: schedule.workflow_type.clone(),
             input: schedule.input.clone(),
             namespace_id: schedule.namespace_id.clone(),
-            idempotency_key: Some(idempotency_key),
+            idempotency_suffix: Some(idempotency_suffix),
             context: schedule.context.clone(),
             deadline_at: None,
             version: schedule.version.clone().unwrap_or_else(|| "1".to_string()),

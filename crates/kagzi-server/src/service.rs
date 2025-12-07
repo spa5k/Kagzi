@@ -231,7 +231,7 @@ fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<WorkflowRun, Status>
 
     Ok(WorkflowRun {
         run_id: w.run_id.to_string(),
-        business_id: w.business_id,
+        external_id: w.external_id,
         task_queue: w.task_queue,
         workflow_type: w.workflow_type,
         status: map_workflow_status(w.status).into(),
@@ -730,7 +730,7 @@ impl WorkflowService for MyWorkflowService {
     #[instrument(skip(self), fields(
         correlation_id = %extract_or_generate_correlation_id(&request),
         trace_id = %extract_or_generate_trace_id(&request),
-        workflow_id = %request.get_ref().workflow_id,
+        external_id = %request.get_ref().external_id,
         task_queue = %request.get_ref().task_queue,
         workflow_type = %request.get_ref().workflow_type
     ))]
@@ -769,11 +769,14 @@ impl WorkflowService for MyWorkflowService {
 
         let workflows = self.store.workflows();
 
-        if !req.idempotency_key.is_empty()
-            && let Some(existing_id) = workflows
-                .find_by_idempotency_key(&namespace_id, &req.idempotency_key)
-                .await
-                .map_err(map_store_error)?
+        if req.external_id.is_empty() {
+            return Err(invalid_argument("external_id is required"));
+        }
+
+        if let Some(existing_id) = workflows
+            .find_active_by_external_id(&namespace_id, &req.external_id, None)
+            .await
+            .map_err(map_store_error)?
         {
             return Ok(Response::new(StartWorkflowResponse {
                 run_id: existing_id.to_string(),
@@ -788,16 +791,12 @@ impl WorkflowService for MyWorkflowService {
 
         let run_id = workflows
             .create(CreateWorkflow {
-                business_id: req.workflow_id,
+                external_id: req.external_id,
                 task_queue: req.task_queue,
                 workflow_type: req.workflow_type,
                 input: input_json,
                 namespace_id,
-                idempotency_key: if req.idempotency_key.is_empty() {
-                    None
-                } else {
-                    Some(req.idempotency_key)
-                },
+                idempotency_suffix: None,
                 context: context_json,
                 deadline_at: req.deadline_at.map(|ts| {
                     chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)

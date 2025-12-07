@@ -33,7 +33,7 @@ enum WorkflowStatus {
 // ============================================
 message Workflow {
   string run_id = 1;
-  string workflow_id = 2;  // User-facing, acts as idempotency key
+  string external_id = 2;  // User-provided, acts as idempotency key
   string namespace_id = 3;
   string task_queue = 4;
   string workflow_type = 5;
@@ -55,7 +55,7 @@ message Workflow {
 
 // --- Requests/Responses ---
 message StartWorkflowRequest {
-  string workflow_id = 1;  // Acts as idempotency key
+  string external_id = 1;  // Acts as idempotency key
   string namespace_id = 2;
   string task_queue = 3;
   string workflow_type = 4;
