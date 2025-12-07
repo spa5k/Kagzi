@@ -92,24 +92,75 @@ impl PgWorkflowRepository {
         Self { pool }
     }
 
-    async fn queue_limit(&self, namespace_id: &str, task_queue: &str) -> Result<i32, StoreError> {
-        let limit = sqlx::query_scalar!(
+    async fn increment_counter_row(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+        workflow_type: &str,
+        max: i32,
+    ) -> Result<bool, StoreError> {
+        let max = max.max(1);
+        let result = sqlx::query_scalar!(
             r#"
-            SELECT max_concurrent FROM kagzi.queue_configs
-            WHERE namespace_id = $1 AND task_queue = $2
+            INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
+            VALUES ($1, $2, $3, 1)
+            ON CONFLICT (namespace_id, task_queue, workflow_type)
+            DO UPDATE SET active_count = queue_counters.active_count + 1
+            WHERE queue_counters.active_count < $4
+            RETURNING active_count
             "#,
             namespace_id,
-            task_queue
+            task_queue,
+            workflow_type,
+            max
         )
         .fetch_optional(&self.pool)
         .await?;
 
-        let limit = limit.flatten().unwrap_or(DEFAULT_QUEUE_CONCURRENCY_LIMIT);
-        Ok(limit.min(DEFAULT_QUEUE_CONCURRENCY_LIMIT))
+        Ok(result.is_some())
     }
 
-    async fn set_failed(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
+    async fn decrement_counter_row(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+        workflow_type: &str,
+    ) -> Result<(), StoreError> {
         sqlx::query!(
+            r#"
+            UPDATE kagzi.queue_counters
+            SET active_count = GREATEST(active_count - 1, 0)
+            WHERE namespace_id = $1 AND task_queue = $2 AND workflow_type = $3
+            "#,
+            namespace_id,
+            task_queue,
+            workflow_type
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn decrement_counters(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+        workflow_type: &str,
+    ) -> Result<(), StoreError> {
+        // Queue-level counter uses empty workflow_type
+        self.decrement_counter_row(namespace_id, task_queue, "")
+            .await?;
+        self.decrement_counter_row(namespace_id, task_queue, workflow_type)
+            .await
+    }
+
+    async fn set_failed(
+        &self,
+        run_id: Uuid,
+        error: &str,
+    ) -> Result<Option<(String, String, String)>, StoreError> {
+        let row = sqlx::query!(
             r#"
             UPDATE kagzi.workflow_runs
             SET status = 'FAILED',
@@ -117,15 +168,16 @@ impl PgWorkflowRepository {
                 finished_at = NOW(),
                 locked_by = NULL,
                 locked_until = NULL
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
+            RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id,
             error
         )
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(row.map(|r| (r.namespace_id, r.task_queue, r.workflow_type)))
     }
 }
 
@@ -355,7 +407,8 @@ impl WorkflowRepository for PgWorkflowRepository {
 
     #[instrument(skip(self))]
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError> {
-        let result = sqlx::query!(
+        // First, cancel running and decrement counters
+        let running = sqlx::query!(
             r#"
             UPDATE kagzi.workflow_runs
             SET status = 'CANCELLED',
@@ -364,8 +417,8 @@ impl WorkflowRepository for PgWorkflowRepository {
                 locked_until = NULL
             WHERE run_id = $1 
               AND namespace_id = $2
-              AND status IN ('PENDING', 'RUNNING', 'SLEEPING')
-            RETURNING run_id
+              AND status = 'RUNNING'
+            RETURNING run_id, namespace_id, task_queue, workflow_type
             "#,
             run_id,
             namespace_id
@@ -373,25 +426,51 @@ impl WorkflowRepository for PgWorkflowRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(result.is_some())
+        if let Some(row) = running {
+            self.decrement_counters(&row.namespace_id, &row.task_queue, &row.workflow_type)
+                .await?;
+            Ok(true)
+        } else {
+            // Fallback: cancel non-running without touching counters
+            let non_running = sqlx::query!(
+                r#"
+                UPDATE kagzi.workflow_runs
+                SET status = 'CANCELLED',
+                    finished_at = NOW(),
+                    locked_by = NULL,
+                    locked_until = NULL
+                WHERE run_id = $1 
+                  AND namespace_id = $2
+                  AND status IN ('PENDING', 'SLEEPING')
+                RETURNING run_id
+                "#,
+                run_id,
+                namespace_id
+            )
+            .fetch_optional(&self.pool)
+            .await?;
+
+            Ok(non_running.is_some())
+        }
     }
 
     #[instrument(skip(self))]
     async fn complete(&self, run_id: Uuid, output: serde_json::Value) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query!(
+        let counters = sqlx::query!(
             r#"
             UPDATE kagzi.workflow_runs
             SET status = 'COMPLETED',
                 finished_at = NOW(),
                 locked_by = NULL,
                 locked_until = NULL
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
+            RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id
         )
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
 
         sqlx::query(
@@ -408,31 +487,49 @@ impl WorkflowRepository for PgWorkflowRepository {
 
         tx.commit().await?;
 
+        if let Some(row) = counters {
+            self.decrement_counters(&row.namespace_id, &row.task_queue, &row.workflow_type)
+                .await?;
+        }
+
         Ok(())
     }
 
     #[instrument(skip(self))]
     async fn fail(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
-        self.set_failed(run_id, error).await
+        if let Some((namespace_id, task_queue, workflow_type)) =
+            self.set_failed(run_id, error).await?
+        {
+            self.decrement_counters(&namespace_id, &task_queue, &workflow_type)
+                .await?;
+        }
+
+        Ok(())
     }
 
     #[instrument(skip(self))]
     async fn schedule_sleep(&self, run_id: Uuid, duration_secs: u64) -> Result<(), StoreError> {
         let duration = duration_secs as f64;
-        sqlx::query!(
+        let row = sqlx::query!(
             r#"
             UPDATE kagzi.workflow_runs
             SET status = 'SLEEPING',
                 wake_up_at = NOW() + ($2 * INTERVAL '1 second'),
                 locked_by = NULL,
                 locked_until = NULL
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
+            RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id,
             duration
         )
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
+
+        if let Some(row) = row {
+            self.decrement_counters(&row.namespace_id, &row.task_queue, &row.workflow_type)
+                .await?;
+        }
 
         Ok(())
     }
@@ -445,49 +542,81 @@ impl WorkflowRepository for PgWorkflowRepository {
         worker_id: &str,
         supported_types: &[String],
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        let queue_limit = self.queue_limit(namespace_id, task_queue).await?;
-
         // Count predicates align with partial index `idx_workflow_runs_running` on
         // (task_queue, namespace_id, workflow_type) WHERE status = 'RUNNING'.
         let row = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH limits AS (
-                SELECT $5::INT AS queue_limit
-            ),
-            eligible AS (
-                SELECT run_id, workflow_type
+                SELECT
+                    wr.run_id,
+                    wr.workflow_type,
+                    wr.namespace_id,
+                    wr.task_queue,
+                    COALESCE(
+                        (
+                          SELECT max_concurrent
+                          FROM kagzi.queue_configs qc
+                          WHERE qc.namespace_id = $3 AND qc.task_queue = $2
+                        ),
+                        $5::INT
+                    ) AS queue_limit,
+                    COALESCE(
+                        (
+                          SELECT max_concurrent
+                          FROM kagzi.workflow_type_configs cfg
+                          WHERE cfg.namespace_id = $3 AND cfg.task_queue = $2 AND cfg.workflow_type = wr.workflow_type
+                        ),
+                        COALESCE(
+                          (
+                            SELECT max_concurrent
+                            FROM kagzi.queue_configs qc
+                            WHERE qc.namespace_id = $3 AND qc.task_queue = $2
+                          ),
+                          $5::INT
+                        )
+                    ) AS type_limit
                 FROM kagzi.workflow_runs wr
-                WHERE task_queue = $2
-                  AND namespace_id = $3
+                WHERE wr.task_queue = $2
+                  AND wr.namespace_id = $3
                   AND (
                     array_length($4::TEXT[], 1) IS NULL
                     OR array_length($4::TEXT[], 1) = 0
-                    OR workflow_type = ANY($4::TEXT[])
+                    OR wr.workflow_type = ANY($4::TEXT[])
                   )
                   AND (
-                    (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
-                    OR (status = 'SLEEPING' AND wake_up_at <= NOW())
+                    (wr.status = 'PENDING' AND (wr.wake_up_at IS NULL OR wr.wake_up_at <= NOW()))
+                    OR (wr.status = 'SLEEPING' AND wr.wake_up_at <= NOW())
                   )
-                  AND (SELECT queue_limit FROM limits) > COALESCE(
-                    (SELECT SUM(active_count) FROM kagzi.workers w
-                     WHERE w.task_queue = $2 AND w.namespace_id = $3 AND w.status = 'ONLINE'),
-                    0
-                  )
-                  AND (
-                    COALESCE(
-                      (SELECT max_concurrent FROM kagzi.workflow_type_configs cfg
-                       WHERE cfg.namespace_id = $3 AND cfg.task_queue = $2 AND cfg.workflow_type = wr.workflow_type),
-                      (SELECT queue_limit FROM limits)
-                    ) > (
-                      SELECT COUNT(*) FROM kagzi.workflow_runs r
-                      WHERE r.task_queue = $2 AND r.namespace_id = $3
-                        AND r.workflow_type = wr.workflow_type
-                        AND r.status = 'RUNNING'
-                    )
-                  )
-                ORDER BY COALESCE(wake_up_at, created_at) ASC
+                ORDER BY COALESCE(wr.wake_up_at, wr.created_at) ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
+            ),
+            queue_counter AS (
+                INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
+                SELECT namespace_id, task_queue, '', 1 FROM limits
+                ON CONFLICT (namespace_id, task_queue, workflow_type)
+                DO UPDATE SET active_count = queue_counters.active_count + 1
+                WHERE queue_counters.active_count < (SELECT queue_limit FROM limits)
+                RETURNING 1
+            ),
+            type_counter AS (
+                INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
+                SELECT namespace_id, task_queue, workflow_type, 1 FROM limits
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
+                ON CONFLICT (namespace_id, task_queue, workflow_type)
+                DO UPDATE SET active_count = queue_counters.active_count + 1
+                WHERE queue_counters.active_count < (SELECT type_limit FROM limits)
+                RETURNING 1
+            ),
+            revert_queue AS (
+                UPDATE kagzi.queue_counters
+                SET active_count = GREATEST(active_count - 1, 0)
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
+                  AND NOT EXISTS (SELECT 1 FROM type_counter)
+                  AND namespace_id = (SELECT namespace_id FROM limits)
+                  AND task_queue = (SELECT task_queue FROM limits)
+                  AND workflow_type = ''
+                RETURNING 1
             ),
             claimed AS (
                 UPDATE kagzi.workflow_runs
@@ -496,7 +625,9 @@ impl WorkflowRepository for PgWorkflowRepository {
                     locked_until = NOW() + INTERVAL '30 seconds',
                     started_at = COALESCE(started_at, NOW()),
                     attempts = attempts + 1
-                WHERE run_id = (SELECT run_id FROM eligible)
+                WHERE run_id IN (SELECT run_id FROM limits)
+                  AND EXISTS (SELECT 1 FROM queue_counter)
+                  AND EXISTS (SELECT 1 FROM type_counter)
                 RETURNING run_id, workflow_type, locked_by
             )
             SELECT c.run_id, c.workflow_type, p.input, c.locked_by
@@ -508,7 +639,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         .bind(task_queue)
         .bind(namespace_id)
         .bind(supported_types)
-        .bind(queue_limit)
+        .bind(DEFAULT_QUEUE_CONCURRENCY_LIMIT)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -572,69 +703,85 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
         let row = sqlx::query_as::<_, ClaimedRow>(
             r#"
-            WITH claimed AS (
+            WITH eligible AS (
+                SELECT run_id, namespace_id, task_queue, workflow_type
+                FROM kagzi.workflow_runs
+                WHERE run_id = $1
+                  AND (
+                    (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
+                    OR (status = 'SLEEPING' AND wake_up_at <= NOW())
+                  )
+            ),
+            limits AS (
+                SELECT
+                    e.run_id,
+                    e.namespace_id,
+                    e.task_queue,
+                    e.workflow_type,
+                    COALESCE(
+                        (
+                          SELECT max_concurrent
+                          FROM kagzi.queue_configs qc
+                          WHERE qc.namespace_id = e.namespace_id AND qc.task_queue = e.task_queue
+                        ),
+                        $3::INT
+                    ) AS queue_limit,
+                    COALESCE(
+                        (
+                          SELECT max_concurrent
+                          FROM kagzi.workflow_type_configs cfg
+                          WHERE cfg.namespace_id = e.namespace_id
+                            AND cfg.task_queue = e.task_queue
+                            AND cfg.workflow_type = e.workflow_type
+                        ),
+                        COALESCE(
+                          (
+                            SELECT max_concurrent
+                            FROM kagzi.queue_configs qc
+                            WHERE qc.namespace_id = e.namespace_id AND qc.task_queue = e.task_queue
+                          ),
+                          $3::INT
+                        )
+                    ) AS type_limit
+                FROM eligible e
+            ),
+            queue_counter AS (
+                INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
+                SELECT namespace_id, task_queue, '', 1 FROM limits
+                ON CONFLICT (namespace_id, task_queue, workflow_type)
+                DO UPDATE SET active_count = queue_counters.active_count + 1
+                WHERE queue_counters.active_count < (SELECT queue_limit FROM limits)
+                RETURNING 1
+            ),
+            type_counter AS (
+                INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
+                SELECT namespace_id, task_queue, workflow_type, 1 FROM limits
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
+                ON CONFLICT (namespace_id, task_queue, workflow_type)
+                DO UPDATE SET active_count = queue_counters.active_count + 1
+                WHERE queue_counters.active_count < (SELECT type_limit FROM limits)
+                RETURNING 1
+            ),
+            revert_queue AS (
+                UPDATE kagzi.queue_counters
+                SET active_count = GREATEST(active_count - 1, 0)
+                WHERE EXISTS (SELECT 1 FROM queue_counter)
+                  AND NOT EXISTS (SELECT 1 FROM type_counter)
+                  AND namespace_id = (SELECT namespace_id FROM limits)
+                  AND task_queue = (SELECT task_queue FROM limits)
+                  AND workflow_type = ''
+                RETURNING 1
+            ),
+            claimed AS (
                 UPDATE kagzi.workflow_runs
                 SET status = 'RUNNING',
                     locked_by = $2,
                     locked_until = NOW() + INTERVAL '30 seconds',
                     started_at = COALESCE(started_at, NOW()),
                     attempts = attempts + 1
-                WHERE run_id = $1
-                  AND (
-                    (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
-                    OR (status = 'SLEEPING' AND wake_up_at <= NOW())
-                  )
-                  AND EXISTS (
-                    SELECT 1
-                    FROM kagzi.workflow_runs wr
-                    WHERE wr.run_id = $1
-                      AND COALESCE(
-                            (
-                              SELECT max_concurrent
-                              FROM kagzi.queue_configs qc
-                              WHERE qc.namespace_id = wr.namespace_id AND qc.task_queue = wr.task_queue
-                            ),
-                            $3::INT
-                          ) > COALESCE(
-                            (
-                              SELECT SUM(active_count)
-                              FROM kagzi.workers w
-                              WHERE w.task_queue = wr.task_queue
-                                AND w.namespace_id = wr.namespace_id
-                                AND w.status = 'ONLINE'
-                            ),
-                            0
-                          )
-                  )
-                  AND EXISTS (
-                    SELECT 1
-                    FROM kagzi.workflow_runs wr
-                    WHERE wr.run_id = $1
-                      AND COALESCE(
-                            (
-                              SELECT max_concurrent
-                              FROM kagzi.workflow_type_configs cfg
-                              WHERE cfg.namespace_id = wr.namespace_id
-                                AND cfg.task_queue = wr.task_queue
-                                AND cfg.workflow_type = wr.workflow_type
-                            ),
-                            COALESCE(
-                              (
-                                SELECT max_concurrent
-                                FROM kagzi.queue_configs qc
-                                WHERE qc.namespace_id = wr.namespace_id AND qc.task_queue = wr.task_queue
-                              ),
-                              $3::INT
-                            )
-                          ) > (
-                            SELECT COUNT(*)
-                            FROM kagzi.workflow_runs r
-                            WHERE r.task_queue = wr.task_queue
-                              AND r.namespace_id = wr.namespace_id
-                              AND r.workflow_type = wr.workflow_type
-                              AND r.status = 'RUNNING'
-                          )
-                  )
+                WHERE run_id IN (SELECT run_id FROM limits)
+                  AND EXISTS (SELECT 1 FROM queue_counter)
+                  AND EXISTS (SELECT 1 FROM type_counter)
                 RETURNING run_id, workflow_type, locked_by
             )
             SELECT c.run_id, c.workflow_type, p.input, c.locked_by
@@ -808,7 +955,7 @@ impl WorkflowRepository for PgWorkflowRepository {
 
     #[instrument(skip(self))]
     async fn schedule_retry(&self, run_id: Uuid, delay_ms: u64) -> Result<(), StoreError> {
-        sqlx::query!(
+        let row = sqlx::query!(
             r#"
             UPDATE kagzi.workflow_runs
             SET status = 'PENDING',
@@ -816,19 +963,55 @@ impl WorkflowRepository for PgWorkflowRepository {
                 locked_until = NULL,
                 wake_up_at = NOW() + ($2 * INTERVAL '1 millisecond'),
                 attempts = attempts + 1
-            WHERE run_id = $1
+            WHERE run_id = $1 AND status = 'RUNNING'
+            RETURNING namespace_id, task_queue, workflow_type
             "#,
             run_id,
             delay_ms as f64
         )
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
+
+        if let Some(row) = row {
+            self.decrement_counters(&row.namespace_id, &row.task_queue, &row.workflow_type)
+                .await?;
+        }
 
         Ok(())
     }
 
     #[instrument(skip(self))]
     async fn mark_exhausted(&self, run_id: Uuid, error: &str) -> Result<(), StoreError> {
-        self.set_failed(run_id, error).await
+        if let Some((namespace_id, task_queue, workflow_type)) =
+            self.set_failed(run_id, error).await?
+        {
+            self.decrement_counters(&namespace_id, &task_queue, &workflow_type)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn increment_counter(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+        workflow_type: &str,
+        max: i32,
+    ) -> Result<bool, StoreError> {
+        self.increment_counter_row(namespace_id, task_queue, workflow_type, max)
+            .await
+    }
+
+    #[instrument(skip(self))]
+    async fn decrement_counter(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+        workflow_type: &str,
+    ) -> Result<(), StoreError> {
+        self.decrement_counter_row(namespace_id, task_queue, workflow_type)
+            .await
     }
 }

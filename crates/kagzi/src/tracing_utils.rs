@@ -29,7 +29,7 @@ pub fn get_or_generate_correlation_id() -> String {
         .try_with(|cell| cell.borrow().clone())
         .ok()
         .flatten()
-        .unwrap_or_else(|| Uuid::new_v4().to_string())
+        .unwrap_or_else(|| Uuid::now_v7().to_string())
 }
 
 pub fn get_or_generate_trace_id() -> String {
@@ -37,7 +37,7 @@ pub fn get_or_generate_trace_id() -> String {
         .try_with(|cell| cell.borrow().clone())
         .ok()
         .flatten()
-        .unwrap_or_else(|| Uuid::new_v4().to_string())
+        .unwrap_or_else(|| Uuid::now_v7().to_string())
 }
 
 pub async fn with_tracing_context<F, T>(
@@ -48,8 +48,8 @@ pub async fn with_tracing_context<F, T>(
 where
     F: std::future::Future<Output = T>,
 {
-    let correlation_id = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let trace_id = trace_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let correlation_id = correlation_id.unwrap_or_else(|| Uuid::now_v7().to_string());
+    let trace_id = trace_id.unwrap_or_else(|| Uuid::now_v7().to_string());
 
     CORRELATION_ID
         .scope(RefCell::new(Some(correlation_id)), async {
@@ -65,13 +65,13 @@ pub fn extract_tracing_context<T>(request: &Request<T>) -> (String, String) {
         .get(CORRELATION_ID_KEY)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
 
     let trace_id = metadata
         .get(TRACE_ID_KEY)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
 
     (correlation_id, trace_id)
 }

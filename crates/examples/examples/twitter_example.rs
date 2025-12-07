@@ -46,7 +46,7 @@ async fn user_signup(mut ctx: WorkflowContext, input: Input) -> anyhow::Result<O
 async fn create_user(email: String) -> anyhow::Result<User> {
     info!("Creating user with email: {}", email);
     let user = User {
-        id: Uuid::new_v4().to_string(),
+        id: Uuid::now_v7().to_string(),
         email,
     };
     info!("Created user: {}", user.id);
@@ -109,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
                 email: "user@example.com".to_string(),
             },
         )
-        .id(format!("user-signup-{}", Uuid::new_v4()))
+        .id(format!("user-signup-{}", Uuid::now_v7()))
         .await?;
 
     info!("Started idempotent workflow: {}", run_id);

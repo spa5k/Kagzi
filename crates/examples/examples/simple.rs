@@ -95,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
                 name: "Advanced Kagzi".to_string(),
             },
         )
-        .id(format!("workflow-{}", uuid::Uuid::new_v4()))
+        .id(format!("workflow-{}", uuid::Uuid::now_v7()))
         .version("1.0.0")
         .context(serde_json::json!({
             "user_id": "user-123",

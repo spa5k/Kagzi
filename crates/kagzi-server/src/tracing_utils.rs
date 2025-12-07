@@ -15,7 +15,7 @@ pub fn extract_or_generate_correlation_id<T>(request: &Request<T>) -> String {
         return correlation_id_str.to_string();
     }
 
-    Uuid::new_v4().to_string()
+    Uuid::now_v7().to_string()
 }
 
 pub fn extract_or_generate_trace_id<T>(request: &Request<T>) -> String {
@@ -27,7 +27,7 @@ pub fn extract_or_generate_trace_id<T>(request: &Request<T>) -> String {
         return trace_id_str.to_string();
     }
 
-    Uuid::new_v4().to_string()
+    Uuid::now_v7().to_string()
 }
 #[allow(dead_code)]
 /// Create tracing span with correlation and trace IDs

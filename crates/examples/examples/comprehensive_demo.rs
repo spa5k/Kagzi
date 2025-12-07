@@ -308,7 +308,7 @@ async fn process_payment(input: &ProcessPaymentInput) -> anyhow::Result<ProcessP
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     Ok(ProcessPaymentOutput {
-        transaction_id: format!("txn_{}", &Uuid::new_v4().to_string()[..8]),
+        transaction_id: format!("txn_{}", &Uuid::now_v7().to_string()[..8]),
         status: "SUCCESS".to_string(),
         processed_at: chrono::Utc::now().to_rfc3339(),
     })
@@ -322,7 +322,7 @@ async fn send_notification(
     tokio::time::sleep(Duration::from_millis(30)).await;
 
     Ok(SendNotificationOutput {
-        message_id: format!("msg_{}", &Uuid::new_v4().to_string()[..8]),
+        message_id: format!("msg_{}", &Uuid::now_v7().to_string()[..8]),
         sent_at: chrono::Utc::now().to_rfc3339(),
     })
 }
@@ -713,7 +713,7 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     let results = Arc::new(TestResults::new());
-    let test_id = Uuid::new_v4().to_string()[..8].to_string();
+    let test_id = Uuid::now_v7().to_string()[..8].to_string();
     let task_queue = format!("test-queue-{}", test_id);
 
     println!("Test Run ID: {}", test_id);

@@ -107,7 +107,7 @@ async fn start_workflow(harness: &TestHarness, workflow_type: &str) -> String {
     harness
         .workflow_service
         .start_workflow(make_request(StartWorkflowRequest {
-            external_id: format!("{}-{}", workflow_type, Uuid::new_v4()),
+            external_id: format!("{}-{}", workflow_type, Uuid::now_v7()),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: workflow_type.to_string(),
             input: input_payload,
