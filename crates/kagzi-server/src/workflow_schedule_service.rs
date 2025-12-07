@@ -270,9 +270,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         Ok(Response::new(ListWorkflowSchedulesResponse {
             schedules: proto_schedules,
             page: Some(PageInfo {
-                next_page_token: String::new(),
-                has_more: false,
-                total_count: 0,
+                next_page_token: String::new(), // TODO: implement cursor-based pagination
+                has_more: false, // TODO: compute has_more once pagination is implemented
+                total_count: 0,  // TODO: populate total_count when supported
             }),
         }))
     }
@@ -318,6 +318,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 .ok_or_else(|| invalid_argument("Cron expression has no future occurrences"))?
                 .with_timezone(&Utc);
 
+            // If the candidate matches the current scheduled time (e.g., update happens
+            // at/near the scheduled fire time), advance to the next cron occurrence to
+            // avoid re-triggering the same scheduled execution.
             if candidate == current_schedule.next_fire_at {
                 cron.after(&candidate)
                     .next()

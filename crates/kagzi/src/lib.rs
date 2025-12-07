@@ -839,8 +839,18 @@ impl Worker {
                         data: Vec::new(),
                         metadata: HashMap::new(),
                     });
-                    let input: serde_json::Value =
-                        serde_json::from_slice(&payload.data).unwrap_or(serde_json::Value::Null);
+                    let input: serde_json::Value = match serde_json::from_slice(&payload.data) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(
+                                run_id = %task.run_id,
+                                error = %e,
+                                payload_len = payload.data.len(),
+                                "Failed to deserialize task input, using null"
+                            );
+                            serde_json::Value::Null
+                        }
+                    };
                     let run_id = task.run_id.clone();
                     let default_step_retry = self.default_step_retry.clone();
 

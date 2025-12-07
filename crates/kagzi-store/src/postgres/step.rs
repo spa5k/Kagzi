@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{PgPool, Postgres, Transaction};
-use tracing::instrument;
+use tracing::{instrument, warn};
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -164,7 +164,14 @@ impl PgStepRepository {
             "SLEEP" => StepKind::Sleep,
             _ => StepKind::Function,
         })
-        .unwrap_or(StepKind::Function);
+        .unwrap_or_else(|| {
+            warn!(
+                run_id = %run_id,
+                step_id = %step_id,
+                "Step not found, defaulting to Function kind"
+            );
+            StepKind::Function
+        });
 
         Ok(kind)
     }
