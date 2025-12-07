@@ -16,9 +16,9 @@ use kagzi_proto::kagzi::{
     RegisterResponse, SleepRequest, Step, StepKind, StepStatus,
 };
 use kagzi_store::{
-    BeginStepParams, FailStepParams, PgStore, RegisterWorkerParams, StepRepository,
-    WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus, WorkflowRepository,
-    WorkflowTypeConcurrency,
+    BeginStepParams, FailStepParams, PgStore, RegisterWorkerParams, StepKind as StoreStepKind,
+    StepRepository, WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus,
+    WorkflowRepository, WorkflowTypeConcurrency,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -38,13 +38,18 @@ fn map_step_status(status: kagzi_store::StepStatus) -> StepStatus {
     }
 }
 
-fn step_kind_from_id(step_id: &str) -> StepKind {
-    if step_id.contains("sleep") || step_id.contains("wait") {
-        StepKind::Sleep
-    } else if step_id.contains("function") || step_id.contains("task") {
-        StepKind::Function
-    } else {
-        StepKind::Unspecified
+fn map_step_kind(kind: kagzi_store::StepKind) -> StepKind {
+    match kind {
+        kagzi_store::StepKind::Function => StepKind::Function,
+        kagzi_store::StepKind::Sleep => StepKind::Sleep,
+    }
+}
+
+fn map_proto_step_kind(kind: i32) -> Result<StoreStepKind, Status> {
+    match StepKind::from_i32(kind).unwrap_or(StepKind::Unspecified) {
+        StepKind::Function => Ok(StoreStepKind::Function),
+        StepKind::Sleep => Ok(StoreStepKind::Sleep),
+        StepKind::Unspecified => Err(invalid_argument("step kind is required")),
     }
 }
 
@@ -68,7 +73,7 @@ fn step_to_proto(s: kagzi_store::StepRun) -> Result<Step, Status> {
         run_id: s.run_id.to_string(),
         namespace_id: s.namespace_id,
         name: step_id.clone(),
-        kind: step_kind_from_id(&step_id) as i32,
+        kind: map_step_kind(s.step_kind) as i32,
         status: map_step_status(s.status) as i32,
         attempt_number: s.attempt_number,
         input: Some(input),
@@ -472,6 +477,7 @@ impl WorkerService for WorkerServiceImpl {
             .map_err(map_store_error)?;
 
         let input = payload_to_optional_json(req.input)?;
+        let step_kind = map_proto_step_kind(req.kind)?;
 
         let result = self
             .store
@@ -479,6 +485,7 @@ impl WorkerService for WorkerServiceImpl {
             .begin(BeginStepParams {
                 run_id,
                 step_id: req.step_name.clone(),
+                step_kind,
                 input,
                 retry_policy: merge_proto_policy(req.retry_policy, workflow_retry.as_ref()),
             })

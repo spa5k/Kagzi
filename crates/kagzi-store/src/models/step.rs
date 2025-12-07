@@ -8,6 +8,14 @@ use super::RetryPolicy;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum StepKind {
+    Function,
+    Sleep,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StepStatus {
     Pending,
     Running,
@@ -42,6 +50,7 @@ pub struct StepRun {
     pub run_id: Uuid,
     pub step_id: String,
     pub namespace_id: String,
+    pub step_kind: StepKind,
     pub attempt_number: i32,
     pub status: StepStatus,
     pub input: Option<serde_json::Value>,
@@ -59,6 +68,7 @@ pub struct StepRun {
 pub struct BeginStepParams {
     pub run_id: Uuid,
     pub step_id: String,
+    pub step_kind: StepKind,
     pub input: Option<serde_json::Value>,
     pub retry_policy: Option<RetryPolicy>,
 }

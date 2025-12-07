@@ -19,7 +19,7 @@ w.version, w.parent_step_attempt_id, w.retry_policy";
 
     pub mod step {
         pub const BASE: &str = "\
-attempt_id, run_id, step_id, namespace_id, attempt_number, status, \
+attempt_id, run_id, step_id, namespace_id, step_kind, attempt_number, status, \
 input, output, error, child_workflow_run_id, created_at, started_at, \
 finished_at, retry_at, retry_policy";
     }

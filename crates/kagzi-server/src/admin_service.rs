@@ -11,7 +11,10 @@ use kagzi_proto::kagzi::{
     ListStepsResponse, ListWorkersRequest, ListWorkersResponse, PageInfo, Step, Worker,
     WorkerStatus,
 };
-use kagzi_store::{PgStore, StepRepository, WorkerRepository, WorkerStatus as StoreWorkerStatus};
+use kagzi_store::{
+    PgStore, StepKind as StoreStepKind, StepRepository, WorkerRepository,
+    WorkerStatus as StoreWorkerStatus,
+};
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
 use uuid::Uuid;
@@ -66,13 +69,10 @@ fn map_step_status(status: kagzi_store::StepStatus) -> kagzi_proto::kagzi::StepS
     }
 }
 
-fn step_kind_from_id(step_id: &str) -> kagzi_proto::kagzi::StepKind {
-    if step_id.contains("sleep") || step_id.contains("wait") {
-        kagzi_proto::kagzi::StepKind::Sleep
-    } else if step_id.contains("function") || step_id.contains("task") {
-        kagzi_proto::kagzi::StepKind::Function
-    } else {
-        kagzi_proto::kagzi::StepKind::Unspecified
+fn map_step_kind(kind: StoreStepKind) -> kagzi_proto::kagzi::StepKind {
+    match kind {
+        StoreStepKind::Function => kagzi_proto::kagzi::StepKind::Function,
+        StoreStepKind::Sleep => kagzi_proto::kagzi::StepKind::Sleep,
     }
 }
 
@@ -96,7 +96,7 @@ fn step_to_proto(s: kagzi_store::StepRun) -> Result<Step, Status> {
         run_id: s.run_id.to_string(),
         namespace_id: s.namespace_id,
         name: step_id.clone(),
-        kind: step_kind_from_id(&step_id) as i32,
+        kind: map_step_kind(s.step_kind) as i32,
         status: map_step_status(s.status) as i32,
         attempt_number: s.attempt_number,
         input: Some(input),
