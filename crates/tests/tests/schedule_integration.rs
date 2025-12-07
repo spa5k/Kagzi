@@ -5,10 +5,10 @@ use chrono::Utc;
 use kagzi::ScheduleUpdate;
 use kagzi_proto::kagzi::workflow_service_server::{WorkflowService, WorkflowServiceServer};
 use kagzi_proto::kagzi::{
-    CreateScheduleRequest, CreateScheduleResponse, DeleteScheduleRequest, Empty,
-    GetScheduleRequest, GetScheduleResponse, ListSchedulesRequest, ListSchedulesResponse,
-    RegisterWorkerRequest, RegisterWorkerResponse, Schedule, ScheduleSleepRequest,
-    StartWorkflowRequest, StartWorkflowResponse, UpdateScheduleRequest, UpdateScheduleResponse,
+    CreateScheduleRequest, CreateScheduleResponse, DeleteScheduleRequest, GetScheduleRequest,
+    GetScheduleResponse, ListSchedulesRequest, ListSchedulesResponse, RegisterWorkerRequest,
+    RegisterWorkerResponse, Schedule, ScheduleSleepRequest, StartWorkflowRequest,
+    StartWorkflowResponse, UpdateScheduleRequest, UpdateScheduleResponse,
 };
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -41,7 +41,7 @@ impl WorkflowService for MockWorkflowService {
     async fn deregister_worker(
         &self,
         _request: Request<kagzi_proto::kagzi::DeregisterWorkerRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("deregister_worker"))
     }
 
@@ -146,7 +146,7 @@ impl WorkflowService for MockWorkflowService {
     async fn delete_schedule(
         &self,
         _request: Request<DeleteScheduleRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("delete_schedule"))
     }
 
@@ -167,7 +167,7 @@ impl WorkflowService for MockWorkflowService {
     async fn cancel_workflow_run(
         &self,
         _request: Request<kagzi_proto::kagzi::CancelWorkflowRunRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("cancel_workflow_run"))
     }
 
@@ -202,35 +202,35 @@ impl WorkflowService for MockWorkflowService {
     async fn complete_step(
         &self,
         _request: Request<kagzi_proto::kagzi::CompleteStepRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("complete_step"))
     }
 
     async fn fail_step(
         &self,
         _request: Request<kagzi_proto::kagzi::FailStepRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("fail_step"))
     }
 
     async fn complete_workflow(
         &self,
         _request: Request<kagzi_proto::kagzi::CompleteWorkflowRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("complete_workflow"))
     }
 
     async fn fail_workflow(
         &self,
         _request: Request<kagzi_proto::kagzi::FailWorkflowRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("fail_workflow"))
     }
 
     async fn schedule_sleep(
         &self,
         _request: Request<ScheduleSleepRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         Err(Status::unimplemented("schedule_sleep"))
     }
 

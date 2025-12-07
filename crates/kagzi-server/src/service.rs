@@ -8,7 +8,7 @@ use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CancelWorkflowRunRequest, CompleteStepRequest,
     CompleteWorkflowRequest, CreateScheduleRequest, CreateScheduleResponse, DeleteScheduleRequest,
-    DeregisterWorkerRequest, Empty, ErrorCode, ErrorDetail, FailStepRequest, FailWorkflowRequest,
+    DeregisterWorkerRequest, ErrorCode, ErrorDetail, FailStepRequest, FailWorkflowRequest,
     GetScheduleRequest, GetScheduleResponse, GetStepAttemptRequest, GetStepAttemptResponse,
     GetWorkerRequest, GetWorkerResponse, GetWorkflowRunRequest, GetWorkflowRunResponse,
     HealthCheckRequest, HealthCheckResponse, ListSchedulesRequest, ListSchedulesResponse,
@@ -598,7 +598,7 @@ impl WorkflowService for MyWorkflowService {
     async fn deregister_worker(
         &self,
         request: Request<DeregisterWorkerRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         let req = request.into_inner();
         let worker_id = uuid::Uuid::parse_str(&req.worker_id)
             .map_err(|_| invalid_argument("Invalid worker_id"))?;
@@ -619,7 +619,7 @@ impl WorkflowService for MyWorkflowService {
             info!(worker_id = %worker_id, "Worker deregistered");
         }
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(()))
     }
 
     async fn list_workers(
@@ -1091,7 +1091,7 @@ impl WorkflowService for MyWorkflowService {
     async fn delete_schedule(
         &self,
         request: Request<DeleteScheduleRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         let req = request.into_inner();
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument("Invalid schedule_id"))?;
@@ -1113,7 +1113,7 @@ impl WorkflowService for MyWorkflowService {
             return Err(not_found("Schedule not found", "schedule", req.schedule_id));
         }
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(()))
     }
 
     #[instrument(skip(self), fields(
@@ -1305,7 +1305,7 @@ impl WorkflowService for MyWorkflowService {
     async fn cancel_workflow_run(
         &self,
         request: Request<CancelWorkflowRunRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -1340,7 +1340,7 @@ impl WorkflowService for MyWorkflowService {
                 None,
             );
 
-            Ok(Response::new(Empty {}))
+            Ok(Response::new(()))
         } else {
             let exists = workflows
                 .check_exists(run_id, &namespace_id)
@@ -1746,7 +1746,7 @@ impl WorkflowService for MyWorkflowService {
     async fn complete_step(
         &self,
         request: Request<CompleteStepRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -1774,7 +1774,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(()))
     }
 
     #[instrument(skip(self), fields(
@@ -1783,10 +1783,7 @@ impl WorkflowService for MyWorkflowService {
         run_id = %request.get_ref().run_id,
         step_id = %request.get_ref().step_id
     ))]
-    async fn fail_step(
-        &self,
-        request: Request<FailStepRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    async fn fail_step(&self, request: Request<FailStepRequest>) -> Result<Response<()>, Status> {
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -1851,7 +1848,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(()))
     }
 
     #[instrument(skip(self), fields(
@@ -1862,7 +1859,7 @@ impl WorkflowService for MyWorkflowService {
     async fn complete_workflow(
         &self,
         request: Request<CompleteWorkflowRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -1890,7 +1887,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(()))
     }
 
     #[instrument(skip(self), fields(
@@ -1901,7 +1898,7 @@ impl WorkflowService for MyWorkflowService {
     async fn fail_workflow(
         &self,
         request: Request<FailWorkflowRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -1936,7 +1933,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(()))
     }
 
     #[instrument(skip(self), fields(
@@ -1948,7 +1945,7 @@ impl WorkflowService for MyWorkflowService {
     async fn schedule_sleep(
         &self,
         request: Request<ScheduleSleepRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<()>, Status> {
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -1973,7 +1970,7 @@ impl WorkflowService for MyWorkflowService {
             None,
         );
 
-        Ok(Response::new(Empty {}))
+        Ok(Response::new(()))
     }
 
     async fn health_check(

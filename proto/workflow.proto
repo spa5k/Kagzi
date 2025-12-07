@@ -2,6 +2,7 @@ syntax = "proto3";
 package kagzi.v1;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
 import "worker.proto";
 import "health.proto";
 import "common.proto";
@@ -13,14 +14,14 @@ service WorkflowService {
   rpc StartWorkflow (StartWorkflowRequest) returns (StartWorkflowResponse);
   rpc GetWorkflowRun (GetWorkflowRunRequest) returns (GetWorkflowRunResponse);
   rpc ListWorkflowRuns (ListWorkflowRunsRequest) returns (ListWorkflowRunsResponse);
-  rpc CancelWorkflowRun (CancelWorkflowRunRequest) returns (Empty);
+  rpc CancelWorkflowRun (CancelWorkflowRunRequest) returns (google.protobuf.Empty);
 
   // --- Schedule API ---
   rpc CreateSchedule (CreateScheduleRequest) returns (CreateScheduleResponse);
   rpc GetSchedule (GetScheduleRequest) returns (GetScheduleResponse);
   rpc ListSchedules (ListSchedulesRequest) returns (ListSchedulesResponse);
   rpc UpdateSchedule (UpdateScheduleRequest) returns (UpdateScheduleResponse);
-  rpc DeleteSchedule (DeleteScheduleRequest) returns (Empty);
+  rpc DeleteSchedule (DeleteScheduleRequest) returns (google.protobuf.Empty);
 
   // --- Step Attempt API ---
   rpc GetStepAttempt (GetStepAttemptRequest) returns (GetStepAttemptResponse);
@@ -29,7 +30,7 @@ service WorkflowService {
   // --- Worker Lifecycle API ---
   rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
   rpc WorkerHeartbeat(WorkerHeartbeatRequest) returns (WorkerHeartbeatResponse);
-  rpc DeregisterWorker(DeregisterWorkerRequest) returns (Empty);
+  rpc DeregisterWorker(DeregisterWorkerRequest) returns (google.protobuf.Empty);
 
   // --- Worker Discovery API ---
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
@@ -38,11 +39,11 @@ service WorkflowService {
   // --- Worker Execution API (requires registration) ---
   rpc PollActivity (PollActivityRequest) returns (PollActivityResponse);
   rpc BeginStep (BeginStepRequest) returns (BeginStepResponse);
-  rpc CompleteStep (CompleteStepRequest) returns (Empty);
-  rpc FailStep (FailStepRequest) returns (Empty);
-  rpc CompleteWorkflow (CompleteWorkflowRequest) returns (Empty);
-  rpc FailWorkflow (FailWorkflowRequest) returns (Empty);
-  rpc ScheduleSleep (ScheduleSleepRequest) returns (Empty);
+  rpc CompleteStep (CompleteStepRequest) returns (google.protobuf.Empty);
+  rpc FailStep (FailStepRequest) returns (google.protobuf.Empty);
+  rpc CompleteWorkflow (CompleteWorkflowRequest) returns (google.protobuf.Empty);
+  rpc FailWorkflow (FailWorkflowRequest) returns (google.protobuf.Empty);
+  rpc ScheduleSleep (ScheduleSleepRequest) returns (google.protobuf.Empty);
 
   // --- Health & Monitoring API ---
   rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
@@ -183,6 +184,4 @@ message ListStepAttemptsResponse {
   string next_page_token = 2;
 }
 
-// Standard empty message
-message Empty {}
 
