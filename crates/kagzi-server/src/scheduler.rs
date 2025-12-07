@@ -1,3 +1,4 @@
+use crate::config::SchedulerSettings;
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
 use kagzi_store::{
@@ -7,42 +8,6 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
-
-#[derive(Debug, Clone)]
-struct SchedulerConfig {
-    interval: Duration,
-    batch_size: i32,
-    max_workflows_per_tick: i32,
-}
-
-impl SchedulerConfig {
-    fn from_env() -> Self {
-        let interval = std::env::var("KAGZI_SCHEDULER_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(5));
-
-        let batch_size = std::env::var("KAGZI_SCHEDULER_BATCH_SIZE")
-            .ok()
-            .and_then(|v| v.parse::<i32>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(100);
-
-        let max_workflows_per_tick = std::env::var("KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK")
-            .ok()
-            .and_then(|v| v.parse::<i32>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(1000);
-
-        Self {
-            interval,
-            batch_size,
-            max_workflows_per_tick,
-        }
-    }
-}
 
 fn parse_cron(expr: &str) -> Option<CronSchedule> {
     CronSchedule::from_str(expr).ok()
@@ -117,15 +82,16 @@ async fn fire_workflow(
     Ok(Some(run_id))
 }
 
-pub async fn run(store: PgStore, shutdown: CancellationToken) {
-    let config = SchedulerConfig::from_env();
-    let mut ticker = tokio::time::interval(config.interval);
+pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: CancellationToken) {
+    let interval_secs = settings.interval_secs.max(1);
+    let batch_size = settings.batch_size.max(1);
+    let max_workflows_per_tick = settings.max_workflows_per_tick.max(1);
+    let interval = Duration::from_secs(interval_secs);
+    let mut ticker = tokio::time::interval(interval);
 
     info!(
-        interval_secs = config.interval.as_secs(),
-        batch_size = config.batch_size,
-        max_workflows_per_tick = config.max_workflows_per_tick,
-        "Scheduler started"
+        interval_secs,
+        batch_size, max_workflows_per_tick, "Scheduler started"
     );
 
     loop {
@@ -138,17 +104,14 @@ pub async fn run(store: PgStore, shutdown: CancellationToken) {
         }
         let now = Utc::now();
 
-        let due: Vec<WorkflowSchedule> = match store
-            .schedules()
-            .due_schedules(now, config.batch_size)
-            .await
-        {
-            Ok(due) => due,
-            Err(e) => {
-                error!("Failed to fetch due schedules: {:?}", e);
-                continue;
-            }
-        };
+        let due: Vec<WorkflowSchedule> =
+            match store.schedules().due_schedules(now, batch_size).await {
+                Ok(due) => due,
+                Err(e) => {
+                    error!("Failed to fetch due schedules: {:?}", e);
+                    continue;
+                }
+            };
 
         if due.is_empty() {
             continue;
@@ -158,7 +121,7 @@ pub async fn run(store: PgStore, shutdown: CancellationToken) {
         let workflows_repo = store.workflows();
 
         for schedule in due {
-            if created_this_tick >= config.max_workflows_per_tick {
+            if created_this_tick >= max_workflows_per_tick {
                 break;
             }
 
@@ -171,7 +134,7 @@ pub async fn run(store: PgStore, shutdown: CancellationToken) {
                 continue;
             }
 
-            let remaining_budget = (config.max_workflows_per_tick - created_this_tick) as usize;
+            let remaining_budget = (max_workflows_per_tick - created_this_tick) as usize;
             // Use `last_fired_at` if available; otherwise, shift `next_fire_at` back by 1ns
             // so that `schedule.after(&from)` includes the scheduled fire time itself.
             let from = schedule
@@ -210,7 +173,7 @@ pub async fn run(store: PgStore, shutdown: CancellationToken) {
                     }
                 }
 
-                if created_this_tick >= config.max_workflows_per_tick {
+                if created_this_tick >= max_workflows_per_tick {
                     break;
                 }
             }

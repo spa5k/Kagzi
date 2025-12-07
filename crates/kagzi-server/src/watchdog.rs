@@ -1,27 +1,12 @@
+use crate::config::WatchdogSettings;
 use kagzi_store::{PgStore, StepRepository, WorkerRepository, WorkflowRepository};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-fn interval_from_env() -> Duration {
-    std::env::var("KAGZI_WATCHDOG_INTERVAL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|v| *v > 0)
-        .map(Duration::from_secs)
-        .unwrap_or_else(|| Duration::from_secs(1))
-}
-
-fn stale_threshold_from_env() -> i64 {
-    std::env::var("KAGZI_WORKER_STALE_THRESHOLD_SECS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .filter(|v| *v > 0)
-        .unwrap_or(30)
-}
-
-pub fn spawn(store: PgStore, shutdown: CancellationToken) {
-    let interval = interval_from_env();
+pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationToken) {
+    let interval = Duration::from_secs(settings.interval_secs.max(1));
+    let stale_threshold_secs = settings.worker_stale_threshold_secs.max(1);
     info!(
         interval_secs = interval.as_secs(),
         "Watchdog spawning parallel tasks"
@@ -34,7 +19,12 @@ pub fn spawn(store: PgStore, shutdown: CancellationToken) {
         interval,
     ));
     tokio::spawn(run_find_orphaned(store.clone(), shutdown.clone(), interval));
-    tokio::spawn(run_mark_stale(store, shutdown, interval));
+    tokio::spawn(run_mark_stale(
+        store,
+        shutdown,
+        interval,
+        stale_threshold_secs,
+    ));
 }
 
 async fn run_wake_sleeping(store: PgStore, shutdown: CancellationToken, interval: Duration) {
@@ -162,9 +152,13 @@ async fn run_find_orphaned(store: PgStore, shutdown: CancellationToken, interval
     }
 }
 
-async fn run_mark_stale(store: PgStore, shutdown: CancellationToken, interval: Duration) {
+async fn run_mark_stale(
+    store: PgStore,
+    shutdown: CancellationToken,
+    interval: Duration,
+    stale_threshold_secs: i64,
+) {
     let mut ticker = tokio::time::interval(interval);
-    let threshold = stale_threshold_from_env();
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
@@ -172,7 +166,7 @@ async fn run_mark_stale(store: PgStore, shutdown: CancellationToken, interval: D
                 break;
             }
             _ = ticker.tick() => {
-                match store.workers().mark_stale_offline(threshold).await {
+                match store.workers().mark_stale_offline(stale_threshold_secs).await {
                     Ok(count) if count > 0 => {
                         warn!("Marked {} stale workers as offline", count);
                     }
