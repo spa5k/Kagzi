@@ -8,16 +8,11 @@ import "google/protobuf/timestamp.proto";
 // SERVICE
 // ============================================
 service WorkflowScheduleService {
-  rpc CreateWorkflowSchedule(CreateWorkflowScheduleRequest)
-      returns (CreateWorkflowScheduleResponse);
-  rpc GetWorkflowSchedule(GetWorkflowScheduleRequest)
-      returns (GetWorkflowScheduleResponse);
-  rpc ListWorkflowSchedules(ListWorkflowSchedulesRequest)
-      returns (ListWorkflowSchedulesResponse);
-  rpc UpdateWorkflowSchedule(UpdateWorkflowScheduleRequest)
-      returns (UpdateWorkflowScheduleResponse);
-  rpc DeleteWorkflowSchedule(DeleteWorkflowScheduleRequest)
-      returns (DeleteWorkflowScheduleResponse);
+  rpc CreateWorkflowSchedule(CreateWorkflowScheduleRequest) returns (CreateWorkflowScheduleResponse);
+  rpc GetWorkflowSchedule(GetWorkflowScheduleRequest) returns (GetWorkflowScheduleResponse);
+  rpc ListWorkflowSchedules(ListWorkflowSchedulesRequest) returns (ListWorkflowSchedulesResponse);
+  rpc UpdateWorkflowSchedule(UpdateWorkflowScheduleRequest) returns (UpdateWorkflowScheduleResponse);
+  rpc DeleteWorkflowSchedule(DeleteWorkflowScheduleRequest) returns (DeleteWorkflowScheduleResponse);
 }
 
 // ============================================
@@ -52,14 +47,18 @@ message CreateWorkflowScheduleRequest {
   optional string version = 9;
 }
 
-message CreateWorkflowScheduleResponse { WorkflowSchedule schedule = 1; }
+message CreateWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
 
 message GetWorkflowScheduleRequest {
   string schedule_id = 1;
   string namespace_id = 2;
 }
 
-message GetWorkflowScheduleResponse { WorkflowSchedule schedule = 1; }
+message GetWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
 
 message ListWorkflowSchedulesRequest {
   string namespace_id = 1;
@@ -86,11 +85,15 @@ message UpdateWorkflowScheduleRequest {
   optional string version = 11;
 }
 
-message UpdateWorkflowScheduleResponse { WorkflowSchedule schedule = 1; }
+message UpdateWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
 
 message DeleteWorkflowScheduleRequest {
   string schedule_id = 1;
   string namespace_id = 2;
 }
 
-message DeleteWorkflowScheduleResponse { bool deleted = 1; }
+message DeleteWorkflowScheduleResponse {
+  bool deleted = 1;
+}

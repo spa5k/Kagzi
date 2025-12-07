@@ -88,3 +88,4 @@ test-one name:
 
 tidy:
     cargo fmt --all
+    buf format -w

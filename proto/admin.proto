@@ -2,8 +2,8 @@ syntax = "proto3";
 package kagzi.v1;
 
 import "common.proto";
-import "worker.proto";
 import "google/protobuf/timestamp.proto";
+import "worker.proto";
 
 // ============================================
 // SERVICE
@@ -37,16 +37,22 @@ message ListWorkersResponse {
   PageInfo page = 2;
 }
 
-message GetWorkerRequest { string worker_id = 1; }
+message GetWorkerRequest {
+  string worker_id = 1;
+}
 
-message GetWorkerResponse { Worker worker = 1; }
+message GetWorkerResponse {
+  Worker worker = 1;
+}
 
 message GetStepRequest {
   string step_id = 1;
   string namespace_id = 2;
 }
 
-message GetStepResponse { Step step = 1; }
+message GetStepResponse {
+  Step step = 1;
+}
 
 message ListStepsRequest {
   string run_id = 1;
@@ -63,7 +69,9 @@ message ListStepsResponse {
 // HEALTH & INFO MESSAGES
 // ============================================
 
-message HealthCheckRequest { optional string service = 1; }
+message HealthCheckRequest {
+  optional string service = 1;
+}
 
 enum ServingStatus {
   SERVING_STATUS_UNSPECIFIED = 0;

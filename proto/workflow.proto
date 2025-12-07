@@ -1,9 +1,9 @@
 syntax = "proto3";
 package kagzi.v1;
 
-import "google/protobuf/timestamp.proto";
-import "google/protobuf/empty.proto";
 import "common.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
 
 // ============================================
 // SERVICE
@@ -76,7 +76,9 @@ message GetWorkflowRequest {
   string namespace_id = 2;
 }
 
-message GetWorkflowResponse { Workflow workflow = 1; }
+message GetWorkflowResponse {
+  Workflow workflow = 1;
+}
 
 message ListWorkflowsRequest {
   string namespace_id = 1;
