@@ -1,8 +1,7 @@
 syntax = "proto3";
-package kagzi;
+package kagzi.v1;
 
 import "google/protobuf/timestamp.proto";
-import "errors.proto";
 import "worker.proto";
 import "health.proto";
 import "common.proto";

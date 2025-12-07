@@ -122,6 +122,7 @@ fn detail(
         retry_after_ms,
         subject: subject.into(),
         subject_id: subject_id.into(),
+        metadata: HashMap::new(),
     }
 }
 
@@ -1807,6 +1808,7 @@ impl WorkflowService for MyWorkflowService {
             retry_after_ms: 0,
             subject: String::new(),
             subject_id: String::new(),
+            metadata: HashMap::new(),
         });
 
         let result = self
@@ -1917,6 +1919,7 @@ impl WorkflowService for MyWorkflowService {
             retry_after_ms: 0,
             subject: String::new(),
             subject_id: String::new(),
+            metadata: HashMap::new(),
         });
 
         self.store

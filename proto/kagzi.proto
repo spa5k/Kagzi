@@ -1,4 +1,0 @@
-// Umbrella file kept for compatibility. Prefer importing the specific
-// domain protos directly: errors.proto, workflow.proto, worker.proto, health.proto.
-syntax = "proto3";
-package kagzi;

@@ -3,7 +3,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .file_descriptor_set_path("src/descriptor.bin")
         .compile_protos(
             &[
-                "../../proto/errors.proto",
+                "../../proto/common.proto",
                 "../../proto/workflow.proto",
                 "../../proto/worker.proto",
                 "../../proto/health.proto",

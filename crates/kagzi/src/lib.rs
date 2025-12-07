@@ -49,6 +49,9 @@ pub struct KagziError {
     pub message: String,
     pub non_retryable: bool,
     pub retry_after: Option<Duration>,
+    pub subject: Option<String>,
+    pub subject_id: Option<String>,
+    pub metadata: HashMap<String, String>,
 }
 
 impl KagziError {
@@ -59,13 +62,14 @@ impl KagziError {
             non_retryable: matches!(
                 code,
                 ErrorCode::InvalidArgument
-                    | ErrorCode::InvalidState
                     | ErrorCode::PreconditionFailed
                     | ErrorCode::Conflict
-                    | ErrorCode::AlreadyCompleted
                     | ErrorCode::Unauthorized
             ),
             retry_after: None,
+            subject: None,
+            subject_id: None,
+            metadata: HashMap::new(),
         }
     }
 
@@ -75,6 +79,9 @@ impl KagziError {
             message: message.into(),
             non_retryable: true,
             retry_after: None,
+            subject: None,
+            subject_id: None,
+            metadata: HashMap::new(),
         }
     }
 
@@ -84,6 +91,9 @@ impl KagziError {
             message: message.into(),
             non_retryable: false,
             retry_after: Some(retry_after),
+            subject: None,
+            subject_id: None,
+            metadata: HashMap::new(),
         }
     }
 
@@ -93,8 +103,9 @@ impl KagziError {
             message: self.message.clone(),
             non_retryable: self.non_retryable,
             retry_after_ms: self.retry_after.map(|d| d.as_millis() as i64).unwrap_or(0),
-            subject: String::new(),
-            subject_id: String::new(),
+            subject: self.subject.clone().unwrap_or_default(),
+            subject_id: self.subject_id.clone().unwrap_or_default(),
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -138,6 +149,17 @@ impl From<Status> for KagziError {
                 } else {
                     None
                 },
+                subject: if detail.subject.is_empty() {
+                    None
+                } else {
+                    Some(detail.subject)
+                },
+                subject_id: if detail.subject_id.is_empty() {
+                    None
+                } else {
+                    Some(detail.subject_id)
+                },
+                metadata: detail.metadata,
             };
         }
 
@@ -149,6 +171,9 @@ impl From<Status> for KagziError {
                 Code::InvalidArgument | Code::FailedPrecondition | Code::PermissionDenied
             ),
             retry_after: None,
+            subject: None,
+            subject_id: None,
+            metadata: HashMap::new(),
         }
     }
 }
