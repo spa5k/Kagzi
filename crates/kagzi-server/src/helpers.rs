@@ -68,7 +68,7 @@ pub fn unavailable(message: impl Into<String>) -> Status {
 pub fn deadline_exceeded(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::DeadlineExceeded,
-        detail(ErrorCode::Unavailable, message, false, 0, "", ""),
+        detail(ErrorCode::Timeout, message, false, 0, "", ""),
     )
 }
 

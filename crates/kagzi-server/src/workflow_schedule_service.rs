@@ -1,135 +1,32 @@
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
+use crate::{
+    helpers::{
+        invalid_argument, json_to_payload, map_store_error, not_found, payload_to_json,
+        payload_to_optional_json,
+    },
+    tracing_utils::{
+        extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
+        log_grpc_response,
+    },
 };
 use chrono::Utc;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleService;
 use kagzi_proto::kagzi::{
     CreateWorkflowScheduleRequest, CreateWorkflowScheduleResponse, DeleteWorkflowScheduleRequest,
-    DeleteWorkflowScheduleResponse, ErrorCode, ErrorDetail, GetWorkflowScheduleRequest,
-    GetWorkflowScheduleResponse, ListWorkflowSchedulesRequest, ListWorkflowSchedulesResponse,
-    PageInfo, Payload, UpdateWorkflowScheduleRequest, UpdateWorkflowScheduleResponse,
-    WorkflowSchedule,
+    DeleteWorkflowScheduleResponse, GetWorkflowScheduleRequest, GetWorkflowScheduleResponse,
+    ListWorkflowSchedulesRequest, ListWorkflowSchedulesResponse, PageInfo, Payload,
+    UpdateWorkflowScheduleRequest, UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
 use kagzi_store::{
     CreateSchedule as StoreCreateSchedule, ListSchedulesParams, PgStore, ScheduleRepository,
     UpdateSchedule as StoreUpdateSchedule, clamp_max_catchup,
 };
-use prost::Message;
 use std::collections::HashMap;
 use std::str::FromStr;
-use tonic::{Code, Request, Response, Status};
-
-fn detail(
-    code: ErrorCode,
-    message: impl Into<String>,
-    non_retryable: bool,
-    retry_after_ms: i64,
-    subject: impl Into<String>,
-    subject_id: impl Into<String>,
-) -> ErrorDetail {
-    ErrorDetail {
-        code: code as i32,
-        message: message.into(),
-        non_retryable,
-        retry_after_ms,
-        subject: subject.into(),
-        subject_id: subject_id.into(),
-        metadata: HashMap::new(),
-    }
-}
-
-fn status_with_detail(code: Code, detail: ErrorDetail) -> Status {
-    Status::with_details(code, detail.message.clone(), detail.encode_to_vec().into())
-}
-
-fn invalid_argument(message: impl Into<String>) -> Status {
-    status_with_detail(
-        Code::InvalidArgument,
-        detail(ErrorCode::InvalidArgument, message, true, 0, "", ""),
-    )
-}
-
-fn not_found(
-    message: impl Into<String>,
-    subject: impl Into<String>,
-    id: impl Into<String>,
-) -> Status {
-    status_with_detail(
-        Code::NotFound,
-        detail(ErrorCode::NotFound, message, true, 0, subject, id),
-    )
-}
-
-fn precondition_failed(message: impl Into<String>) -> Status {
-    status_with_detail(
-        Code::FailedPrecondition,
-        detail(ErrorCode::PreconditionFailed, message, true, 0, "", ""),
-    )
-}
-
-fn internal(message: impl Into<String>) -> Status {
-    status_with_detail(
-        Code::Internal,
-        detail(ErrorCode::Internal, message, true, 0, "", ""),
-    )
-}
-
-fn map_store_error(e: kagzi_store::StoreError) -> Status {
-    match e {
-        kagzi_store::StoreError::NotFound { entity, id } => {
-            not_found(format!("{} not found", entity), entity, id)
-        }
-        kagzi_store::StoreError::InvalidArgument { message } => invalid_argument(message),
-        kagzi_store::StoreError::InvalidState { message } => precondition_failed(message),
-        kagzi_store::StoreError::AlreadyCompleted { message } => precondition_failed(message),
-        kagzi_store::StoreError::LockConflict { message } => precondition_failed(message),
-        kagzi_store::StoreError::PreconditionFailed { message } => precondition_failed(message),
-        kagzi_store::StoreError::Unauthorized { message } => precondition_failed(message),
-        kagzi_store::StoreError::Unavailable { message } => internal(message),
-        kagzi_store::StoreError::Timeout { message } => internal(message),
-        kagzi_store::StoreError::Database(e) => {
-            tracing::error!("Database error: {:?}", e);
-            internal("Database error")
-        }
-        kagzi_store::StoreError::Serialization(e) => {
-            tracing::error!("Serialization error: {:?}", e);
-            internal("Serialization error")
-        }
-    }
-}
-
-fn payload_to_json(payload: Option<Payload>) -> Result<serde_json::Value, Status> {
-    match payload {
-        None => Ok(serde_json::json!(null)),
-        Some(p) if p.data.is_empty() => Ok(serde_json::json!(null)),
-        Some(p) => serde_json::from_slice(&p.data)
-            .map_err(|e| invalid_argument(format!("Payload must be valid JSON: {}", e))),
-    }
-}
-
-fn payload_to_optional_json(payload: Option<Payload>) -> Result<Option<serde_json::Value>, Status> {
-    match payload {
-        None => Ok(None),
-        Some(p) if p.data.is_empty() => Ok(None),
-        Some(p) => serde_json::from_slice(&p.data)
-            .map(Some)
-            .map_err(|e| invalid_argument(format!("Payload must be valid JSON: {}", e))),
-    }
-}
-
-fn json_to_payload(value: serde_json::Value) -> Result<Payload, Status> {
-    let data = serde_json::to_vec(&value)
-        .map_err(|e| internal(format!("Failed to serialize payload: {}", e)))?;
-    Ok(Payload {
-        data,
-        metadata: HashMap::new(),
-    })
-}
+use tonic::{Request, Response, Status};
 
 fn option_json_to_payload(value: Option<serde_json::Value>) -> Result<Payload, Status> {
     match value {
-        Some(v) => json_to_payload(v),
+        Some(v) => json_to_payload(Some(v)),
         None => Ok(Payload {
             data: Vec::new(),
             metadata: HashMap::new(),
@@ -164,7 +61,7 @@ fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timesta
 }
 
 fn workflow_schedule_to_proto(s: kagzi_store::Schedule) -> Result<WorkflowSchedule, Status> {
-    let input = json_to_payload(s.input)?;
+    let input = json_to_payload(Some(s.input))?;
     let context = option_json_to_payload(s.context)?;
 
     Ok(WorkflowSchedule {

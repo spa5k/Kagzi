@@ -79,15 +79,15 @@ fn map_step_kind(kind: StoreStepKind) -> kagzi_proto::kagzi::StepKind {
 fn step_to_proto(s: kagzi_store::StepRun) -> Result<Step, Status> {
     let input = json_to_payload(s.input)?;
     let output = json_to_payload(s.output)?;
-    let error = kagzi_proto::kagzi::ErrorDetail {
+    let error = s.error.map(|msg| kagzi_proto::kagzi::ErrorDetail {
         code: kagzi_proto::kagzi::ErrorCode::Unspecified as i32,
-        message: s.error.unwrap_or_default(),
+        message: msg,
         non_retryable: false,
         retry_after_ms: 0,
         subject: String::new(),
         subject_id: String::new(),
         metadata: std::collections::HashMap::new(),
-    };
+    });
 
     let step_id = s.step_id.clone();
 
@@ -101,7 +101,7 @@ fn step_to_proto(s: kagzi_store::StepRun) -> Result<Step, Status> {
         attempt_number: s.attempt_number,
         input: Some(input),
         output: Some(output),
-        error: Some(error),
+        error,
         created_at: s.created_at.map(timestamp_from),
         started_at: s.started_at.map(timestamp_from),
         finished_at: s.finished_at.map(timestamp_from),
@@ -428,7 +428,7 @@ impl AdminService for AdminServiceImpl {
             timestamp: Some(prost_types::Timestamp {
                 seconds: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs() as i64,
                 nanos: 0,
             }),

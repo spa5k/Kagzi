@@ -366,7 +366,9 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?
         {
-            let _ = self.store.workers().update_active_count(worker_id, 1).await;
+            if let Err(e) = self.store.workers().update_active_count(worker_id, 1).await {
+                tracing::warn!(worker_id = %worker_id, error = ?e, "Failed to update active count");
+            }
 
             let payload = json_to_payload(Some(work_item.input))?;
 
@@ -403,7 +405,13 @@ impl WorkerService for WorkerServiceImpl {
             .await
         {
             Some(work_item) => {
-                let _ = self.store.workers().update_active_count(worker_id, 1).await;
+                if let Err(e) = self.store.workers().update_active_count(worker_id, 1).await {
+                    tracing::warn!(
+                        worker_id = %worker_id,
+                        error = ?e,
+                        "Failed to update active count"
+                    );
+                }
 
                 let payload = json_to_payload(Some(work_item.input))?;
 
@@ -557,8 +565,7 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
-        let output_json = payload_to_optional_json(req.output)?
-            .ok_or_else(|| invalid_argument("output payload cannot be null"))?;
+        let output_json = payload_to_optional_json(req.output)?.unwrap_or(serde_json::Value::Null);
 
         self.store
             .steps()
@@ -706,8 +713,7 @@ impl WorkerService for WorkerServiceImpl {
             )));
         }
 
-        let output_json = payload_to_optional_json(req.output)?
-            .ok_or_else(|| invalid_argument("output payload cannot be null"))?;
+        let output_json = payload_to_optional_json(req.output)?.unwrap_or(serde_json::Value::Null);
 
         self.store
             .workflows()

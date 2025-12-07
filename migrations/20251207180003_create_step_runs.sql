@@ -35,7 +35,8 @@ CREATE OR REPLACE FUNCTION kagzi.create_step_attempt(
     p_run_id UUID,
     p_step_id TEXT,
     p_attempt_number INTEGER DEFAULT 1,
-    p_input JSONB DEFAULT NULL
+    p_input JSONB DEFAULT NULL,
+    p_status TEXT DEFAULT 'PENDING'
 ) RETURNS UUID AS $$
 DECLARE
     v_attempt_id UUID;
@@ -45,9 +46,9 @@ BEGIN
     WHERE run_id = p_run_id AND step_id = p_step_id;
 
     INSERT INTO kagzi.step_runs (
-        run_id, step_id, attempt_number, is_latest, input, created_at
+        run_id, step_id, attempt_number, is_latest, input, created_at, status
     ) VALUES (
-        p_run_id, p_step_id, p_attempt_number, true, p_input, NOW()
+        p_run_id, p_step_id, p_attempt_number, true, p_input, NOW(), p_status
     ) RETURNING attempt_id INTO v_attempt_id;
 
     RETURN v_attempt_id;

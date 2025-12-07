@@ -37,22 +37,16 @@ message ListWorkersResponse {
   PageInfo page = 2;
 }
 
-message GetWorkerRequest {
-  string worker_id = 1;
-}
+message GetWorkerRequest { string worker_id = 1; }
 
-message GetWorkerResponse {
-  Worker worker = 1;
-}
+message GetWorkerResponse { Worker worker = 1; }
 
 message GetStepRequest {
   string step_id = 1;
   string namespace_id = 2;
 }
 
-message GetStepResponse {
-  Step step = 1;
-}
+message GetStepResponse { Step step = 1; }
 
 message ListStepsRequest {
   string run_id = 1;
@@ -69,16 +63,15 @@ message ListStepsResponse {
 // HEALTH & INFO MESSAGES
 // ============================================
 
-message HealthCheckRequest {
-  optional string service = 1;
+message HealthCheckRequest { optional string service = 1; }
+
+enum ServingStatus {
+  SERVING_STATUS_UNSPECIFIED = 0;
+  SERVING = 1;
+  NOT_SERVING = 2;
 }
 
 message HealthCheckResponse {
-  enum ServingStatus {
-    SERVING_STATUS_UNSPECIFIED = 0;
-    SERVING = 1;
-    NOT_SERVING = 2;
-  }
   ServingStatus status = 1;
   string message = 2;
   google.protobuf.Timestamp timestamp = 3;
@@ -92,4 +85,3 @@ message GetServerInfoResponse {
   repeated string supported_features = 3;
   string min_sdk_version = 4;
 }
-

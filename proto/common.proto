@@ -8,7 +8,7 @@ import "google/protobuf/timestamp.proto";
 // ============================================
 message Payload {
   bytes data = 1;
-  map<string, string> metadata = 2;  // encoding, content-type, etc.
+  map<string, string> metadata = 2; // encoding, content-type, etc.
 }
 
 // ============================================
@@ -61,4 +61,3 @@ message RetryPolicy {
   int64 maximum_interval_ms = 4;
   repeated string non_retryable_errors = 5;
 }
-

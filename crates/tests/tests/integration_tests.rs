@@ -35,7 +35,7 @@ async fn register_worker(harness: &TestHarness, workflow_types: Vec<&str>) -> St
             version: "test".to_string(),
             max_concurrent: 5,
             labels: Default::default(),
-            queue_concurrency_limit: Some(0),
+            queue_concurrency_limit: None,
             workflow_type_concurrency: vec![],
         }))
         .await

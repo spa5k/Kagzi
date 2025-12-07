@@ -106,6 +106,12 @@ impl WorkflowService for WorkflowServiceImpl {
         if req.external_id.is_empty() {
             return Err(invalid_argument("external_id is required"));
         }
+        if req.task_queue.is_empty() {
+            return Err(invalid_argument("task_queue is required"));
+        }
+        if req.workflow_type.is_empty() {
+            return Err(invalid_argument("workflow_type is required"));
+        }
 
         let input_json = payload_to_json(req.input)?;
         let context_json = payload_to_optional_json(req.context)?;
@@ -146,10 +152,13 @@ impl WorkflowService for WorkflowServiceImpl {
                 namespace_id: namespace_id.clone(),
                 idempotency_suffix: None,
                 context: context_json,
-                deadline_at: req.deadline_at.map(|ts| {
-                    chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
-                        .unwrap_or_default()
-                }),
+                deadline_at: req
+                    .deadline_at
+                    .map(|ts| {
+                        chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+                            .ok_or_else(|| invalid_argument("Invalid deadline_at timestamp"))
+                    })
+                    .transpose()?,
                 version,
                 retry_policy: merge_proto_policy(req.retry_policy, None),
             })
