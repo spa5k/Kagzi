@@ -3,13 +3,11 @@ use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
     log_grpc_response,
 };
-use kagzi_proto::kagzi::admin_service_server::AdminService;
-use kagzi_proto::kagzi::health_check_response::ServingStatus;
 use kagzi_proto::kagzi::{
     GetServerInfoRequest, GetServerInfoResponse, GetStepRequest, GetStepResponse, GetWorkerRequest,
     GetWorkerResponse, HealthCheckRequest, HealthCheckResponse, ListStepsRequest,
-    ListStepsResponse, ListWorkersRequest, ListWorkersResponse, PageInfo, Step, Worker,
-    WorkerStatus,
+    ListStepsResponse, ListWorkersRequest, ListWorkersResponse, PageInfo, ServingStatus, Step,
+    Worker, WorkerStatus, admin_service_server::AdminService,
 };
 use kagzi_store::{
     PgStore, StepKind as StoreStepKind, StepRepository, WorkerRepository,
