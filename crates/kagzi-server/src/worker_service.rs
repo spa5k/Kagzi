@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::time::Duration;
 use tonic::{Request, Response, Status};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
@@ -722,6 +722,21 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?;
 
+        if let Some(locked_by) = workflow_check.locked_by {
+            if let Ok(worker_uuid) = Uuid::parse_str(&locked_by) {
+                if let Err(e) = self
+                    .store
+                    .workers()
+                    .update_active_count(worker_uuid, -1)
+                    .await
+                {
+                    warn!(worker_id = %locked_by, error = ?e, "Failed to decrement active_count after completion");
+                }
+            } else {
+                warn!(worker_id = %locked_by, "Invalid worker_id stored in locked_by; active_count not decremented");
+            }
+        }
+
         log_grpc_response(
             "CompleteWorkflow",
             &correlation_id,
@@ -764,11 +779,34 @@ impl WorkerService for WorkerServiceImpl {
             metadata: HashMap::new(),
         });
 
+        let workflow_status = self
+            .store
+            .workflows()
+            .check_status(run_id)
+            .await
+            .map_err(map_store_error)?;
+
         self.store
             .workflows()
             .fail(run_id, &error_detail.message)
             .await
             .map_err(map_store_error)?;
+
+        // Decrement active count for the worker that held the lock, if any.
+        if let Some(locked_by) = workflow_status.locked_by {
+            if let Ok(worker_uuid) = Uuid::parse_str(&locked_by) {
+                if let Err(e) = self
+                    .store
+                    .workers()
+                    .update_active_count(worker_uuid, -1)
+                    .await
+                {
+                    warn!(worker_id = %locked_by, error = ?e, "Failed to decrement active_count after failure");
+                }
+            } else {
+                warn!(worker_id = %locked_by, "Invalid worker_id stored in locked_by; active_count not decremented");
+            }
+        }
 
         log_grpc_response(
             "FailWorkflow",

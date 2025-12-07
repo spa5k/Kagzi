@@ -12,6 +12,14 @@ fn interval_from_env() -> Duration {
         .unwrap_or_else(|| Duration::from_secs(1))
 }
 
+fn stale_threshold_from_env() -> i64 {
+    std::env::var("KAGZI_WORKER_STALE_THRESHOLD_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(30)
+}
+
 pub fn spawn(store: PgStore, shutdown: CancellationToken) {
     let interval = interval_from_env();
     info!(
@@ -156,6 +164,7 @@ async fn run_find_orphaned(store: PgStore, shutdown: CancellationToken, interval
 
 async fn run_mark_stale(store: PgStore, shutdown: CancellationToken, interval: Duration) {
     let mut ticker = tokio::time::interval(interval);
+    let threshold = stale_threshold_from_env();
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
@@ -163,7 +172,7 @@ async fn run_mark_stale(store: PgStore, shutdown: CancellationToken, interval: D
                 break;
             }
             _ = ticker.tick() => {
-                match store.workers().mark_stale_offline(30).await {
+                match store.workers().mark_stale_offline(threshold).await {
                     Ok(count) if count > 0 => {
                         warn!("Marked {} stale workers as offline", count);
                     }

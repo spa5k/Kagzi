@@ -50,7 +50,7 @@ impl WorkDistributor {
         let pos = entry
             .iter()
             .position(|c| supported_types.iter().any(|t| t == &c.workflow_type))?;
-        Some(entry.remove(pos).unwrap_or_else(|| unreachable!()))
+        entry.remove(pos)
     }
 
     async fn replenish_cache(

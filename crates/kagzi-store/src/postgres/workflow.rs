@@ -584,6 +584,57 @@ impl WorkflowRepository for PgWorkflowRepository {
                     (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
                     OR (status = 'SLEEPING' AND wake_up_at <= NOW())
                   )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM kagzi.workflow_runs wr
+                    WHERE wr.run_id = $1
+                      AND COALESCE(
+                            (
+                              SELECT max_concurrent
+                              FROM kagzi.queue_configs qc
+                              WHERE qc.namespace_id = wr.namespace_id AND qc.task_queue = wr.task_queue
+                            ),
+                            $3::INT
+                          ) > COALESCE(
+                            (
+                              SELECT SUM(active_count)
+                              FROM kagzi.workers w
+                              WHERE w.task_queue = wr.task_queue
+                                AND w.namespace_id = wr.namespace_id
+                                AND w.status = 'ONLINE'
+                            ),
+                            0
+                          )
+                  )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM kagzi.workflow_runs wr
+                    WHERE wr.run_id = $1
+                      AND COALESCE(
+                            (
+                              SELECT max_concurrent
+                              FROM kagzi.workflow_type_configs cfg
+                              WHERE cfg.namespace_id = wr.namespace_id
+                                AND cfg.task_queue = wr.task_queue
+                                AND cfg.workflow_type = wr.workflow_type
+                            ),
+                            COALESCE(
+                              (
+                                SELECT max_concurrent
+                                FROM kagzi.queue_configs qc
+                                WHERE qc.namespace_id = wr.namespace_id AND qc.task_queue = wr.task_queue
+                              ),
+                              $3::INT
+                            )
+                          ) > (
+                            SELECT COUNT(*)
+                            FROM kagzi.workflow_runs r
+                            WHERE r.task_queue = wr.task_queue
+                              AND r.namespace_id = wr.namespace_id
+                              AND r.workflow_type = wr.workflow_type
+                              AND r.status = 'RUNNING'
+                          )
+                  )
                 RETURNING run_id, workflow_type, locked_by
             )
             SELECT c.run_id, c.workflow_type, p.input, c.locked_by
@@ -593,6 +644,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         )
         .bind(run_id)
         .bind(worker_id)
+        .bind(DEFAULT_QUEUE_CONCURRENCY_LIMIT)
         .fetch_optional(&self.pool)
         .await?;
 

@@ -41,9 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the background watchdog
     let watchdog_store = store.clone();
     let watchdog_token = shutdown.child_token();
-    tokio::spawn(async move {
-        watchdog::spawn(watchdog_store, watchdog_token);
-    });
+    watchdog::spawn(watchdog_store, watchdog_token);
 
     // Start the scheduler loop
     let scheduler_store = store.clone();
