@@ -92,7 +92,6 @@ impl StoreError {
         }
     }
 
-    /// Check if this error is a unique constraint violation (idempotency conflict)
     pub fn is_unique_violation(&self) -> bool {
         matches!(self, Self::Database(sqlx::Error::Database(db_err)) if db_err.code().is_some_and(|c| c == "23505"))
     }

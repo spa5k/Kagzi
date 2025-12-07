@@ -234,7 +234,6 @@ impl TestResults {
             self.fail(test_name, on_fail);
         }
     }
-
     #[allow(dead_code)]
     fn assert_some<T>(&self, test_name: &str, value: &Option<T>, on_fail: &str) {
         if value.is_some() {

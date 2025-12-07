@@ -1,15 +1,9 @@
-//! Tracing utilities for the Kagzi SDK
-//!
-//! Provides correlation ID and trace ID propagation for distributed tracing.
-
 use std::cell::RefCell;
 use tonic::{Request, metadata::MetadataKey};
 use uuid::Uuid;
 
-/// Correlation ID metadata key for gRPC
 pub const CORRELATION_ID_KEY: &str = "x-correlation-id";
 
-/// Trace ID metadata key for distributed tracing  
 pub const TRACE_ID_KEY: &str = "x-trace-id";
 
 // Task-local storage for tracing context
@@ -18,21 +12,18 @@ tokio::task_local! {
     static TRACE_ID: RefCell<Option<String>>;
 }
 
-/// Set the correlation ID for the current task scope
 pub fn set_correlation_id(id: String) {
     let _ = CORRELATION_ID.try_with(|cell| {
         *cell.borrow_mut() = Some(id);
     });
 }
 
-/// Set the trace ID for the current task scope
 pub fn set_trace_id(id: String) {
     let _ = TRACE_ID.try_with(|cell| {
         *cell.borrow_mut() = Some(id);
     });
 }
 
-/// Get the correlation ID for the current context, or generate a new one
 pub fn get_or_generate_correlation_id() -> String {
     CORRELATION_ID
         .try_with(|cell| cell.borrow().clone())
@@ -41,7 +32,6 @@ pub fn get_or_generate_correlation_id() -> String {
         .unwrap_or_else(|| Uuid::new_v4().to_string())
 }
 
-/// Get the trace ID for the current context, or generate a new one
 pub fn get_or_generate_trace_id() -> String {
     TRACE_ID
         .try_with(|cell| cell.borrow().clone())
@@ -50,7 +40,6 @@ pub fn get_or_generate_trace_id() -> String {
         .unwrap_or_else(|| Uuid::new_v4().to_string())
 }
 
-/// Run a future with tracing context (correlation ID and trace ID)
 pub async fn with_tracing_context<F, T>(
     correlation_id: Option<String>,
     trace_id: Option<String>,
@@ -69,7 +58,6 @@ where
         .await
 }
 
-/// Extract tracing context from gRPC request metadata
 pub fn extract_tracing_context<T>(request: &Request<T>) -> (String, String) {
     let metadata = request.metadata();
 
@@ -88,7 +76,6 @@ pub fn extract_tracing_context<T>(request: &Request<T>) -> (String, String) {
     (correlation_id, trace_id)
 }
 
-/// Add tracing metadata to gRPC request
 pub fn add_tracing_metadata<T>(request: Request<T>) -> Request<T> {
     let correlation_id = get_or_generate_correlation_id();
     let trace_id = get_or_generate_trace_id();
@@ -110,8 +97,6 @@ pub fn add_tracing_metadata<T>(request: Request<T>) -> Request<T> {
 
     request
 }
-
-/// Initialize tracing for SDK with JSON structured logging
 #[allow(dead_code)]
 pub fn init_tracing() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -126,7 +111,6 @@ pub fn init_tracing() -> anyhow::Result<()> {
 
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

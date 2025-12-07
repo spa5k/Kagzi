@@ -2,13 +2,10 @@ use tonic::Request;
 use tracing_subscriber::prelude::*;
 use uuid::Uuid;
 
-/// Correlation ID metadata key for gRPC
 pub const CORRELATION_ID_KEY: &str = "x-correlation-id";
 
-/// Trace ID metadata key for distributed tracing  
 pub const TRACE_ID_KEY: &str = "x-trace-id";
 
-/// Extract or generate correlation ID from gRPC request metadata
 pub fn extract_or_generate_correlation_id<T>(request: &Request<T>) -> String {
     let metadata = request.metadata();
 
@@ -21,7 +18,6 @@ pub fn extract_or_generate_correlation_id<T>(request: &Request<T>) -> String {
     Uuid::new_v4().to_string()
 }
 
-/// Extract or generate trace ID from gRPC request metadata
 pub fn extract_or_generate_trace_id<T>(request: &Request<T>) -> String {
     let metadata = request.metadata();
 
@@ -33,7 +29,6 @@ pub fn extract_or_generate_trace_id<T>(request: &Request<T>) -> String {
 
     Uuid::new_v4().to_string()
 }
-
 #[allow(dead_code)]
 /// Create tracing span with correlation and trace IDs
 pub fn create_request_span(method: &str, correlation_id: &str, trace_id: &str) -> tracing::Span {
@@ -44,8 +39,6 @@ pub fn create_request_span(method: &str, correlation_id: &str, trace_id: &str) -
         trace_id = trace_id,
     )
 }
-
-/// Log gRPC request with correlation context
 pub fn log_grpc_request(
     method: &str,
     correlation_id: &str,
@@ -70,7 +63,6 @@ pub fn log_grpc_request(
     }
 }
 
-/// Log gRPC response with correlation context
 pub fn log_grpc_response(
     method: &str,
     correlation_id: &str,
@@ -134,7 +126,6 @@ pub fn log_grpc_response(
     }
 }
 
-/// Initialize tracing with structured logging
 pub fn init_tracing(service_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .json()

@@ -33,7 +33,6 @@ pub mod tracing_utils;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Error indicating the workflow should pause (e.g., for sleep)
 #[derive(Debug)]
 pub struct WorkflowPaused;
 
@@ -892,7 +891,6 @@ impl Worker {
     }
 }
 
-/// Execute a workflow with proper tracing context
 async fn execute_workflow(
     mut client: WorkerServiceClient<Channel>,
     handler: Arc<WorkflowFn>,

@@ -1,7 +1,6 @@
 use sqlx::postgres::types::PgHasArrayType;
 use sqlx::{Encode, Postgres, QueryBuilder, Type};
 
-/// Column lists reused across repositories to avoid drift.
 pub mod columns {
     pub mod workflow {
         pub const BASE: &str = "\
@@ -39,14 +38,12 @@ version, created_at, updated_at";
     }
 }
 
-/// Helper to build SELECT queries with composable filters.
 pub struct FilterBuilder<'q> {
     builder: QueryBuilder<'q, Postgres>,
     has_where: bool,
 }
 
 impl<'q> FilterBuilder<'q> {
-    /// Start a new SELECT statement.
     pub fn select(columns: &str, table: &str) -> Self {
         let mut builder = QueryBuilder::new("SELECT ");
         builder.push(columns).push(" FROM ").push(table);
@@ -56,7 +53,6 @@ impl<'q> FilterBuilder<'q> {
         }
     }
 
-    /// Append an equality predicate.
     pub fn and_eq<T>(&mut self, column: &str, value: T) -> &mut Self
     where
         T: Encode<'q, Postgres> + Type<Postgres> + 'q,
@@ -66,7 +62,6 @@ impl<'q> FilterBuilder<'q> {
         self
     }
 
-    /// Append an optional equality predicate.
     pub fn and_optional_eq<T>(&mut self, column: &str, value: Option<T>) -> &mut Self
     where
         T: Encode<'q, Postgres> + Type<Postgres> + 'q,
@@ -77,7 +72,6 @@ impl<'q> FilterBuilder<'q> {
         self
     }
 
-    /// Append an IN predicate if the slice is non-empty.
     pub fn and_in<T>(&mut self, column: &str, values: &'q [T]) -> &mut Self
     where
         T: Encode<'q, Postgres> + Type<Postgres> + PgHasArrayType + 'q,
@@ -94,12 +88,10 @@ impl<'q> FilterBuilder<'q> {
         self
     }
 
-    /// Access the inner builder for final ordering/limits.
     pub fn builder(&mut self) -> &mut QueryBuilder<'q, Postgres> {
         &mut self.builder
     }
 
-    /// Finalize into the underlying QueryBuilder.
     pub fn finalize(self) -> QueryBuilder<'q, Postgres> {
         self.builder
     }
@@ -114,12 +106,10 @@ impl<'q> FilterBuilder<'q> {
     }
 }
 
-/// Helper to bind a limit safely.
 pub fn push_limit(builder: &mut QueryBuilder<'_, Postgres>, limit: i64) {
     builder.push(" LIMIT ").push_bind(limit);
 }
 
-/// Helper to build a cursor tuple predicate `(col1, col2) < (...)`.
 pub fn push_tuple_cursor(
     builder: &mut QueryBuilder<'_, Postgres>,
     columns: &[&str],

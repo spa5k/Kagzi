@@ -8,7 +8,6 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use testcontainers::{ContainerAsync, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
-
 /// Test harness that manages PostgreSQL container lifecycle
 #[allow(dead_code)]
 pub struct TestHarness {
@@ -19,7 +18,6 @@ pub struct TestHarness {
     pub admin_service: AdminServiceImpl,
     _container: ContainerAsync<Postgres>,
 }
-
 impl TestHarness {
     /// Create a new test harness with a fresh PostgreSQL container
     pub async fn new() -> Self {
@@ -70,7 +68,6 @@ impl TestHarness {
             _container: container,
         }
     }
-
     /// Clean up test data between tests (useful for test isolation if running multiple scenarios)
     #[allow(dead_code)]
     pub async fn cleanup(&self) {

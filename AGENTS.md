@@ -337,3 +337,46 @@ Prioritize using time and word count for:
 - Correctness and robustness;
 - Maintainability and evolution strategy.
 - When important information is missing and there is no need to clarify it, minimize unnecessary back-and-forth and question-based dialogue, and directly provide high-quality conclusions and implementation suggestions.
+
+# Kagzi Development Guide
+
+## Build Commands
+
+**Build all crates:** `just build` (builds proto first, then workspace)
+**Build proto only:** `just build-proto` (generates Rust code from .proto files)
+**Format code:** `cargo fmt --all` or `just tidy`
+**Lint:** `cargo clippy --all-targets --all-features -- -D warnings` or `just lint`
+
+## Test Commands
+
+**All tests:** `cargo test --all` or `just test`
+**Unit tests only:** `cargo test --lib --all` or `just test-unit`
+**Integration tests:** `KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests -- --test-threads=1` or `just test-integration`
+**Single integration test:** `just test-one <test_name>`
+**Verbose integration:** `just test-integration-verbose`
+
+## Code Style Guidelines
+
+**Language:** Rust 2024 edition, workspace with multiple crates
+**Naming:** `snake_case` for functions/variables, `PascalCase` for types/structs
+**Imports:** Group std imports, then external crates, then local modules
+**Error handling:** Use `anyhow::Result` for application errors, `thiserror` for custom error types
+**Async:** Use `tokio` runtime, `#[instrument]` for tracing with correlation/trace IDs
+**Database:** PostgreSQL with `sqlx`, migrations in `migrations/` directory
+**Serialization:** `serde` with JSON, use `serde_json::Value` for dynamic payloads
+**Tracing:** Structured logging with `tracing`, include correlation_id and trace_id fields
+**gRPC:** Use `tonic` with prost for protobuf code generation
+
+## Development Workflow
+
+**Setup:** `just setup` (resets DB, builds, runs migrations)
+**Development server:** `just dev` (runs kagzi-server on 0.0.0.0:50051)
+**Database:** `just db-up`/`just db-down`, `just migrate` for schema changes
+**gRPC UI:** `just grpcui` (requires grpcui installed)
+
+## Testing Requirements
+
+- Unit tests should not require Docker
+- Integration tests require PostgreSQL running
+- Use `KAGZI_POLL_TIMEOUT_SECS=2` for faster integration tests
+- Always run `just lint` before committing changes
