@@ -159,14 +159,14 @@ proto/
 
 ### Checklist
 
-- [ ] Add `package kagzi.v1` to all proto files
-- [ ] Add `Payload` message to `common.proto`
-- [ ] Add `PageRequest`/`PageInfo` to `common.proto`
-- [ ] Enhance `ErrorDetail` with metadata field
-- [ ] Delete `errors.proto` (merge into common)
-- [ ] Delete `kagzi.proto` (empty umbrella)
-- [ ] Update `build.rs` if needed
-- [ ] Verify proto compilation
+- [x] Add `package kagzi.v1` to all proto files
+- [x] Add `Payload` message to `common.proto`
+- [x] Add `PageRequest`/`PageInfo` to `common.proto`
+- [x] Enhance `ErrorDetail` with metadata field
+- [x] Delete `errors.proto` (merge into common)
+- [x] Delete `kagzi.proto` (empty umbrella)
+- [x] Update `build.rs` if needed
+- [x] Verify proto compilation (cargo build -p kagzi-proto, cargo test --all)
 
 ---
 
@@ -302,18 +302,21 @@ Extract workflow-related handlers from `service.rs`.
 ```
 proto/workflow.proto                           # MODIFIED
 crates/kagzi-server/src/workflow_service.rs    # NEW
-crates/kagzi-server/src/service.rs             # MODIFIED: Remove workflow RPCs
-crates/kagzi-server/src/main.rs                # MODIFIED: Register WorkflowService
+crates/kagzi-server/src/service.rs             # MODIFIED: Workflow RPCs removed, legacy service gated behind feature
+crates/kagzi-server/src/main.rs                # MODIFIED: Register WorkflowServiceImpl
+crates/kagzi-server/Cargo.toml                 # MODIFIED: Add legacy-service feature flag
 ```
 
 ### Checklist
 
-- [ ] Update `workflow.proto` with new structure
-- [ ] Create `workflow_service.rs` with extracted handlers
-- [ ] Remove workflow RPCs from old `service.rs`
-- [ ] Register `WorkflowService` in `main.rs`
-- [ ] Update proto imports
-- [ ] Test workflow operations
+- [x] Update `workflow.proto` with new structure
+- [x] Create `workflow_service.rs` with extracted handlers
+- [x] Remove workflow RPCs from old `service.rs`
+- [x] Register `WorkflowService` in `main.rs`
+- [x] Update proto imports
+- [ ] Test workflow operations (grpcurl/manual)
+
+**Progress (Dec 2025):** PR2 implemented in codebase. Workflow RPCs extracted to dedicated `WorkflowServiceImpl`; monolithic service is gated by `legacy-service` feature. Builds pass (`cargo build -p kagzi-proto -p kagzi-server`). Non-workflow RPCs are temporarily unavailable until PR3-5 land.
 
 ---
 

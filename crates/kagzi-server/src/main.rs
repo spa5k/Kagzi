@@ -1,5 +1,5 @@
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
-use kagzi_server::{MyWorkflowService, run_scheduler, tracing_utils, watchdog};
+use kagzi_server::{WorkflowServiceImpl, run_scheduler, tracing_utils, watchdog};
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let addr = "0.0.0.0:50051".parse()?;
-    let service = MyWorkflowService::new(store);
+    let service = WorkflowServiceImpl::new(store);
 
     info!("Kagzi Server listening on {}", addr);
 

@@ -473,6 +473,9 @@ impl MyWorkflowService {
     }
 }
 
+// Legacy monolithic service (worker/schedule/admin) kept for future PRs.
+// Disabled by default after WorkflowService extraction.
+#[cfg(feature = "legacy-service")]
 #[tonic::async_trait]
 impl WorkflowService for MyWorkflowService {
     async fn register_worker(
