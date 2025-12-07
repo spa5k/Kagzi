@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedWorkflows,
-    RetryPolicy, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
+    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
 };
 use crate::postgres::columns;
 use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
@@ -73,6 +73,13 @@ struct ClaimedRow {
     workflow_type: String,
     input: serde_json::Value,
     locked_by: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CandidateRow {
+    run_id: Uuid,
+    workflow_type: String,
+    wake_up_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Clone)]
@@ -461,9 +468,10 @@ impl WorkflowRepository for PgWorkflowRepository {
                     (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
                     OR (status = 'SLEEPING' AND wake_up_at <= NOW())
                   )
-                  AND (SELECT queue_limit FROM limits) > (
-                    SELECT COUNT(*) FROM kagzi.workflow_runs r
-                    WHERE r.task_queue = $2 AND r.namespace_id = $3 AND r.status = 'RUNNING'
+                  AND (SELECT queue_limit FROM limits) > COALESCE(
+                    (SELECT SUM(active_count) FROM kagzi.workers w
+                     WHERE w.task_queue = $2 AND w.namespace_id = $3 AND w.status = 'ONLINE'),
+                    0
                   )
                   AND (
                     COALESCE(
@@ -501,6 +509,90 @@ impl WorkflowRepository for PgWorkflowRepository {
         .bind(namespace_id)
         .bind(supported_types)
         .bind(queue_limit)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| ClaimedWorkflow {
+            run_id: r.run_id,
+            workflow_type: r.workflow_type,
+            input: r.input,
+            locked_by: r.locked_by,
+        }))
+    }
+
+    #[instrument(skip(self, supported_types))]
+    async fn scan_available(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        supported_types: &[String],
+        limit: i32,
+    ) -> Result<Vec<WorkCandidate>, StoreError> {
+        let rows: Vec<CandidateRow> = sqlx::query_as(
+            r#"
+            SELECT run_id, workflow_type, wake_up_at
+            FROM kagzi.workflow_runs
+            WHERE task_queue = $1
+              AND namespace_id = $2
+              AND (
+                array_length($3::TEXT[], 1) IS NULL
+                OR array_length($3::TEXT[], 1) = 0
+                OR workflow_type = ANY($3::TEXT[])
+              )
+              AND (
+                (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
+                OR (status = 'SLEEPING' AND wake_up_at <= NOW())
+              )
+            ORDER BY COALESCE(wake_up_at, created_at) ASC
+            LIMIT $4
+            "#,
+        )
+        .bind(task_queue)
+        .bind(namespace_id)
+        .bind(supported_types)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| WorkCandidate {
+                run_id: r.run_id,
+                workflow_type: r.workflow_type,
+                wake_up_at: r.wake_up_at,
+            })
+            .collect())
+    }
+
+    #[instrument(skip(self))]
+    async fn claim_by_id(
+        &self,
+        run_id: Uuid,
+        worker_id: &str,
+    ) -> Result<Option<ClaimedWorkflow>, StoreError> {
+        let row = sqlx::query_as::<_, ClaimedRow>(
+            r#"
+            WITH claimed AS (
+                UPDATE kagzi.workflow_runs
+                SET status = 'RUNNING',
+                    locked_by = $2,
+                    locked_until = NOW() + INTERVAL '30 seconds',
+                    started_at = COALESCE(started_at, NOW()),
+                    attempts = attempts + 1
+                WHERE run_id = $1
+                  AND (
+                    (status = 'PENDING' AND (wake_up_at IS NULL OR wake_up_at <= NOW()))
+                    OR (status = 'SLEEPING' AND wake_up_at <= NOW())
+                  )
+                RETURNING run_id, workflow_type, locked_by
+            )
+            SELECT c.run_id, c.workflow_type, p.input, c.locked_by
+            FROM claimed c
+            JOIN kagzi.workflow_payloads p ON c.run_id = p.run_id
+            "#,
+        )
+        .bind(run_id)
+        .bind(worker_id)
         .fetch_optional(&self.pool)
         .await?;
 

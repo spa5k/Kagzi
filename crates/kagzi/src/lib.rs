@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
@@ -591,6 +592,8 @@ impl WorkerBuilder {
             heartbeat_interval: Duration::from_secs(10),
             semaphore: Arc::new(Semaphore::new(self.max_concurrent)),
             shutdown: CancellationToken::new(),
+            completed_counter: Arc::new(AtomicI32::new(0)),
+            failed_counter: Arc::new(AtomicI32::new(0)),
         })
     }
 }
@@ -612,6 +615,8 @@ pub struct Worker {
     heartbeat_interval: Duration,
     semaphore: Arc<Semaphore>,
     shutdown: CancellationToken,
+    completed_counter: Arc<AtomicI32>,
+    failed_counter: Arc<AtomicI32>,
 }
 
 impl Worker {
@@ -770,17 +775,19 @@ impl Worker {
         let max = self.max_concurrent;
         let interval = self.heartbeat_interval;
         let shutdown = self.shutdown.clone();
+        let completed_counter = self.completed_counter.clone();
+        let failed_counter = self.failed_counter.clone();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
-            let mut completed: i32 = 0;
-            let mut failed: i32 = 0;
 
             loop {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
                     _ = ticker.tick() => {
                         let active = (max - semaphore.available_permits()) as i32;
+                        let completed = completed_counter.swap(0, Ordering::Relaxed);
+                        let failed = failed_counter.swap(0, Ordering::Relaxed);
 
                         let resp = client.heartbeat(HeartbeatRequest {
                             worker_id: worker_id.to_string(),
@@ -788,9 +795,6 @@ impl Worker {
                             completed_delta: completed,
                             failed_delta: failed,
                         }).await;
-
-                        completed = 0;
-                        failed = 0;
 
                         match resp {
                             Ok(r) => {
@@ -855,6 +859,8 @@ impl Worker {
                     };
                     let run_id = task.run_id.clone();
                     let default_step_retry = self.default_step_retry.clone();
+                    let completed_counter = self.completed_counter.clone();
+                    let failed_counter = self.failed_counter.clone();
 
                     tokio::spawn(async move {
                         let _permit = permit;
@@ -872,6 +878,8 @@ impl Worker {
                                 correlation_id,
                                 trace_id,
                                 default_step_retry,
+                                completed_counter,
+                                failed_counter,
                             ),
                         )
                         .await;
@@ -891,6 +899,7 @@ impl Worker {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_workflow(
     mut client: WorkerServiceClient<Channel>,
     handler: Arc<WorkflowFn>,
@@ -899,6 +908,8 @@ async fn execute_workflow(
     correlation_id: String,
     trace_id: String,
     default_step_retry: Option<RetryPolicy>,
+    completed_counter: Arc<AtomicI32>,
+    failed_counter: Arc<AtomicI32>,
 ) {
     let ctx = WorkflowContext {
         client: client.clone(),
@@ -932,6 +943,7 @@ async fn execute_workflow(
             }));
 
             let _ = client.complete_workflow(complete_request).await;
+            completed_counter.fetch_add(1, Ordering::Relaxed);
         }
         Err(e) => {
             if e.downcast_ref::<WorkflowPaused>().is_some() {
@@ -963,6 +975,7 @@ async fn execute_workflow(
             }));
 
             let _ = client.fail_workflow(fail_request).await;
+            failed_counter.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
