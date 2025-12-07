@@ -30,13 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         })?;
 
-    sqlx::migrate!("../../migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to run migrations: {:?}", e);
-            e
-        })?;
+    run_migrations(&pool).await?;
 
     // Create the store
     let store = PgStore::new(pool);
@@ -75,6 +69,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(reflection_service)
         .serve(addr)
         .await?;
+
+    Ok(())
+}
+
+async fn run_migrations(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    sqlx::migrate!("../../migrations")
+        .run(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to run migrations: {:?}", e);
+            e
+        })?;
 
     Ok(())
 }

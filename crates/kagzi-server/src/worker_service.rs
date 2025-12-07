@@ -46,7 +46,9 @@ fn map_step_kind(kind: kagzi_store::StepKind) -> StepKind {
 }
 
 fn map_proto_step_kind(kind: i32) -> Result<StoreStepKind, Status> {
-    match StepKind::from_i32(kind).unwrap_or(StepKind::Unspecified) {
+    let kind = StepKind::try_from(kind).map_err(|_| invalid_argument("step kind is required"))?;
+
+    match kind {
         StepKind::Function => Ok(StoreStepKind::Function),
         StepKind::Sleep => Ok(StoreStepKind::Sleep),
         StepKind::Unspecified => Err(invalid_argument("step kind is required")),

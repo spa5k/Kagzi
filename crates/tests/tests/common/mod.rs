@@ -49,19 +49,6 @@ impl TestHarness {
             .await
             .expect("Failed to connect to test database");
 
-        // Enable pgcrypto extension for gen_random_uuid() function
-        sqlx::query("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-            .execute(&pool)
-            .await
-            .expect("Failed to create pgcrypto extension");
-
-        // Create schema and run migrations
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS kagzi")
-            .execute(&pool)
-            .await
-            .expect("Failed to create schema");
-
-        // Run migrations from the migrations folder
         sqlx::migrate!("../../migrations")
             .run(&pool)
             .await

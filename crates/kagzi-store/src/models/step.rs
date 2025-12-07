@@ -13,6 +13,15 @@ pub enum StepKind {
     Sleep,
 }
 
+impl StepKind {
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            StepKind::Function => "FUNCTION",
+            StepKind::Sleep => "SLEEP",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
