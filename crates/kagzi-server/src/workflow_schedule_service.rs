@@ -329,7 +329,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 Some(candidate)
             }
         } else if let Some(ts) = req.next_fire_at {
-            chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+            let dt = chrono::DateTime::<Utc>::from_timestamp(ts.seconds, ts.nanos as u32)
+                .ok_or_else(|| invalid_argument("next_fire_at is out of supported range"))?;
+            Some(dt)
         } else {
             None
         };

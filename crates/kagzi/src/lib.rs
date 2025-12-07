@@ -12,9 +12,9 @@ use kagzi_proto::kagzi::{
     BeginStepRequest, CompleteStepRequest, CompleteWorkflowRequest, CreateWorkflowScheduleRequest,
     DeleteWorkflowScheduleRequest, DeregisterRequest, ErrorCode, ErrorDetail, FailStepRequest,
     FailWorkflowRequest, GetWorkflowScheduleRequest, HeartbeatRequest,
-    ListWorkflowSchedulesRequest, PageRequest, Payload as ProtoPayload, Payload as SchedulePayload,
-    PollTaskRequest, RegisterRequest, SleepRequest, StartWorkflowRequest, StepKind,
-    WorkflowSchedule, WorkflowTypeConcurrency as ProtoWorkflowTypeConcurrency,
+    ListWorkflowSchedulesRequest, PageRequest, Payload as ProtoPayload, PollTaskRequest,
+    RegisterRequest, SleepRequest, StartWorkflowRequest, StepKind, WorkflowSchedule,
+    WorkflowTypeConcurrency as ProtoWorkflowTypeConcurrency,
 };
 use prost::Message;
 use serde::Serialize;
@@ -913,10 +913,22 @@ async fn execute_workflow(
 
     match result {
         Ok(output) => {
+            let data = match serde_json::to_vec(&output) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    error!(
+                        run_id = %run_id,
+                        error = %e,
+                        "Failed to serialize workflow output"
+                    );
+                    return; // Let workflow retry or fail explicitly
+                }
+            };
+
             let complete_request = add_tracing_metadata(Request::new(CompleteWorkflowRequest {
                 run_id,
                 output: Some(ProtoPayload {
-                    data: serde_json::to_vec(&output).unwrap_or_default(),
+                    data,
                     metadata: HashMap::new(),
                 }),
             }));
@@ -1239,11 +1251,11 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
             cron_expr: self.cron_expr,
-            input: Some(SchedulePayload {
+            input: Some(ProtoPayload {
                 data: input_bytes,
                 metadata: HashMap::new(),
             }),
-            context: context_bytes.map(|data| SchedulePayload {
+            context: context_bytes.map(|data| ProtoPayload {
                 data,
                 metadata: HashMap::new(),
             }),

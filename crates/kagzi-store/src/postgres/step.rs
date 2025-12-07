@@ -148,7 +148,20 @@ impl PgStepRepository {
         }))
     }
 
-    async fn latest_step_kind(&self, run_id: Uuid, step_id: &str) -> Result<StepKind, StoreError> {
+    async fn latest_step_kind_strict(
+        &self,
+        run_id: Uuid,
+        step_id: &str,
+    ) -> Result<StepKind, StoreError> {
+        self.latest_step_kind_impl(run_id, step_id, true).await
+    }
+
+    async fn latest_step_kind_impl(
+        &self,
+        run_id: Uuid,
+        step_id: &str,
+        strict: bool,
+    ) -> Result<StepKind, StoreError> {
         let kind = sqlx::query_scalar::<_, String>(
             r#"
                 SELECT step_kind
@@ -159,21 +172,29 @@ impl PgStepRepository {
         .bind(run_id)
         .bind(step_id)
         .fetch_optional(&self.pool)
-        .await?
-        .map(|s| match s.as_str() {
-            "SLEEP" => StepKind::Sleep,
-            _ => StepKind::Function,
-        })
-        .unwrap_or_else(|| {
-            warn!(
-                run_id = %run_id,
-                step_id = %step_id,
-                "Step not found, defaulting to Function kind"
-            );
-            StepKind::Function
-        });
+        .await?;
 
-        Ok(kind)
+        match kind {
+            Some(s) => Ok(match s.as_str() {
+                "SLEEP" => StepKind::Sleep,
+                _ => StepKind::Function,
+            }),
+            None => {
+                if strict {
+                    Err(StoreError::not_found(
+                        "step_run",
+                        format!("{}:{}", run_id, step_id),
+                    ))
+                } else {
+                    warn!(
+                        run_id = %run_id,
+                        step_id = %step_id,
+                        "Step not found, defaulting to Function kind"
+                    );
+                    Ok(StepKind::Function)
+                }
+            }
+        }
     }
 }
 
@@ -296,7 +317,7 @@ impl StepRepository for PgStepRepository {
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
 
-        let step_kind = self.latest_step_kind(run_id, step_id).await?;
+        let step_kind = self.latest_step_kind_strict(run_id, step_id).await?;
 
         let result = sqlx::query(
             r#"
@@ -382,7 +403,7 @@ impl StepRepository for PgStepRepository {
         let mut tx = self.pool.begin().await?;
 
         let step_kind = self
-            .latest_step_kind(params.run_id, &params.step_id)
+            .latest_step_kind_strict(params.run_id, &params.step_id)
             .await?;
 
         let result = sqlx::query(
