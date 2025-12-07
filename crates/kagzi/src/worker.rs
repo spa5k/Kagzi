@@ -405,8 +405,8 @@ impl Worker {
 
                     tokio::spawn(async move {
                         let _permit = permit;
-                        let correlation_id = uuid::Uuid::new_v4().to_string();
-                        let trace_id = uuid::Uuid::new_v4().to_string();
+                        let correlation_id = uuid::Uuid::now_v7().to_string();
+                        let trace_id = uuid::Uuid::now_v7().to_string();
 
                         crate::tracing_utils::with_tracing_context(
                             Some(correlation_id.clone()),

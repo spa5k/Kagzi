@@ -68,7 +68,7 @@ async fn send_email(input: &SendEmailInput) -> anyhow::Result<EmailResult> {
     println!("  📧 Sending email to {}: {}", input.to, input.subject);
     tokio::time::sleep(Duration::from_millis(50)).await;
     Ok(EmailResult {
-        message_id: Uuid::new_v4().to_string(),
+        message_id: Uuid::now_v7().to_string(),
         sent_at: chrono::Utc::now().to_rfc3339(),
     })
 }
@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
     worker.register("UserOnboarding", user_onboarding_workflow);
 
     // Generate unique workflow ID for this test run
-    let test_id = Uuid::new_v4().to_string()[..8].to_string();
+    let test_id = Uuid::now_v7().to_string()[..8].to_string();
     let external_id = format!("obs-test-{}", test_id);
 
     println!("\n📋 Test Run Details:");

@@ -87,4 +87,19 @@ pub trait WorkflowRepository: Send + Sync {
     async fn mark_exhausted(&self, run_id: Uuid, error: &str) -> Result<(), StoreError>;
 
     async fn get_retry_policy(&self, run_id: Uuid) -> Result<Option<RetryPolicy>, StoreError>;
+
+    async fn increment_counter(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+        workflow_type: &str,
+        max: i32,
+    ) -> Result<bool, StoreError>;
+
+    async fn decrement_counter(
+        &self,
+        namespace_id: &str,
+        task_queue: &str,
+        workflow_type: &str,
+    ) -> Result<(), StoreError>;
 }

@@ -33,7 +33,7 @@ impl WorkflowScheduleService for MockWorkflowScheduleService {
         *self.last_create.lock().await = Some(req.clone());
 
         let schedule = WorkflowSchedule {
-            schedule_id: Uuid::new_v4().to_string(),
+            schedule_id: Uuid::now_v7().to_string(),
             namespace_id: req.namespace_id.clone(),
             task_queue: req.task_queue.clone(),
             workflow_type: req.workflow_type.clone(),
@@ -168,7 +168,7 @@ async fn update_schedule_passes_cron_and_version() -> anyhow::Result<()> {
 
     let mut client = kagzi_proto::kagzi::workflow_schedule_service_client::WorkflowScheduleServiceClient::connect(format!("http://{}", addr)).await?;
 
-    let schedule_id = Uuid::new_v4().to_string();
+    let schedule_id = Uuid::now_v7().to_string();
     let cron = "15 0 8 * * *"; // 08:00:15 UTC daily
     let _ = client
         .update_workflow_schedule(Request::new(UpdateWorkflowScheduleRequest {

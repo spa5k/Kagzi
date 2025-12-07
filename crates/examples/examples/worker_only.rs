@@ -151,7 +151,7 @@ mod twitter_example {
     async fn create_user(email: String) -> anyhow::Result<User> {
         info!("Creating user with email: {}", email);
         let user = User {
-            id: Uuid::new_v4().to_string(),
+            id: Uuid::now_v7().to_string(),
             email,
         };
         info!("Created user: {}", user.id);
@@ -320,7 +320,7 @@ mod observability_example {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
         Ok(EmailResult {
-            message_id: Uuid::new_v4().to_string(),
+            message_id: Uuid::now_v7().to_string(),
             sent_at: chrono::Utc::now().to_rfc3339(),
         })
     }
@@ -533,7 +533,7 @@ mod comprehensive_example {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
         Ok(ProcessPaymentOutput {
-            transaction_id: format!("txn_{}", &Uuid::new_v4().to_string()[..8]),
+            transaction_id: format!("txn_{}", &Uuid::now_v7().to_string()[..8]),
             status: "SUCCESS".to_string(),
             processed_at: chrono::Utc::now().to_rfc3339(),
         })
@@ -545,7 +545,7 @@ mod comprehensive_example {
         info!("Sending notification {} to {}", input.template, input.to);
         tokio::time::sleep(Duration::from_millis(30)).await;
         Ok(SendNotificationOutput {
-            message_id: format!("msg_{}", &Uuid::new_v4().to_string()[..8]),
+            message_id: format!("msg_{}", &Uuid::now_v7().to_string()[..8]),
             sent_at: chrono::Utc::now().to_rfc3339(),
         })
     }

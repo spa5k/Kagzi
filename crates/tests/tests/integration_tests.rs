@@ -21,8 +21,8 @@ const NAMESPACE: &str = "test-ns";
 const TASK_QUEUE: &str = "default";
 
 async fn register_worker(harness: &TestHarness, workflow_types: Vec<&str>) -> String {
-    let host = format!("test-host-{}", Uuid::new_v4());
-    let pid = ((Uuid::new_v4().as_u128() % 30_000) as i32).max(1);
+    let host = format!("test-host-{}", Uuid::now_v7());
+    let pid = ((Uuid::now_v7().as_u128() % 30_000) as i32).max(1);
 
     harness
         .worker_service
@@ -57,7 +57,7 @@ async fn start_workflow(
     harness
         .workflow_service
         .start_workflow(make_request(StartWorkflowRequest {
-            external_id: format!("{}-{}", workflow_type, Uuid::new_v4()),
+            external_id: format!("{}-{}", workflow_type, Uuid::now_v7()),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: workflow_type.to_string(),
             input: input_payload,
@@ -167,7 +167,7 @@ async fn poll_requires_registered_online_worker() {
     let harness = TestHarness::new().await;
     let run_id = start_workflow(&harness, "TypeA", serde_json::json!({})).await;
 
-    let fake_worker = Uuid::new_v4().to_string();
+    let fake_worker = Uuid::now_v7().to_string();
     let result = harness
         .worker_service
         .poll_task(make_request(poll_request(&fake_worker, &["TypeA"])))

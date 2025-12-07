@@ -1,6 +1,9 @@
+use backoff::ExponentialBackoff;
+use backoff::backoff::Backoff;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Type;
+use std::time::Duration;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -72,10 +75,22 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     pub fn calculate_delay_ms(&self, attempt: i32) -> i64 {
-        let exponent = attempt.saturating_sub(1);
-        let delay =
-            (self.initial_interval_ms as f64 * self.backoff_coefficient.powi(exponent)) as i64;
-        delay.min(self.maximum_interval_ms)
+        let mut backoff = ExponentialBackoff {
+            current_interval: Duration::from_millis(self.initial_interval_ms as u64),
+            initial_interval: Duration::from_millis(self.initial_interval_ms as u64),
+            multiplier: self.backoff_coefficient,
+            max_interval: Duration::from_millis(self.maximum_interval_ms as u64),
+            randomization_factor: 0.5, // add jitter to avoid thundering herd
+            ..Default::default()
+        };
+
+        // Advance to the requested attempt number (attempt 1 uses initial interval).
+        for _ in 0..attempt.saturating_sub(1) {
+            backoff.next_backoff();
+        }
+
+        let delay = backoff.next_backoff().unwrap_or(backoff.max_interval);
+        delay.as_millis() as i64
     }
 
     pub fn is_non_retryable(&self, error: &str) -> bool {

@@ -196,7 +196,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             .start_workflow(StartWorkflowRequest {
                 external_id: self
                     .external_id
-                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                    .unwrap_or_else(|| Uuid::now_v7().to_string()),
                 task_queue: self.task_queue,
                 workflow_type: self.workflow_type,
                 input: Some(ProtoPayload {
