@@ -1,14 +1,12 @@
 syntax = "proto3";
 package kagzi.v1;
 
-import "google/protobuf/timestamp.proto";
-
 // ============================================
 // PAYLOAD - Future-proof data container
 // ============================================
 message Payload {
   bytes data = 1;
-  map<string, string> metadata = 2;  // encoding, content-type, etc.
+  map<string, string> metadata = 2; // encoding, content-type, etc.
 }
 
 // ============================================
@@ -61,4 +59,3 @@ message RetryPolicy {
   int64 maximum_interval_ms = 4;
   repeated string non_retryable_errors = 5;
 }
-

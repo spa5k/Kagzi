@@ -159,14 +159,14 @@ proto/
 
 ### Checklist
 
-- [ ] Add `package kagzi.v1` to all proto files
-- [ ] Add `Payload` message to `common.proto`
-- [ ] Add `PageRequest`/`PageInfo` to `common.proto`
-- [ ] Enhance `ErrorDetail` with metadata field
-- [ ] Delete `errors.proto` (merge into common)
-- [ ] Delete `kagzi.proto` (empty umbrella)
-- [ ] Update `build.rs` if needed
-- [ ] Verify proto compilation
+- [x] Add `package kagzi.v1` to all proto files
+- [x] Add `Payload` message to `common.proto`
+- [x] Add `PageRequest`/`PageInfo` to `common.proto`
+- [x] Enhance `ErrorDetail` with metadata field
+- [x] Delete `errors.proto` (merge into common)
+- [x] Delete `kagzi.proto` (empty umbrella)
+- [x] Update `build.rs` if needed
+- [x] Verify proto compilation (cargo build -p kagzi-proto, cargo test --all)
 
 ---
 
@@ -302,18 +302,21 @@ Extract workflow-related handlers from `service.rs`.
 ```
 proto/workflow.proto                           # MODIFIED
 crates/kagzi-server/src/workflow_service.rs    # NEW
-crates/kagzi-server/src/service.rs             # MODIFIED: Remove workflow RPCs
-crates/kagzi-server/src/main.rs                # MODIFIED: Register WorkflowService
+crates/kagzi-server/src/service.rs             # MODIFIED: Workflow RPCs removed, legacy service gated behind feature
+crates/kagzi-server/src/main.rs                # MODIFIED: Register WorkflowServiceImpl
+crates/kagzi-server/Cargo.toml                 # MODIFIED: Add legacy-service feature flag
 ```
 
 ### Checklist
 
-- [ ] Update `workflow.proto` with new structure
-- [ ] Create `workflow_service.rs` with extracted handlers
-- [ ] Remove workflow RPCs from old `service.rs`
-- [ ] Register `WorkflowService` in `main.rs`
-- [ ] Update proto imports
-- [ ] Test workflow operations
+- [x] Update `workflow.proto` with new structure
+- [x] Create `workflow_service.rs` with extracted handlers
+- [x] Remove workflow RPCs from old `service.rs`
+- [x] Register `WorkflowService` in `main.rs`
+- [x] Update proto imports
+- [ ] Test workflow operations (grpcurl/manual)
+
+**Progress (Dec 2025):** PR2 implemented in codebase. Workflow RPCs extracted to dedicated `WorkflowServiceImpl`; monolithic service is gated by `legacy-service` feature. Builds pass (`cargo build -p kagzi-proto -p kagzi-server`). Non-workflow RPCs are temporarily unavailable until PR3-5 land.
 
 ---
 
@@ -564,12 +567,14 @@ crates/kagzi/src/lib.rs                      # MODIFIED: Update SDK for PollTask
 
 ### Checklist
 
-- [ ] Update `worker.proto` with new structure
-- [ ] Create `worker_service.rs`
-- [ ] Add explicit `StepKind` to `BeginStepRequest`
-- [ ] Update SDK to set `StepKind` explicitly
-- [ ] Remove hacky step_id string inference
+- [x] Update `worker.proto` with new structure
+- [x] Create `worker_service.rs`
+- [x] Add explicit `StepKind` to `BeginStepRequest`
+- [x] Update SDK to set `StepKind` explicitly
+- [x] Remove hacky step_id string inference
 - [ ] Test worker operations
+
+**Progress (Dec 2025):** PR3 implemented. `WorkerServiceImpl` is registered in the server; SDK now targets `WorkerService` (PollTask/BeginStep/CompleteStep/FailStep/Sleep) with explicit `StepKind` and payloads. Legacy schedule client helpers were removed from the SDK until PR4 introduces `WorkflowScheduleService`.
 
 ---
 
@@ -706,20 +711,26 @@ Replaced by `workflow_schedule.proto`.
 proto/workflow_schedule.proto                          # NEW
 proto/schedule.proto                                   # DELETED
 crates/kagzi-server/src/workflow_schedule_service.rs   # NEW
-crates/kagzi-server/src/scheduler.rs                   # MODIFIED: Use new naming
-crates/kagzi-store/src/models/schedule.rs              # RENAMED to workflow_schedule.rs
-crates/kagzi-store/src/repository/schedule.rs          # RENAMED
-crates/kagzi/src/lib.rs                                # MODIFIED: schedule() -> workflow_schedule()
+crates/kagzi-server/src/lib.rs                         # MODIFIED: export service impl
+crates/kagzi-server/src/main.rs                        # MODIFIED: register service
+crates/kagzi-proto/build.rs                            # MODIFIED: compile new proto
+crates/kagzi-store/src/models/workflow_schedule.rs     # RENAMED module
+crates/kagzi-store/src/repository/workflow_schedule.rs # RENAMED module
+crates/kagzi-store/src/postgres/workflow_schedule.rs   # RENAMED module
+crates/kagzi-server/src/scheduler.rs                   # MODIFIED: aliases WorkflowSchedule
+crates/kagzi/src/lib.rs                                # MODIFIED: workflow_schedule client helpers
 ```
 
 ### Checklist
 
-- [ ] Create `workflow_schedule.proto`
-- [ ] Create `workflow_schedule_service.rs`
-- [ ] Delete old `schedule.proto`
-- [ ] Rename store models and repository
-- [ ] Update scheduler to use new naming
-- [ ] Update SDK `schedule()` → `workflow_schedule()`
+- [x] Create `workflow_schedule.proto`
+- [x] Create `workflow_schedule_service.rs`
+- [x] Delete old `schedule.proto`
+- [x] Rename store models and repository
+- [x] Update scheduler to use new naming
+- [x] Update SDK `schedule()` → `workflow_schedule()`
+
+**Progress (Dec 2025):** PR4 implemented. `WorkflowScheduleServiceImpl` is registered and builds against `workflow_schedule.proto`; store modules renamed to `workflow_schedule`, scheduler uses `WorkflowSchedule` alias, and SDK exposes `workflow_schedule()` builder plus get/list/delete helpers. Legacy monolithic schedule RPCs remain gated behind the legacy feature.
 
 ---
 
@@ -850,74 +861,68 @@ crates/kagzi-server/src/main.rs             # MODIFIED: Register AdminService
 
 ### Checklist
 
-- [ ] Create `admin.proto`
-- [ ] Create `admin_service.rs`
-- [ ] Implement `GetServerInfo` RPC
-- [ ] Delete `health.proto`
-- [ ] Register `AdminService` in `main.rs`
+- [x] Create `admin.proto`
+- [x] Create `admin_service.rs`
+- [x] Implement `GetServerInfo` RPC
+- [x] Delete `health.proto`
+- [x] Register `AdminService` in `main.rs`
 
 ---
 
 ## PR 6: ID & Idempotency Refactor
 
-**Goal**: Unify workflow identification and make `workflow_id` the idempotency key.
+**Goal**: Unify workflow identification and make `external_id` the user-facing idempotency key (with optional `idempotency_suffix` for scheduler-fired runs).
 
 ### Changes
 
 #### 6.1 Database Migration
 
 ```sql
--- Migration: 20251207_workflow_id_refactor.sql
+-- Migration: 20251207120000_external_id_refactor.sql
 
 -- Step 1: Rename column
-ALTER TABLE workflow_runs RENAME COLUMN business_id TO workflow_id;
+ALTER TABLE kagzi.workflow_runs RENAME COLUMN business_id TO external_id;
 
--- Step 2: Drop old indexes
-DROP INDEX IF EXISTS idx_workflow_runs_business_id;
-DROP INDEX IF EXISTS idx_workflow_runs_idempotency;
+-- Step 2: Rename idempotency_key to idempotency_suffix (for scheduler runs)
+ALTER TABLE kagzi.workflow_runs RENAME COLUMN idempotency_key TO idempotency_suffix;
 
--- Step 3: Create new index
-CREATE INDEX idx_workflow_runs_workflow_id ON workflow_runs(workflow_id);
+-- Step 3: Drop old index
+DROP INDEX IF EXISTS kagzi.idx_workflow_idempotency;
 
--- Step 4: Add idempotency constraint (only one active workflow per workflow_id per namespace)
-CREATE UNIQUE INDEX uq_active_workflow_per_namespace
-ON workflow_runs(workflow_id, namespace_id)
+-- Step 4: Add active-unique constraint (namespace, external_id, suffix)
+CREATE UNIQUE INDEX uq_active_workflow
+ON kagzi.workflow_runs(namespace_id, external_id, COALESCE(idempotency_suffix, ''))
 WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED');
-
--- Step 5: Remove idempotency_key column
-ALTER TABLE workflow_runs DROP COLUMN IF EXISTS idempotency_key;
 ```
 
 #### 6.2 Update Store Models
 
 ```rust
-// crates/kagzi-store/src/models/workflow.rs
-
 pub struct WorkflowRun {
     pub run_id: Uuid,
-    pub workflow_id: String,  // Renamed from business_id
+    pub external_id: String,  // was: business_id
     pub namespace_id: String,
-    // ... rest unchanged
-    // REMOVED: idempotency_key
+    // ...
+    // idempotency_key removed
 }
 
 pub struct CreateWorkflow {
-    pub workflow_id: String,  // Renamed from business_id
-    // REMOVED: idempotency_key
+    pub external_id: String,              // was: business_id
+    pub idempotency_suffix: Option<String>, // was: idempotency_key (scheduler only)
     // ...
 }
 ```
 
 #### 6.3 Update Proto
 
-Already done in PR 2, but ensure `StartWorkflowRequest` uses `workflow_id` as idempotency key:
+Already done in PR 2, but ensure `StartWorkflowRequest` uses `external_id` as idempotency key:
 
 ```protobuf
 message StartWorkflowRequest {
   // User-provided business identifier. Acts as idempotency key.
   // If a workflow with this ID is already running, returns existing run_id.
   // If empty, server generates UUID.
-  string workflow_id = 1;
+  string external_id = 1;
   // ...
 }
 
@@ -930,22 +935,27 @@ message StartWorkflowResponse {
 ### Files Changed
 
 ```
-migrations/20251207_workflow_id_refactor.sql           # NEW
+migrations/20251207120000_external_id_refactor.sql     # NEW/RENAMED
 crates/kagzi-store/src/models/workflow.rs              # MODIFIED
 crates/kagzi-store/src/postgres/workflow.rs            # MODIFIED
-crates/kagzi-server/src/workflow_service.rs            # MODIFIED: Idempotency logic
-crates/kagzi-server/src/scheduler.rs                   # MODIFIED: Use workflow_id
+crates/kagzi-store/src/repository/workflow.rs          # MODIFIED
+crates/kagzi-store/src/postgres/query.rs               # MODIFIED
+crates/kagzi-server/src/workflow_service.rs            # MODIFIED
+crates/kagzi-server/src/scheduler.rs                   # MODIFIED
+crates/kagzi/src/lib.rs                                # MODIFIED
+README.md                                              # MODIFIED
+examples/tests updated for external_id
 ```
 
 ### Checklist
 
-- [ ] Create database migration
-- [ ] Rename `business_id` → `workflow_id` in store models
-- [ ] Remove `idempotency_key` field
-- [ ] Update queries to use `workflow_id` for idempotency
-- [ ] Update `StartWorkflow` to return `already_exists` flag
-- [ ] Update scheduler to use `workflow_id`
-- [ ] Test idempotency behavior
+- [x] Create database migration
+- [x] Rename `business_id` → `external_id` in store models
+- [x] Remove `idempotency_key` field (replaced by optional `idempotency_suffix`)
+- [x] Update queries to use `external_id` (+suffix) for idempotency
+- [x] Update `StartWorkflow` to return `already_exists` flag
+- [x] Update scheduler to use `external_id` + `idempotency_suffix`
+- [ ] Test idempotency behavior (manual/grpcurl)
 
 ---
 
@@ -1060,13 +1070,15 @@ crates/kagzi/src/tracing_utils.rs    # MODIFIED if needed
 
 ### Checklist
 
-- [ ] Add `.namespace()` to `WorkflowBuilder`
-- [ ] Remove `.idempotent()` method
-- [ ] Update `WorkflowContext.run()` to set `StepKind::Function`
-- [ ] Update `WorkflowContext.sleep()` to set `StepKind::Sleep`
-- [ ] Rename `schedule()` → `workflow_schedule()`
-- [ ] Add `metadata` field to `KagziError`
-- [ ] Update all proto type imports
+- [x] Add `.namespace()` to `WorkflowBuilder`
+- [x] Remove `.idempotent()` method
+- [x] Update `WorkflowContext.run()` to set `StepKind::Function`
+- [x] Update `WorkflowContext.sleep()` to set `StepKind::Sleep`
+- [x] Rename `schedule()` → `workflow_schedule()`
+- [x] Add `metadata` field to `KagziError`
+- [x] Update all proto type imports
+
+**Progress (Dec 2025):** PR7 completed. `WorkflowBuilder` now supports configurable namespaces; idempotency relies on `external_id`; StepKind is explicit; schedule helpers and error metadata are updated.
 
 ---
 
@@ -1109,13 +1121,16 @@ crates/tests/tests/*.rs                     # MODIFIED: Update all tests
 
 ### Checklist
 
-- [ ] Delete empty `service.rs`
-- [ ] Update `simple.rs` example
-- [ ] Update `comprehensive_demo.rs` example
-- [ ] Update `traced_workflow.rs` example
-- [ ] Update all integration tests
-- [ ] Run full test suite
-- [ ] Update README if needed
+- [x] Delete empty `service.rs`
+- [x] Update `simple.rs` example
+- [x] Update `comprehensive_demo.rs` example
+- [x] Update `traced_workflow.rs` example
+- [x] Update all integration tests
+- [x] Run full test suite
+- [x] Update README if needed
+
+**Progress (Dec 2025):** PR8 completed. Legacy monolithic service removed, examples verified for new SDK surface, and integration tests now target split services.
+Full suite passes with clippy clean; legacy feature flag removed.
 
 ---
 

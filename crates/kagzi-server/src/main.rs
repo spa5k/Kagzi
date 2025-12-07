@@ -1,5 +1,11 @@
+use kagzi_proto::kagzi::admin_service_server::AdminServiceServer;
+use kagzi_proto::kagzi::worker_service_server::WorkerServiceServer;
+use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServiceServer;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
-use kagzi_server::{MyWorkflowService, run_scheduler, tracing_utils, watchdog};
+use kagzi_server::{
+    AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
+    run_scheduler, tracing_utils, watchdog,
+};
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
@@ -24,13 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         })?;
 
-    sqlx::migrate!("../../migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to run migrations: {:?}", e);
-            e
-        })?;
+    run_migrations(&pool).await?;
 
     // Create the store
     let store = PgStore::new(pool);
@@ -48,7 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let addr = "0.0.0.0:50051".parse()?;
-    let service = MyWorkflowService::new(store);
+    let workflow_service = WorkflowServiceImpl::new(store.clone());
+    let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
+    let admin_service = AdminServiceImpl::new(store.clone());
+    let worker_service = WorkerServiceImpl::new(store);
 
     info!("Kagzi Server listening on {}", addr);
 
@@ -57,10 +60,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_v1()?;
 
     Server::builder()
-        .add_service(WorkflowServiceServer::new(service))
+        .add_service(WorkflowServiceServer::new(workflow_service))
+        .add_service(WorkflowScheduleServiceServer::new(
+            workflow_schedule_service,
+        ))
+        .add_service(AdminServiceServer::new(admin_service))
+        .add_service(WorkerServiceServer::new(worker_service))
         .add_service(reflection_service)
         .serve(addr)
         .await?;
+
+    Ok(())
+}
+
+async fn run_migrations(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    sqlx::migrate!("../../migrations")
+        .run(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to run migrations: {:?}", e);
+            e
+        })?;
 
     Ok(())
 }

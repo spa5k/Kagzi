@@ -164,7 +164,7 @@ let run_id = client.workflow("workflow_name", "task_queue", input).await?;
 // Start with options
 let run_id = client
     .workflow("workflow_name", "task_queue", input)
-    .idempotent("unique-key")
+    .id("unique-external-id")
     .version("1.0.0")
     .context(serde_json::json!({"key": "value"}))
     .deadline(chrono::Utc::now() + chrono::Duration::hours(1))

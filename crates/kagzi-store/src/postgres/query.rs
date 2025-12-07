@@ -5,13 +5,13 @@ use sqlx::{Encode, Postgres, QueryBuilder, Type};
 pub mod columns {
     pub mod workflow {
         pub const BASE: &str = "\
-w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, \
+w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
 w.status, w.locked_by, w.attempts, w.error, w.created_at, w.started_at, \
 w.finished_at, w.wake_up_at, w.deadline_at, w.version, \
 w.parent_step_attempt_id, w.retry_policy";
 
         pub const WITH_PAYLOAD: &str = "\
-w.run_id, w.namespace_id, w.business_id, w.task_queue, w.workflow_type, \
+w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
 w.status, p.input, p.output, p.context, w.locked_by, w.attempts, w.error, \
 w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at, \
 w.version, w.parent_step_attempt_id, w.retry_policy";
@@ -19,7 +19,7 @@ w.version, w.parent_step_attempt_id, w.retry_policy";
 
     pub mod step {
         pub const BASE: &str = "\
-attempt_id, run_id, step_id, namespace_id, attempt_number, status, \
+attempt_id, run_id, step_id, namespace_id, step_kind, attempt_number, status, \
 input, output, error, child_workflow_run_id, created_at, started_at, \
 finished_at, retry_at, retry_policy";
     }

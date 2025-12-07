@@ -2,13 +2,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use chrono::Utc;
-use kagzi::ScheduleUpdate;
-use kagzi_proto::kagzi::workflow_service_server::{WorkflowService, WorkflowServiceServer};
+use kagzi_proto::kagzi::workflow_schedule_service_server::{
+    WorkflowScheduleService, WorkflowScheduleServiceServer,
+};
 use kagzi_proto::kagzi::{
-    CreateScheduleRequest, CreateScheduleResponse, DeleteScheduleRequest, Empty,
-    GetScheduleRequest, GetScheduleResponse, ListSchedulesRequest, ListSchedulesResponse,
-    RegisterWorkerRequest, RegisterWorkerResponse, Schedule, ScheduleSleepRequest,
-    StartWorkflowRequest, StartWorkflowResponse, UpdateScheduleRequest, UpdateScheduleResponse,
+    CreateWorkflowScheduleRequest, CreateWorkflowScheduleResponse, DeleteWorkflowScheduleRequest,
+    DeleteWorkflowScheduleResponse, GetWorkflowScheduleRequest, GetWorkflowScheduleResponse,
+    ListWorkflowSchedulesRequest, ListWorkflowSchedulesResponse, UpdateWorkflowScheduleRequest,
+    UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -17,63 +18,21 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 #[derive(Clone, Default)]
-struct MockWorkflowService {
-    last_create: Arc<Mutex<Option<CreateScheduleRequest>>>,
-    last_update: Arc<Mutex<Option<UpdateScheduleRequest>>>,
+struct MockWorkflowScheduleService {
+    last_create: Arc<Mutex<Option<CreateWorkflowScheduleRequest>>>,
+    last_update: Arc<Mutex<Option<UpdateWorkflowScheduleRequest>>>,
 }
 
 #[tonic::async_trait]
-impl WorkflowService for MockWorkflowService {
-    async fn register_worker(
+impl WorkflowScheduleService for MockWorkflowScheduleService {
+    async fn create_workflow_schedule(
         &self,
-        _request: Request<RegisterWorkerRequest>,
-    ) -> Result<Response<RegisterWorkerResponse>, Status> {
-        Err(Status::unimplemented("register_worker"))
-    }
-
-    async fn worker_heartbeat(
-        &self,
-        _request: Request<kagzi_proto::kagzi::WorkerHeartbeatRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::WorkerHeartbeatResponse>, Status> {
-        Err(Status::unimplemented("worker_heartbeat"))
-    }
-
-    async fn deregister_worker(
-        &self,
-        _request: Request<kagzi_proto::kagzi::DeregisterWorkerRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("deregister_worker"))
-    }
-
-    async fn list_workers(
-        &self,
-        _request: Request<kagzi_proto::kagzi::ListWorkersRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::ListWorkersResponse>, Status> {
-        Err(Status::unimplemented("list_workers"))
-    }
-
-    async fn get_worker(
-        &self,
-        _request: Request<kagzi_proto::kagzi::GetWorkerRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::GetWorkerResponse>, Status> {
-        Err(Status::unimplemented("get_worker"))
-    }
-
-    async fn start_workflow(
-        &self,
-        _request: Request<StartWorkflowRequest>,
-    ) -> Result<Response<StartWorkflowResponse>, Status> {
-        Err(Status::unimplemented("start_workflow"))
-    }
-
-    async fn create_schedule(
-        &self,
-        request: Request<CreateScheduleRequest>,
-    ) -> Result<Response<CreateScheduleResponse>, Status> {
+        request: Request<CreateWorkflowScheduleRequest>,
+    ) -> Result<Response<CreateWorkflowScheduleResponse>, Status> {
         let req = request.into_inner();
         *self.last_create.lock().await = Some(req.clone());
 
-        let schedule = Schedule {
+        let schedule = WorkflowSchedule {
             schedule_id: Uuid::new_v4().to_string(),
             namespace_id: req.namespace_id.clone(),
             task_queue: req.task_queue.clone(),
@@ -82,163 +41,67 @@ impl WorkflowService for MockWorkflowService {
             input: req.input.clone(),
             context: req.context.clone(),
             enabled: req.enabled.unwrap_or(true),
-            max_catchup: req.max_catchup,
+            max_catchup: req.max_catchup.unwrap_or_default(),
             next_fire_at: Some(now_ts()),
             last_fired_at: None,
-            version: req.version.clone(),
+            version: req.version.unwrap_or_default(),
+            created_at: None,
+            updated_at: None,
         };
 
-        Ok(Response::new(CreateScheduleResponse {
+        Ok(Response::new(CreateWorkflowScheduleResponse {
             schedule: Some(schedule),
         }))
     }
 
-    async fn get_schedule(
+    async fn get_workflow_schedule(
         &self,
-        _request: Request<GetScheduleRequest>,
-    ) -> Result<Response<GetScheduleResponse>, Status> {
-        Err(Status::unimplemented("get_schedule"))
+        _request: Request<GetWorkflowScheduleRequest>,
+    ) -> Result<Response<GetWorkflowScheduleResponse>, Status> {
+        Err(Status::unimplemented("get_workflow_schedule"))
     }
 
-    async fn list_schedules(
+    async fn list_workflow_schedules(
         &self,
-        _request: Request<ListSchedulesRequest>,
-    ) -> Result<Response<ListSchedulesResponse>, Status> {
-        Err(Status::unimplemented("list_schedules"))
+        _request: Request<ListWorkflowSchedulesRequest>,
+    ) -> Result<Response<ListWorkflowSchedulesResponse>, Status> {
+        Err(Status::unimplemented("list_workflow_schedules"))
     }
 
-    async fn update_schedule(
+    async fn update_workflow_schedule(
         &self,
-        request: Request<UpdateScheduleRequest>,
-    ) -> Result<Response<UpdateScheduleResponse>, Status> {
+        request: Request<UpdateWorkflowScheduleRequest>,
+    ) -> Result<Response<UpdateWorkflowScheduleResponse>, Status> {
         let req = request.into_inner();
         *self.last_update.lock().await = Some(req.clone());
 
-        let schedule = Schedule {
+        let schedule = WorkflowSchedule {
             schedule_id: req.schedule_id.clone(),
             namespace_id: req.namespace_id.clone(),
-            task_queue: req
-                .task_queue
-                .clone()
-                .unwrap_or_else(|| "default".to_string()),
-            workflow_type: req
-                .workflow_type
-                .clone()
-                .unwrap_or_else(|| "wf".to_string()),
-            cron_expr: req
-                .cron_expr
-                .clone()
-                .unwrap_or_else(|| "0 * * * * *".to_string()),
-            input: req.input.clone().unwrap_or_default(),
-            context: req.context.clone().unwrap_or_default(),
+            task_queue: req.task_queue.unwrap_or_else(|| "default".to_string()),
+            workflow_type: req.workflow_type.unwrap_or_else(|| "wf".to_string()),
+            cron_expr: req.cron_expr.unwrap_or_else(|| "0 * * * * *".to_string()),
+            input: req.input,
+            context: req.context,
             enabled: req.enabled.unwrap_or(true),
             max_catchup: req.max_catchup.unwrap_or(100),
             next_fire_at: Some(req.next_fire_at.unwrap_or_else(now_ts)),
             last_fired_at: None,
-            version: req.version.clone().unwrap_or_default(),
+            version: req.version.unwrap_or_default(),
+            created_at: None,
+            updated_at: None,
         };
 
-        Ok(Response::new(UpdateScheduleResponse {
+        Ok(Response::new(UpdateWorkflowScheduleResponse {
             schedule: Some(schedule),
         }))
     }
 
-    async fn delete_schedule(
+    async fn delete_workflow_schedule(
         &self,
-        _request: Request<DeleteScheduleRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("delete_schedule"))
-    }
-
-    async fn get_workflow_run(
-        &self,
-        _request: Request<kagzi_proto::kagzi::GetWorkflowRunRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::GetWorkflowRunResponse>, Status> {
-        Err(Status::unimplemented("get_workflow_run"))
-    }
-
-    async fn list_workflow_runs(
-        &self,
-        _request: Request<kagzi_proto::kagzi::ListWorkflowRunsRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::ListWorkflowRunsResponse>, Status> {
-        Err(Status::unimplemented("list_workflow_runs"))
-    }
-
-    async fn cancel_workflow_run(
-        &self,
-        _request: Request<kagzi_proto::kagzi::CancelWorkflowRunRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("cancel_workflow_run"))
-    }
-
-    async fn poll_activity(
-        &self,
-        _request: Request<kagzi_proto::kagzi::PollActivityRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::PollActivityResponse>, Status> {
-        Err(Status::unimplemented("poll_activity"))
-    }
-
-    async fn get_step_attempt(
-        &self,
-        _request: Request<kagzi_proto::kagzi::GetStepAttemptRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::GetStepAttemptResponse>, Status> {
-        Err(Status::unimplemented("get_step_attempt"))
-    }
-
-    async fn list_step_attempts(
-        &self,
-        _request: Request<kagzi_proto::kagzi::ListStepAttemptsRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::ListStepAttemptsResponse>, Status> {
-        Err(Status::unimplemented("list_step_attempts"))
-    }
-
-    async fn begin_step(
-        &self,
-        _request: Request<kagzi_proto::kagzi::BeginStepRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::BeginStepResponse>, Status> {
-        Err(Status::unimplemented("begin_step"))
-    }
-
-    async fn complete_step(
-        &self,
-        _request: Request<kagzi_proto::kagzi::CompleteStepRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("complete_step"))
-    }
-
-    async fn fail_step(
-        &self,
-        _request: Request<kagzi_proto::kagzi::FailStepRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("fail_step"))
-    }
-
-    async fn complete_workflow(
-        &self,
-        _request: Request<kagzi_proto::kagzi::CompleteWorkflowRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("complete_workflow"))
-    }
-
-    async fn fail_workflow(
-        &self,
-        _request: Request<kagzi_proto::kagzi::FailWorkflowRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("fail_workflow"))
-    }
-
-    async fn schedule_sleep(
-        &self,
-        _request: Request<ScheduleSleepRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented("schedule_sleep"))
-    }
-
-    async fn health_check(
-        &self,
-        _request: Request<kagzi_proto::kagzi::HealthCheckRequest>,
-    ) -> Result<Response<kagzi_proto::kagzi::HealthCheckResponse>, Status> {
-        Err(Status::unimplemented("health_check"))
+        _request: Request<DeleteWorkflowScheduleRequest>,
+    ) -> Result<Response<DeleteWorkflowScheduleResponse>, Status> {
+        Err(Status::unimplemented("delete_workflow_schedule"))
     }
 }
 
@@ -251,7 +114,7 @@ fn now_ts() -> prost_types::Timestamp {
 }
 
 async fn start_mock_server(
-    service: MockWorkflowService,
+    service: MockWorkflowScheduleService,
 ) -> anyhow::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -260,7 +123,7 @@ async fn start_mock_server(
     let svc = service.clone();
     let handle = tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(WorkflowServiceServer::new(svc))
+            .add_service(WorkflowScheduleServiceServer::new(svc))
             .serve_with_incoming(incoming)
             .await
             .unwrap();
@@ -271,16 +134,14 @@ async fn start_mock_server(
 
 #[tokio::test]
 async fn create_schedule_uses_native_cron_format() -> anyhow::Result<()> {
-    let mock = MockWorkflowService::default();
+    let mock = MockWorkflowScheduleService::default();
     let (addr, handle) = start_mock_server(mock.clone()).await?;
 
     let mut client = kagzi::Client::connect(&format!("http://{}", addr)).await?;
 
     let cron = "0 */5 * * * *";
     let _schedule = client
-        .schedule("wf", "queue", cron)
-        .input(serde_json::json!({"hello": "world"}))
-        .create()
+        .workflow_schedule("wf", "queue", cron, serde_json::json!({"hello": "world"}))
         .await?;
 
     handle.abort();
@@ -295,29 +156,34 @@ async fn create_schedule_uses_native_cron_format() -> anyhow::Result<()> {
     assert_eq!(recorded.task_queue, "queue");
     assert_eq!(recorded.workflow_type, "wf");
 
-    let input_json: serde_json::Value = serde_json::from_slice(&recorded.input)?;
+    let input_json: serde_json::Value = serde_json::from_slice(&recorded.input.unwrap().data)?;
     assert_eq!(input_json, serde_json::json!({"hello": "world"}));
     Ok(())
 }
 
 #[tokio::test]
 async fn update_schedule_passes_cron_and_version() -> anyhow::Result<()> {
-    let mock = MockWorkflowService::default();
+    let mock = MockWorkflowScheduleService::default();
     let (addr, handle) = start_mock_server(mock.clone()).await?;
 
-    let mut client = kagzi::Client::connect(&format!("http://{}", addr)).await?;
+    let mut client = kagzi_proto::kagzi::workflow_schedule_service_client::WorkflowScheduleServiceClient::connect(format!("http://{}", addr)).await?;
 
     let schedule_id = Uuid::new_v4().to_string();
     let cron = "15 0 8 * * *"; // 08:00:15 UTC daily
     let _ = client
-        .update_schedule(
-            &schedule_id,
-            "default",
-            ScheduleUpdate::default()
-                .cron_expr(cron)
-                .version("v2")
-                .max_catchup(50),
-        )
+        .update_workflow_schedule(Request::new(UpdateWorkflowScheduleRequest {
+            schedule_id: schedule_id.clone(),
+            namespace_id: "default".to_string(),
+            task_queue: None,
+            workflow_type: None,
+            cron_expr: Some(cron.to_string()),
+            input: None,
+            context: None,
+            enabled: None,
+            max_catchup: Some(50),
+            next_fire_at: None,
+            version: Some("v2".to_string()),
+        }))
         .await?;
 
     handle.abort();

@@ -1,4 +1,5 @@
-CREATE TABLE kagzi.schedules (
+-- Up
+CREATE TABLE IF NOT EXISTS kagzi.schedules (
     schedule_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace_id TEXT NOT NULL DEFAULT 'default',
     task_queue TEXT NOT NULL,
@@ -15,14 +16,14 @@ CREATE TABLE kagzi.schedules (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_schedules_due
-ON kagzi.schedules (namespace_id, next_fire_at)
-WHERE enabled = TRUE;
+CREATE INDEX IF NOT EXISTS idx_schedules_due
+    ON kagzi.schedules (namespace_id, next_fire_at)
+    WHERE enabled = TRUE;
 
-CREATE INDEX idx_schedules_ns_queue
-ON kagzi.schedules (namespace_id, task_queue);
+CREATE INDEX IF NOT EXISTS idx_schedules_ns_queue
+    ON kagzi.schedules (namespace_id, task_queue);
 
-CREATE TABLE kagzi.schedule_firings (
+CREATE TABLE IF NOT EXISTS kagzi.schedule_firings (
     id BIGSERIAL PRIMARY KEY,
     schedule_id UUID NOT NULL REFERENCES kagzi.schedules(schedule_id) ON DELETE CASCADE,
     fire_at TIMESTAMPTZ NOT NULL,

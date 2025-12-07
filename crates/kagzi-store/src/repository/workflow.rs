@@ -17,10 +17,11 @@ pub trait WorkflowRepository: Send + Sync {
         namespace_id: &str,
     ) -> Result<Option<WorkflowRun>, StoreError>;
 
-    async fn find_by_idempotency_key(
+    async fn find_active_by_external_id(
         &self,
         namespace_id: &str,
-        key: &str,
+        external_id: &str,
+        idempotency_suffix: Option<&str>,
     ) -> Result<Option<Uuid>, StoreError>;
 
     async fn list(&self, params: ListWorkflowsParams) -> Result<PaginatedWorkflows, StoreError>;
@@ -30,6 +31,9 @@ pub trait WorkflowRepository: Send + Sync {
         run_id: Uuid,
         namespace_id: &str,
     ) -> Result<WorkflowExistsResult, StoreError>;
+
+    /// Check workflow status by run_id only (for worker internal use)
+    async fn check_status(&self, run_id: Uuid) -> Result<WorkflowExistsResult, StoreError>;
 
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError>;
 

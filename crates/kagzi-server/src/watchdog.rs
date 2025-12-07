@@ -1,9 +1,16 @@
 use kagzi_store::{PgStore, StepRepository, WorkerRepository, WorkflowRepository};
+use std::time::Duration;
 use tracing::{error, info, warn};
 
 pub async fn run(store: PgStore) {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-    info!("Watchdog started");
+    let interval_secs = std::env::var("KAGZI_WATCHDOG_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(1);
+
+    let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+    info!(interval_secs = interval_secs, "Watchdog started");
 
     loop {
         interval.tick().await;

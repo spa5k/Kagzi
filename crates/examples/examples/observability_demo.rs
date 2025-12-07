@@ -158,11 +158,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Generate unique workflow ID for this test run
     let test_id = Uuid::new_v4().to_string()[..8].to_string();
-    let idempotency_key = format!("obs-test-key-{}", test_id);
+    let external_id = format!("obs-test-{}", test_id);
 
     println!("\n📋 Test Run Details:");
     println!("   Test ID: {}", test_id);
-    println!("   Idempotency Key: {}", idempotency_key);
+    println!("   External ID: {}", external_id);
 
     // Create client to start workflow
     let mut client = Client::connect(&server_url).await?;
@@ -177,7 +177,7 @@ async fn main() -> anyhow::Result<()> {
     println!("\n▶ Starting workflow...");
     let run_id = client
         .workflow("UserOnboarding", "observability-test-queue", input)
-        .idempotent(&idempotency_key)
+        .id(&external_id)
         // Note: .version("X") can be added to set explicit version, otherwise defaults to "1"
         .await?;
     println!("   Run ID: {}", run_id);
