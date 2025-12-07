@@ -459,7 +459,10 @@ impl WorkflowContext {
         let sleep_request = add_tracing_metadata(Request::new(SleepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id_resp.clone(),
-            duration_seconds: duration.as_secs(),
+            duration: Some(prost_types::Duration {
+                seconds: duration.as_secs() as i64,
+                nanos: 0,
+            }),
         }));
 
         self.client

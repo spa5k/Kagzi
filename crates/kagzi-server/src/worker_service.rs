@@ -21,6 +21,7 @@ use kagzi_store::{
     WorkflowRepository, WorkflowTypeConcurrency,
 };
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::time::Duration;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument};
@@ -787,7 +788,7 @@ impl WorkerService for WorkerServiceImpl {
         trace_id = %extract_or_generate_trace_id(&request),
         run_id = %request.get_ref().run_id,
         step_id = %request.get_ref().step_id,
-        duration_seconds = %request.get_ref().duration_seconds
+        duration = ?request.get_ref().duration
     ))]
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
         const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
@@ -802,8 +803,16 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        let duration_proto = req
+            .duration
+            .ok_or_else(|| invalid_argument("duration is required"))?;
+        let duration: Duration = duration_proto
+            .try_into()
+            .map_err(|_| invalid_argument("duration must be non-negative"))?;
+        let duration_seconds = duration.as_secs();
+
         // Validate duration
-        if req.duration_seconds == 0 {
+        if duration_seconds == 0 {
             // Zero duration sleep is a no-op, return immediately
             log_grpc_response(
                 "Sleep",
@@ -815,7 +824,7 @@ impl WorkerService for WorkerServiceImpl {
             return Ok(Response::new(()));
         }
 
-        if req.duration_seconds > MAX_SLEEP_SECONDS {
+        if duration_seconds > MAX_SLEEP_SECONDS {
             return Err(invalid_argument(format!(
                 "Sleep duration cannot exceed {} seconds (30 days)",
                 MAX_SLEEP_SECONDS
@@ -824,7 +833,7 @@ impl WorkerService for WorkerServiceImpl {
 
         self.store
             .workflows()
-            .schedule_sleep(run_id, req.duration_seconds)
+            .schedule_sleep(run_id, duration_seconds)
             .await
             .map_err(map_store_error)?;
 

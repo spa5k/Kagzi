@@ -36,7 +36,7 @@ migrate-add name:
 # --- Build ---
 
 # Build the entire workspace
-build:
+build: build-proto
     cargo build
 
 # Build only the proto crate (generates code)
@@ -61,7 +61,7 @@ setup: db-reset build
 run-example:
     cargo run -p kagzi --example simple
 
-lint:
+lint: build-proto
     cargo clippy --all-targets --all-features -- -D warnings
 
 # --- Tests ---
