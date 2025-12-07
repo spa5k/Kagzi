@@ -861,11 +861,11 @@ crates/kagzi-server/src/main.rs             # MODIFIED: Register AdminService
 
 ### Checklist
 
-- [ ] Create `admin.proto`
-- [ ] Create `admin_service.rs`
-- [ ] Implement `GetServerInfo` RPC
-- [ ] Delete `health.proto`
-- [ ] Register `AdminService` in `main.rs`
+- [x] Create `admin.proto`
+- [x] Create `admin_service.rs`
+- [x] Implement `GetServerInfo` RPC
+- [x] Delete `health.proto`
+- [x] Register `AdminService` in `main.rs`
 
 ---
 

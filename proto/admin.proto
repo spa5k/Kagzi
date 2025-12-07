@@ -1,0 +1,95 @@
+syntax = "proto3";
+package kagzi.v1;
+
+import "common.proto";
+import "worker.proto";
+import "google/protobuf/timestamp.proto";
+
+// ============================================
+// SERVICE
+// ============================================
+
+service AdminService {
+  // Discovery
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+  rpc GetWorker(GetWorkerRequest) returns (GetWorkerResponse);
+  rpc GetStep(GetStepRequest) returns (GetStepResponse);
+  rpc ListSteps(ListStepsRequest) returns (ListStepsResponse);
+
+  // Health & Info
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+}
+
+// ============================================
+// DISCOVERY MESSAGES
+// ============================================
+
+message ListWorkersRequest {
+  string namespace_id = 1;
+  optional string task_queue = 2;
+  optional WorkerStatus status_filter = 3;
+  PageRequest page = 4;
+}
+
+message ListWorkersResponse {
+  repeated Worker workers = 1;
+  PageInfo page = 2;
+}
+
+message GetWorkerRequest {
+  string worker_id = 1;
+}
+
+message GetWorkerResponse {
+  Worker worker = 1;
+}
+
+message GetStepRequest {
+  string step_id = 1;
+  string namespace_id = 2;
+}
+
+message GetStepResponse {
+  Step step = 1;
+}
+
+message ListStepsRequest {
+  string run_id = 1;
+  optional string step_name = 2;
+  PageRequest page = 3;
+}
+
+message ListStepsResponse {
+  repeated Step steps = 1;
+  PageInfo page = 2;
+}
+
+// ============================================
+// HEALTH & INFO MESSAGES
+// ============================================
+
+message HealthCheckRequest {
+  optional string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    SERVING_STATUS_UNSPECIFIED = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message GetServerInfoRequest {}
+
+message GetServerInfoResponse {
+  string version = 1;
+  string api_version = 2;
+  repeated string supported_features = 3;
+  string min_sdk_version = 4;
+}
+

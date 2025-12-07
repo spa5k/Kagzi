@@ -1,3 +1,4 @@
+pub mod admin_service;
 pub mod helpers;
 pub mod scheduler;
 #[cfg(feature = "legacy-service")]
@@ -9,6 +10,7 @@ pub mod worker_service;
 pub mod workflow_schedule_service;
 pub mod workflow_service;
 
+pub use admin_service::AdminServiceImpl;
 pub use scheduler::run as run_scheduler;
 pub use worker_service::WorkerServiceImpl;
 pub use workflow_schedule_service::WorkflowScheduleServiceImpl;
