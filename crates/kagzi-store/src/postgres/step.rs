@@ -33,6 +33,15 @@ struct StepRunRow {
     retry_policy: Option<serde_json::Value>,
 }
 
+struct StepResultInsert<'a> {
+    run_id: Uuid,
+    step_id: &'a str,
+    step_kind: StepKind,
+    status: &'a str,
+    output: Option<&'a serde_json::Value>,
+    error: Option<&'a str>,
+}
+
 impl StepRunRow {
     fn into_model(self) -> StepRun {
         StepRun {
@@ -91,12 +100,7 @@ impl PgStepRepository {
     async fn insert_step_result(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        run_id: Uuid,
-        step_id: &str,
-        step_kind: StepKind,
-        status: &str,
-        output: Option<&serde_json::Value>,
-        error: Option<&str>,
+        params: StepResultInsert<'_>,
     ) -> Result<(), StoreError> {
         sqlx::query(
             r#"
@@ -106,12 +110,12 @@ impl PgStepRepository {
                     (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1))
             "#,
         )
-        .bind(run_id)
-        .bind(step_id)
-        .bind(step_kind.as_db_str())
-        .bind(status)
-        .bind(output)
-        .bind(error)
+        .bind(params.run_id)
+        .bind(params.step_id)
+        .bind(params.step_kind.as_db_str())
+        .bind(params.status)
+        .bind(params.output)
+        .bind(params.error)
         .execute(&mut **tx)
         .await?;
 
@@ -311,12 +315,14 @@ impl StepRepository for PgStepRepository {
 
             self.insert_step_result(
                 &mut tx,
-                run_id,
-                step_id,
-                step_kind,
-                "COMPLETED",
-                Some(&output),
-                None,
+                StepResultInsert {
+                    run_id,
+                    step_id,
+                    step_kind,
+                    status: "COMPLETED",
+                    output: Some(&output),
+                    error: None,
+                },
             )
             .await?;
         }
@@ -396,12 +402,14 @@ impl StepRepository for PgStepRepository {
 
             self.insert_step_result(
                 &mut tx,
-                params.run_id,
-                &params.step_id,
-                step_kind,
-                "FAILED",
-                None,
-                Some(&params.error),
+                StepResultInsert {
+                    run_id: params.run_id,
+                    step_id: &params.step_id,
+                    step_kind,
+                    status: "FAILED",
+                    output: None,
+                    error: Some(&params.error),
+                },
             )
             .await?;
         }
