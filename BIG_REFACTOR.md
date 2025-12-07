@@ -1070,13 +1070,15 @@ crates/kagzi/src/tracing_utils.rs    # MODIFIED if needed
 
 ### Checklist
 
-- [ ] Add `.namespace()` to `WorkflowBuilder`
-- [ ] Remove `.idempotent()` method
-- [ ] Update `WorkflowContext.run()` to set `StepKind::Function`
-- [ ] Update `WorkflowContext.sleep()` to set `StepKind::Sleep`
-- [ ] Rename `schedule()` → `workflow_schedule()`
-- [ ] Add `metadata` field to `KagziError`
-- [ ] Update all proto type imports
+- [x] Add `.namespace()` to `WorkflowBuilder`
+- [x] Remove `.idempotent()` method
+- [x] Update `WorkflowContext.run()` to set `StepKind::Function`
+- [x] Update `WorkflowContext.sleep()` to set `StepKind::Sleep`
+- [x] Rename `schedule()` → `workflow_schedule()`
+- [x] Add `metadata` field to `KagziError`
+- [x] Update all proto type imports
+
+**Progress (Dec 2025):** PR7 completed. `WorkflowBuilder` now supports configurable namespaces; idempotency relies on `external_id`; StepKind is explicit; schedule helpers and error metadata are updated.
 
 ---
 
@@ -1119,13 +1121,16 @@ crates/tests/tests/*.rs                     # MODIFIED: Update all tests
 
 ### Checklist
 
-- [ ] Delete empty `service.rs`
-- [ ] Update `simple.rs` example
-- [ ] Update `comprehensive_demo.rs` example
-- [ ] Update `traced_workflow.rs` example
-- [ ] Update all integration tests
-- [ ] Run full test suite
-- [ ] Update README if needed
+- [x] Delete empty `service.rs`
+- [x] Update `simple.rs` example
+- [x] Update `comprehensive_demo.rs` example
+- [x] Update `traced_workflow.rs` example
+- [x] Update all integration tests
+- [x] Run full test suite
+- [x] Update README if needed
+
+**Progress (Dec 2025):** PR8 completed. Legacy monolithic service removed, examples verified for new SDK surface, and integration tests now target split services.
+Full suite passes with clippy clean; legacy feature flag removed.
 
 ---
 

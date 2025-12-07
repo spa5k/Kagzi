@@ -1,9 +1,10 @@
 mod common;
 
 use common::{TestHarness, json_bytes, make_request};
-use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
+use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleService;
 use kagzi_proto::kagzi::{
-    CreateScheduleRequest, GetScheduleRequest, ListSchedulesRequest, UpdateScheduleRequest,
+    CreateWorkflowScheduleRequest, GetWorkflowScheduleRequest, ListWorkflowSchedulesRequest,
+    PageRequest, Payload, UpdateWorkflowScheduleRequest,
 };
 use tonic::Code;
 
@@ -16,17 +17,20 @@ async fn create_get_and_list_schedule() {
     let cron_expr = "0 */5 * * * *";
 
     let created = harness
-        .service
-        .create_schedule(make_request(CreateScheduleRequest {
+        .workflow_schedule_service
+        .create_workflow_schedule(make_request(CreateWorkflowScheduleRequest {
             namespace_id: NAMESPACE.to_string(),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: "TypeA".to_string(),
             cron_expr: cron_expr.to_string(),
-            input: json_bytes(&serde_json::json!({"hello": "world"})),
-            context: vec![],
+            input: Some(Payload {
+                data: json_bytes(&serde_json::json!({"hello": "world"})),
+                metadata: Default::default(),
+            }),
+            context: None,
             enabled: Some(true),
-            max_catchup: 5,
-            version: "v1".to_string(),
+            max_catchup: Some(5),
+            version: Some("v1".to_string()),
         }))
         .await
         .expect("create_schedule should succeed")
@@ -38,8 +42,8 @@ async fn create_get_and_list_schedule() {
     assert!(created.next_fire_at.is_some());
 
     let fetched = harness
-        .service
-        .get_schedule(make_request(GetScheduleRequest {
+        .workflow_schedule_service
+        .get_workflow_schedule(make_request(GetWorkflowScheduleRequest {
             schedule_id: created.schedule_id.clone(),
             namespace_id: NAMESPACE.to_string(),
         }))
@@ -53,11 +57,15 @@ async fn create_get_and_list_schedule() {
     assert_eq!(fetched.workflow_type, "TypeA");
 
     let listed = harness
-        .service
-        .list_schedules(make_request(ListSchedulesRequest {
+        .workflow_schedule_service
+        .list_workflow_schedules(make_request(ListWorkflowSchedulesRequest {
             namespace_id: NAMESPACE.to_string(),
-            task_queue: TASK_QUEUE.to_string(),
-            limit: 10,
+            task_queue: Some(TASK_QUEUE.to_string()),
+            page: Some(PageRequest {
+                page_size: 10,
+                page_token: String::new(),
+                include_total_count: false,
+            }),
         }))
         .await
         .expect("list_schedules should succeed")
@@ -73,17 +81,20 @@ async fn update_schedule_cron_recomputes_next_fire() {
     let harness = TestHarness::new().await;
 
     let created = harness
-        .service
-        .create_schedule(make_request(CreateScheduleRequest {
+        .workflow_schedule_service
+        .create_workflow_schedule(make_request(CreateWorkflowScheduleRequest {
             namespace_id: NAMESPACE.to_string(),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: "TypeA".to_string(),
             cron_expr: "0 */10 * * * *".to_string(),
-            input: json_bytes(&serde_json::json!({})),
-            context: vec![],
+            input: Some(Payload {
+                data: json_bytes(&serde_json::json!({})),
+                metadata: Default::default(),
+            }),
+            context: None,
             enabled: Some(true),
-            max_catchup: 5,
-            version: "v1".to_string(),
+            max_catchup: Some(5),
+            version: Some("v1".to_string()),
         }))
         .await
         .expect("create_schedule should succeed")
@@ -92,8 +103,8 @@ async fn update_schedule_cron_recomputes_next_fire() {
         .expect("schedule should be present");
 
     let updated = harness
-        .service
-        .update_schedule(make_request(UpdateScheduleRequest {
+        .workflow_schedule_service
+        .update_workflow_schedule(make_request(UpdateWorkflowScheduleRequest {
             schedule_id: created.schedule_id.clone(),
             namespace_id: NAMESPACE.to_string(),
             task_queue: None,
@@ -125,17 +136,20 @@ async fn update_schedule_cron_recomputes_next_fire() {
 async fn create_schedule_rejects_bad_cron() {
     let harness = TestHarness::new().await;
     let err = harness
-        .service
-        .create_schedule(make_request(CreateScheduleRequest {
+        .workflow_schedule_service
+        .create_workflow_schedule(make_request(CreateWorkflowScheduleRequest {
             namespace_id: NAMESPACE.to_string(),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: "TypeA".to_string(),
             cron_expr: "invalid cron".to_string(),
-            input: json_bytes(&serde_json::json!({})),
-            context: vec![],
+            input: Some(Payload {
+                data: json_bytes(&serde_json::json!({})),
+                metadata: Default::default(),
+            }),
+            context: None,
             enabled: Some(true),
-            max_catchup: 5,
-            version: "v1".to_string(),
+            max_catchup: Some(5),
+            version: Some("v1".to_string()),
         }))
         .await
         .unwrap_err();

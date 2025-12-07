@@ -1,8 +1,6 @@
 pub mod admin_service;
 pub mod helpers;
 pub mod scheduler;
-#[cfg(feature = "legacy-service")]
-pub mod service;
 pub mod tracing_utils;
 pub mod watchdog;
 pub mod work_distributor;
@@ -12,9 +10,7 @@ pub mod workflow_service;
 
 pub use admin_service::AdminServiceImpl;
 pub use scheduler::run as run_scheduler;
+pub use work_distributor::WorkDistributorHandle;
 pub use worker_service::WorkerServiceImpl;
 pub use workflow_schedule_service::WorkflowScheduleServiceImpl;
 pub use workflow_service::WorkflowServiceImpl;
-// Temporary alias to keep tests compiling until they are updated.
-pub type MyWorkflowService = WorkflowServiceImpl;
-pub use work_distributor::WorkDistributorHandle;

@@ -38,7 +38,6 @@ cron.workspace = true
 
 [features]
 default = []
-legacy-service = []
 
 [dev-dependencies]
 testcontainers = "0.26.0"

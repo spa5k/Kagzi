@@ -1,6 +1,8 @@
 //! Common test utilities and PostgreSQL testcontainer setup
 
-use kagzi_server::MyWorkflowService;
+use kagzi_server::{
+    AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
+};
 use kagzi_store::PgStore;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -8,9 +10,13 @@ use testcontainers::{ContainerAsync, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 
 /// Test harness that manages PostgreSQL container lifecycle
+#[allow(dead_code)]
 pub struct TestHarness {
     pub pool: PgPool,
-    pub service: MyWorkflowService,
+    pub workflow_service: WorkflowServiceImpl,
+    pub worker_service: WorkerServiceImpl,
+    pub workflow_schedule_service: WorkflowScheduleServiceImpl,
+    pub admin_service: AdminServiceImpl,
     _container: ContainerAsync<Postgres>,
 }
 
@@ -63,11 +69,17 @@ impl TestHarness {
 
         // Create the store
         let store = PgStore::new(pool.clone());
-        let service = MyWorkflowService::new(store.clone());
+        let workflow_service = WorkflowServiceImpl::new(store.clone());
+        let worker_service = WorkerServiceImpl::new(store.clone());
+        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
+        let admin_service = AdminServiceImpl::new(store.clone());
 
         TestHarness {
             pool,
-            service,
+            workflow_service,
+            worker_service,
+            workflow_schedule_service,
+            admin_service,
             _container: container,
         }
     }

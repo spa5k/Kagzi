@@ -200,11 +200,11 @@ impl AdminService for AdminServiceImpl {
 
         let mut next_page_token = String::new();
         let mut has_more = false;
-        if workers.len() as i32 > page_size {
-            if let Some(last) = workers.pop() {
-                next_page_token = last.worker_id.to_string();
-                has_more = true;
-            }
+        if workers.len() as i32 > page_size
+            && let Some(last) = workers.pop()
+        {
+            next_page_token = last.worker_id.to_string();
+            has_more = true;
         }
 
         let total_count = if page.include_total_count {

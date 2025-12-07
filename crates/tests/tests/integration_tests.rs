@@ -1,16 +1,16 @@
-#![cfg(feature = "legacy-service")]
-
 //! Integration tests for worker lifecycle + workflow execution under the new
 //! worker registry/heartbeat model.
 
 mod common;
 
 use common::{TestHarness, json_bytes, make_request};
+use kagzi_proto::kagzi::admin_service_server::AdminService;
+use kagzi_proto::kagzi::worker_service_server::WorkerService;
+use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
-    CompleteWorkflowRequest, DeregisterWorkerRequest, ErrorCode, ErrorDetail,
-    GetWorkflowRunRequest, ListWorkersRequest, PollActivityRequest, RegisterWorkerRequest,
-    StartWorkflowRequest, WorkerHeartbeatRequest, WorkerStatus, WorkflowStatus,
-    workflow_service_server::WorkflowService,
+    CompleteWorkflowRequest, DeregisterRequest, ErrorCode, ErrorDetail, GetWorkflowRequest,
+    HeartbeatRequest, ListWorkersRequest, PageRequest, Payload, PollTaskRequest, RegisterRequest,
+    StartWorkflowRequest, WorkerStatus, WorkflowStatus,
 };
 use prost::Message;
 use sqlx::Row;
@@ -25,8 +25,8 @@ async fn register_worker(harness: &TestHarness, workflow_types: Vec<&str>) -> St
     let pid = ((Uuid::new_v4().as_u128() % 30_000) as i32).max(1);
 
     harness
-        .service
-        .register_worker(make_request(RegisterWorkerRequest {
+        .worker_service
+        .register(make_request(RegisterRequest {
             namespace_id: NAMESPACE.to_string(),
             task_queue: TASK_QUEUE.to_string(),
             workflow_types: workflow_types.into_iter().map(|s| s.to_string()).collect(),
@@ -35,7 +35,7 @@ async fn register_worker(harness: &TestHarness, workflow_types: Vec<&str>) -> St
             version: "test".to_string(),
             max_concurrent: 5,
             labels: Default::default(),
-            queue_concurrency_limit: 0,
+            queue_concurrency_limit: Some(0),
             workflow_type_concurrency: vec![],
         }))
         .await
@@ -49,15 +49,20 @@ async fn start_workflow(
     workflow_type: &str,
     input: serde_json::Value,
 ) -> String {
+    let input_payload = Some(Payload {
+        data: json_bytes(&input),
+        metadata: Default::default(),
+    });
+
     harness
-        .service
+        .workflow_service
         .start_workflow(make_request(StartWorkflowRequest {
             external_id: format!("{}-{}", workflow_type, Uuid::new_v4()),
             task_queue: TASK_QUEUE.to_string(),
             workflow_type: workflow_type.to_string(),
-            input: json_bytes(&input),
+            input: input_payload,
             namespace_id: NAMESPACE.to_string(),
-            context: vec![],
+            context: None,
             deadline_at: None,
             version: "1.0".to_string(),
             retry_policy: None,
@@ -68,12 +73,12 @@ async fn start_workflow(
         .run_id
 }
 
-fn poll_request(worker_id: &str, supported_types: &[&str]) -> PollActivityRequest {
-    PollActivityRequest {
+fn poll_request(worker_id: &str, supported_types: &[&str]) -> PollTaskRequest {
+    PollTaskRequest {
         task_queue: TASK_QUEUE.to_string(),
         worker_id: worker_id.to_string(),
         namespace_id: NAMESPACE.to_string(),
-        supported_workflow_types: supported_types.iter().map(|s| s.to_string()).collect(),
+        workflow_types: supported_types.iter().map(|s| s.to_string()).collect(),
     }
 }
 
@@ -121,40 +126,37 @@ async fn workflow_happy_path_with_registered_worker() {
     assert_eq!(pending_match, 1);
 
     let work = harness
-        .service
-        .work_distributor
-        .wait_for_work(
-            TASK_QUEUE,
-            NAMESPACE,
-            &worker_id,
-            &[String::from("TypeA")],
-            std::time::Duration::from_secs(5),
-        )
+        .worker_service
+        .poll_task(make_request(poll_request(&worker_id, &["TypeA"])))
         .await
-        .expect("work_distributor should yield work");
+        .expect("poll_task should succeed")
+        .into_inner();
 
     assert_eq!(work.run_id.to_string(), run_id);
     assert_eq!(work.workflow_type, "TypeA");
 
     harness
-        .service
+        .worker_service
         .complete_workflow(make_request(CompleteWorkflowRequest {
             run_id: run_id.clone(),
-            output: json_bytes(&serde_json::json!({"ok": true})),
+            output: Some(Payload {
+                data: json_bytes(&serde_json::json!({"ok": true})),
+                metadata: Default::default(),
+            }),
         }))
         .await
         .expect("complete_workflow should succeed");
 
     let workflow = harness
-        .service
-        .get_workflow_run(make_request(GetWorkflowRunRequest {
+        .workflow_service
+        .get_workflow(make_request(GetWorkflowRequest {
             run_id: run_id.clone(),
             namespace_id: NAMESPACE.to_string(),
         }))
         .await
         .expect("get_workflow_run should succeed")
         .into_inner()
-        .workflow_run
+        .workflow
         .expect("workflow should exist");
 
     assert_eq!(workflow.status, WorkflowStatus::Completed as i32);
@@ -167,8 +169,8 @@ async fn poll_requires_registered_online_worker() {
 
     let fake_worker = Uuid::new_v4().to_string();
     let result = harness
-        .service
-        .poll_activity(make_request(poll_request(&fake_worker, &["TypeA"])))
+        .worker_service
+        .poll_task(make_request(poll_request(&fake_worker, &["TypeA"])))
         .await;
 
     assert!(result.is_err(), "unregistered worker should be rejected");
@@ -176,8 +178,8 @@ async fn poll_requires_registered_online_worker() {
 
     let worker_id = register_worker(&harness, vec!["TypeA"]).await;
     let activity = harness
-        .service
-        .poll_activity(make_request(poll_request(&worker_id, &["TypeA"])))
+        .worker_service
+        .poll_task(make_request(poll_request(&worker_id, &["TypeA"])))
         .await
         .unwrap()
         .into_inner();
@@ -194,8 +196,8 @@ async fn poll_filters_by_supported_workflow_types() {
     let worker_id = register_worker(&harness, vec!["TypeA"]).await;
 
     let activity = harness
-        .service
-        .poll_activity(make_request(poll_request(&worker_id, &["TypeA"])))
+        .worker_service
+        .poll_task(make_request(poll_request(&worker_id, &["TypeA"])))
         .await
         .unwrap()
         .into_inner();
@@ -204,8 +206,8 @@ async fn poll_filters_by_supported_workflow_types() {
     assert_eq!(activity.workflow_type, "TypeA");
 
     let empty = harness
-        .service
-        .poll_activity(make_request(poll_request(&worker_id, &["TypeA"])))
+        .worker_service
+        .poll_task(make_request(poll_request(&worker_id, &["TypeA"])))
         .await
         .unwrap()
         .into_inner();
@@ -226,8 +228,8 @@ async fn poll_rejects_queue_or_namespace_mismatch() {
     wrong_queue.task_queue = "other-queue".to_string();
 
     let err = harness
-        .service
-        .poll_activity(make_request(wrong_queue))
+        .worker_service
+        .poll_task(make_request(wrong_queue))
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::FailedPrecondition);
@@ -237,8 +239,8 @@ async fn poll_rejects_queue_or_namespace_mismatch() {
     wrong_ns.namespace_id = "other-ns".to_string();
 
     let err = harness
-        .service
-        .poll_activity(make_request(wrong_ns))
+        .worker_service
+        .poll_task(make_request(wrong_ns))
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::FailedPrecondition);
@@ -253,8 +255,8 @@ async fn poll_rejects_unregistered_workflow_types() {
     let worker_id = register_worker(&harness, vec!["TypeA"]).await;
 
     let err = harness
-        .service
-        .poll_activity(make_request(poll_request(&worker_id, &["TypeB"])))
+        .worker_service
+        .poll_task(make_request(poll_request(&worker_id, &["TypeB"])))
         .await
         .unwrap_err();
 
@@ -267,8 +269,8 @@ async fn worker_drain_blocks_new_work() {
     let worker_id = register_worker(&harness, vec!["TypeA"]).await;
 
     harness
-        .service
-        .deregister_worker(make_request(DeregisterWorkerRequest {
+        .worker_service
+        .deregister(make_request(DeregisterRequest {
             worker_id: worker_id.clone(),
             drain: true,
         }))
@@ -276,8 +278,8 @@ async fn worker_drain_blocks_new_work() {
         .expect("start drain should succeed");
 
     let result = harness
-        .service
-        .poll_activity(make_request(poll_request(&worker_id, &["TypeA"])))
+        .worker_service
+        .poll_task(make_request(poll_request(&worker_id, &["TypeA"])))
         .await;
 
     assert!(result.is_err());
@@ -289,8 +291,8 @@ async fn error_details_include_codes() {
     let harness = TestHarness::new().await;
 
     let status = harness
-        .service
-        .get_workflow_run(make_request(GetWorkflowRunRequest {
+        .workflow_service
+        .get_workflow(make_request(GetWorkflowRequest {
             run_id: "not-a-uuid".to_string(),
             namespace_id: NAMESPACE.to_string(),
         }))
@@ -308,8 +310,8 @@ async fn worker_heartbeat_accepts_and_reports_drain_flag() {
     let worker_id = register_worker(&harness, vec!["TypeA"]).await;
 
     let resp = harness
-        .service
-        .worker_heartbeat(make_request(WorkerHeartbeatRequest {
+        .worker_service
+        .heartbeat(make_request(HeartbeatRequest {
             worker_id: worker_id.clone(),
             active_count: 2,
             completed_delta: 1,
@@ -330,13 +332,16 @@ async fn list_workers_returns_registry() {
     let worker_b = register_worker(&harness, vec!["TypeB"]).await;
 
     let resp = harness
-        .service
+        .admin_service
         .list_workers(make_request(ListWorkersRequest {
             namespace_id: NAMESPACE.to_string(),
-            task_queue: String::new(),
-            filter_status: String::new(),
-            page_size: 10,
-            page_token: String::new(),
+            task_queue: None,
+            status_filter: None,
+            page: Some(PageRequest {
+                page_size: 10,
+                page_token: String::new(),
+                include_total_count: false,
+            }),
         }))
         .await
         .expect("list_workers should succeed")

@@ -1,5 +1,5 @@
 use kagzi_proto::kagzi::HealthCheckRequest;
-use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
+use kagzi_proto::kagzi::admin_service_client::AdminServiceClient;
 use tonic::transport::Channel;
 use tracing::info;
 
@@ -19,10 +19,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect()
         .await?;
 
-    let mut client = WorkflowServiceClient::new(channel);
+    let mut client = AdminServiceClient::new(channel);
 
     let request = tonic::Request::new(HealthCheckRequest {
-        service: "kagzi-server".to_string(),
+        service: Some("kagzi-server".to_string()),
     });
 
     match client.health_check(request).await {
