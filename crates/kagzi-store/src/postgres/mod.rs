@@ -1,18 +1,18 @@
 mod pagination;
 mod query;
-mod schedule;
 mod step;
 mod worker;
 mod workflow;
+mod workflow_schedule;
 
 use sqlx::PgPool;
 
 pub use pagination::PaginatedResult;
 pub use query::{FilterBuilder, columns};
-pub use schedule::PgScheduleRepository;
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;
 pub use workflow::PgWorkflowRepository;
+pub use workflow_schedule::PgScheduleRepository;
 
 #[derive(Clone)]
 pub struct PgStore {

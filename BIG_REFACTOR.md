@@ -711,20 +711,26 @@ Replaced by `workflow_schedule.proto`.
 proto/workflow_schedule.proto                          # NEW
 proto/schedule.proto                                   # DELETED
 crates/kagzi-server/src/workflow_schedule_service.rs   # NEW
-crates/kagzi-server/src/scheduler.rs                   # MODIFIED: Use new naming
-crates/kagzi-store/src/models/schedule.rs              # RENAMED to workflow_schedule.rs
-crates/kagzi-store/src/repository/schedule.rs          # RENAMED
-crates/kagzi/src/lib.rs                                # MODIFIED: schedule() -> workflow_schedule()
+crates/kagzi-server/src/lib.rs                         # MODIFIED: export service impl
+crates/kagzi-server/src/main.rs                        # MODIFIED: register service
+crates/kagzi-proto/build.rs                            # MODIFIED: compile new proto
+crates/kagzi-store/src/models/workflow_schedule.rs     # RENAMED module
+crates/kagzi-store/src/repository/workflow_schedule.rs # RENAMED module
+crates/kagzi-store/src/postgres/workflow_schedule.rs   # RENAMED module
+crates/kagzi-server/src/scheduler.rs                   # MODIFIED: aliases WorkflowSchedule
+crates/kagzi/src/lib.rs                                # MODIFIED: workflow_schedule client helpers
 ```
 
 ### Checklist
 
-- [ ] Create `workflow_schedule.proto`
-- [ ] Create `workflow_schedule_service.rs`
-- [ ] Delete old `schedule.proto`
-- [ ] Rename store models and repository
-- [ ] Update scheduler to use new naming
-- [ ] Update SDK `schedule()` → `workflow_schedule()`
+- [x] Create `workflow_schedule.proto`
+- [x] Create `workflow_schedule_service.rs`
+- [x] Delete old `schedule.proto`
+- [x] Rename store models and repository
+- [x] Update scheduler to use new naming
+- [x] Update SDK `schedule()` → `workflow_schedule()`
+
+**Progress (Dec 2025):** PR4 implemented. `WorkflowScheduleServiceImpl` is registered and builds against `workflow_schedule.proto`; store modules renamed to `workflow_schedule`, scheduler uses `WorkflowSchedule` alias, and SDK exposes `workflow_schedule()` builder plus get/list/delete helpers. Legacy monolithic schedule RPCs remain gated behind the legacy feature.
 
 ---
 

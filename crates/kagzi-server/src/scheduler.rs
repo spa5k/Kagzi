@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
-use kagzi_store::{CreateWorkflow, PgStore, Schedule, ScheduleRepository, WorkflowRepository};
+use kagzi_store::{
+    CreateWorkflow, PgStore, Schedule as WorkflowSchedule, ScheduleRepository, WorkflowRepository,
+};
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{error, info, warn};
@@ -74,7 +76,7 @@ fn compute_missed_fires(
 
 async fn fire_workflow(
     workflows: &impl WorkflowRepository,
-    schedule: &Schedule,
+    schedule: &WorkflowSchedule,
     fire_at: DateTime<Utc>,
 ) -> Result<Option<uuid::Uuid>, kagzi_store::StoreError> {
     let idempotency_key = format!("schedule:{}:{}", schedule.schedule_id, fire_at.to_rfc3339());
@@ -125,7 +127,7 @@ pub async fn run(store: PgStore) {
         ticker.tick().await;
         let now = Utc::now();
 
-        let due: Vec<Schedule> = match store
+        let due: Vec<WorkflowSchedule> = match store
             .schedules()
             .due_schedules(now, config.batch_size)
             .await

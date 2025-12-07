@@ -563,7 +563,10 @@ impl WorkerService for WorkerServiceImpl {
         run_id = %request.get_ref().run_id,
         step_id = %request.get_ref().step_id
     ))]
-    async fn fail_step(&self, request: Request<FailStepRequest>) -> Result<Response<FailStepResponse>, Status> {
+    async fn fail_step(
+        &self,
+        request: Request<FailStepRequest>,
+    ) -> Result<Response<FailStepResponse>, Status> {
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -605,12 +608,10 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?;
 
-        let retry_at = result
-            .retry_at
-            .map(|dt| prost_types::Timestamp {
-                seconds: dt.timestamp(),
-                nanos: dt.timestamp_subsec_nanos() as i32,
-            });
+        let retry_at = result.retry_at.map(|dt| prost_types::Timestamp {
+            seconds: dt.timestamp(),
+            nanos: dt.timestamp_subsec_nanos() as i32,
+        });
 
         log_grpc_response(
             "FailStep",
@@ -750,4 +751,3 @@ impl WorkerService for WorkerServiceImpl {
         Ok(Response::new(()))
     }
 }
-

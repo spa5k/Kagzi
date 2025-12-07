@@ -1,0 +1,100 @@
+syntax = "proto3";
+package kagzi.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+// ============================================
+// SERVICE
+// ============================================
+service WorkflowScheduleService {
+  rpc CreateWorkflowSchedule(CreateWorkflowScheduleRequest) returns (CreateWorkflowScheduleResponse);
+  rpc GetWorkflowSchedule(GetWorkflowScheduleRequest) returns (GetWorkflowScheduleResponse);
+  rpc ListWorkflowSchedules(ListWorkflowSchedulesRequest) returns (ListWorkflowSchedulesResponse);
+  rpc UpdateWorkflowSchedule(UpdateWorkflowScheduleRequest) returns (UpdateWorkflowScheduleResponse);
+  rpc DeleteWorkflowSchedule(DeleteWorkflowScheduleRequest) returns (DeleteWorkflowScheduleResponse);
+}
+
+// ============================================
+// MESSAGES
+// ============================================
+message WorkflowSchedule {
+  string schedule_id = 1;
+  string namespace_id = 2;
+  string task_queue = 3;
+  string workflow_type = 4;
+  string cron_expr = 5;
+  Payload input = 6;
+  Payload context = 7;
+  bool enabled = 8;
+  int32 max_catchup = 9;
+  google.protobuf.Timestamp next_fire_at = 10;
+  google.protobuf.Timestamp last_fired_at = 11;
+  string version = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+message CreateWorkflowScheduleRequest {
+  string namespace_id = 1;
+  string task_queue = 2;
+  string workflow_type = 3;
+  string cron_expr = 4;
+  Payload input = 5;
+  Payload context = 6;
+  optional bool enabled = 7;
+  optional int32 max_catchup = 8;
+  optional string version = 9;
+}
+
+message CreateWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
+
+message GetWorkflowScheduleRequest {
+  string schedule_id = 1;
+  string namespace_id = 2;
+}
+
+message GetWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
+
+message ListWorkflowSchedulesRequest {
+  string namespace_id = 1;
+  optional string task_queue = 2;
+  PageRequest page = 3;
+}
+
+message ListWorkflowSchedulesResponse {
+  repeated WorkflowSchedule schedules = 1;
+  PageInfo page = 2;
+}
+
+message UpdateWorkflowScheduleRequest {
+  string schedule_id = 1;
+  string namespace_id = 2;
+  optional string task_queue = 3;
+  optional string workflow_type = 4;
+  optional string cron_expr = 5;
+  optional Payload input = 6;
+  optional Payload context = 7;
+  optional bool enabled = 8;
+  optional int32 max_catchup = 9;
+  optional google.protobuf.Timestamp next_fire_at = 10;
+  optional string version = 11;
+}
+
+message UpdateWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
+
+message DeleteWorkflowScheduleRequest {
+  string schedule_id = 1;
+  string namespace_id = 2;
+}
+
+message DeleteWorkflowScheduleResponse {
+  bool deleted = 1;
+}
+

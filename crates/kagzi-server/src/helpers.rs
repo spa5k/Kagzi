@@ -111,7 +111,9 @@ pub fn payload_to_json(payload: Option<Payload>) -> Result<serde_json::Value, St
     }
 }
 
-pub fn payload_to_optional_json(payload: Option<Payload>) -> Result<Option<serde_json::Value>, Status> {
+pub fn payload_to_optional_json(
+    payload: Option<Payload>,
+) -> Result<Option<serde_json::Value>, Status> {
     match payload {
         None => Ok(None),
         Some(p) if p.data.is_empty() => Ok(None),
@@ -212,4 +214,3 @@ pub fn map_store_error(e: kagzi_store::StoreError) -> Status {
         }
     }
 }
-
