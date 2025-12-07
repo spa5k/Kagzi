@@ -118,6 +118,7 @@ impl WorkflowService for WorkflowServiceImpl {
 
         let workflows = self.store.workflows();
 
+        // Fast path: check if workflow already exists
         if let Some(existing_id) = workflows
             .find_active_by_external_id(&namespace_id, &req.external_id, None)
             .await
@@ -135,13 +136,14 @@ impl WorkflowService for WorkflowServiceImpl {
             req.version
         };
 
-        let run_id = workflows
+        // Create workflow - handle race condition where concurrent request created it
+        let create_result = workflows
             .create(CreateWorkflow {
                 external_id: req.external_id.clone(),
                 task_queue: req.task_queue,
                 workflow_type: req.workflow_type,
                 input: input_json,
-                namespace_id,
+                namespace_id: namespace_id.clone(),
                 idempotency_suffix: None,
                 context: context_json,
                 deadline_at: req.deadline_at.map(|ts| {
@@ -151,8 +153,28 @@ impl WorkflowService for WorkflowServiceImpl {
                 version,
                 retry_policy: merge_proto_policy(req.retry_policy, None),
             })
-            .await
-            .map_err(map_store_error)?;
+            .await;
+
+        // Handle unique constraint violation (concurrent idempotent request)
+        let run_id = match create_result {
+            Ok(id) => id,
+            Err(ref e) if e.is_unique_violation() => {
+                // Race condition: another request created the workflow between our check and insert
+                if let Some(existing_id) = workflows
+                    .find_active_by_external_id(&namespace_id, &req.external_id, None)
+                    .await
+                    .map_err(map_store_error)?
+                {
+                    return Ok(Response::new(StartWorkflowResponse {
+                        run_id: existing_id.to_string(),
+                        already_exists: true,
+                    }));
+                }
+                // Should not happen, but fall through to error
+                return Err(map_store_error(create_result.unwrap_err()));
+            }
+            Err(e) => return Err(map_store_error(e)),
+        };
 
         log_grpc_response(
             "StartWorkflow",

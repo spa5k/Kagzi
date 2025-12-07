@@ -628,15 +628,27 @@ impl Worker {
         I: DeserializeOwned + Send + 'static,
         O: Serialize + Send + 'static,
     {
+        let workflow_name = name.to_string();
         let wrapped = move |ctx: WorkflowContext,
                             input_val: serde_json::Value|
               -> BoxFuture<'static, anyhow::Result<serde_json::Value>> {
-            let input: I = serde_json::from_value(input_val).unwrap();
-            let fut = func(ctx, input);
-            Box::pin(async move {
-                let output = fut.await?;
-                Ok(serde_json::to_value(output)?)
-            })
+            let workflow_name = workflow_name.clone();
+            match serde_json::from_value::<I>(input_val) {
+                Ok(input) => {
+                    let fut = func(ctx, input);
+                    Box::pin(async move {
+                        let output = fut.await?;
+                        Ok(serde_json::to_value(output)?)
+                    })
+                }
+                Err(e) => Box::pin(async move {
+                    Err(anyhow!(
+                        "Failed to deserialize workflow '{}' input: {}",
+                        workflow_name,
+                        e
+                    ))
+                }),
+            }
         };
         self.workflows
             .insert(name.to_string(), Arc::new(Box::new(wrapped)));

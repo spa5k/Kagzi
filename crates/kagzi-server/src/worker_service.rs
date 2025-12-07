@@ -471,6 +471,32 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        // Validate workflow exists and is in a valid state for steps
+        let workflow_check = self
+            .store
+            .workflows()
+            .check_status(run_id)
+            .await
+            .map_err(map_store_error)?;
+
+        if !workflow_check.exists {
+            return Err(not_found(
+                format!("Workflow not found: run_id={}", run_id),
+                "workflow",
+                run_id.to_string(),
+            ));
+        }
+
+        // Only allow steps on RUNNING workflows
+        if let Some(status) = workflow_check.status
+            && status.is_terminal()
+        {
+            return Err(precondition_failed(format!(
+                "Cannot begin step on workflow with terminal status '{:?}'",
+                status
+            )));
+        }
+
         let workflow_retry = self
             .store
             .workflows()
@@ -655,6 +681,31 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        // Verify workflow exists and is in a completable state
+        let workflow_check = self
+            .store
+            .workflows()
+            .check_status(run_id)
+            .await
+            .map_err(map_store_error)?;
+
+        if !workflow_check.exists {
+            return Err(not_found(
+                format!("Workflow not found: run_id={}", run_id),
+                "workflow",
+                run_id.to_string(),
+            ));
+        }
+
+        if let Some(status) = workflow_check.status
+            && status.is_terminal()
+        {
+            return Err(precondition_failed(format!(
+                "Cannot complete workflow with terminal status '{:?}'",
+                status
+            )));
+        }
+
         let output_json = payload_to_optional_json(req.output)?
             .ok_or_else(|| invalid_argument("output payload cannot be null"))?;
 
@@ -733,6 +784,8 @@ impl WorkerService for WorkerServiceImpl {
         duration_seconds = %request.get_ref().duration_seconds
     ))]
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
+        const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
+
         let correlation_id = extract_or_generate_correlation_id(&request);
         let trace_id = extract_or_generate_trace_id(&request);
 
@@ -742,6 +795,26 @@ impl WorkerService for WorkerServiceImpl {
 
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+
+        // Validate duration
+        if req.duration_seconds == 0 {
+            // Zero duration sleep is a no-op, return immediately
+            log_grpc_response(
+                "Sleep",
+                &correlation_id,
+                &trace_id,
+                Status::code(&Status::ok("")),
+                Some("Zero duration - no-op"),
+            );
+            return Ok(Response::new(()));
+        }
+
+        if req.duration_seconds > MAX_SLEEP_SECONDS {
+            return Err(invalid_argument(format!(
+                "Sleep duration cannot exceed {} seconds (30 days)",
+                MAX_SLEEP_SECONDS
+            )));
+        }
 
         self.store
             .workflows()

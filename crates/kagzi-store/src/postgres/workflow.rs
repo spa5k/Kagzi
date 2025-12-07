@@ -321,6 +321,32 @@ impl WorkflowRepository for PgWorkflowRepository {
     }
 
     #[instrument(skip(self))]
+    async fn check_status(&self, run_id: Uuid) -> Result<WorkflowExistsResult, StoreError> {
+        let row = sqlx::query!(
+            r#"
+            SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
+            WHERE run_id = $1
+            "#,
+            run_id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            Some(r) => Ok(WorkflowExistsResult {
+                exists: true,
+                status: Some(r.status),
+                locked_by: r.locked_by,
+            }),
+            None => Ok(WorkflowExistsResult {
+                exists: false,
+                status: None,
+                locked_by: None,
+            }),
+        }
+    }
+
+    #[instrument(skip(self))]
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError> {
         let result = sqlx::query!(
             r#"

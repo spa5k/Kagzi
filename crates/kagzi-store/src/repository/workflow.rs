@@ -32,6 +32,9 @@ pub trait WorkflowRepository: Send + Sync {
         namespace_id: &str,
     ) -> Result<WorkflowExistsResult, StoreError>;
 
+    /// Check workflow status by run_id only (for worker internal use)
+    async fn check_status(&self, run_id: Uuid) -> Result<WorkflowExistsResult, StoreError>;
+
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError>;
 
     async fn complete(&self, run_id: Uuid, output: serde_json::Value) -> Result<(), StoreError>;
