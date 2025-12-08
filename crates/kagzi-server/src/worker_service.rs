@@ -1,3 +1,4 @@
+use crate::config::WorkerSettings;
 use crate::helpers::{
     invalid_argument, json_to_payload, map_store_error, merge_proto_policy, not_found,
     payload_to_optional_json, precondition_failed,
@@ -108,14 +109,16 @@ fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
 pub struct WorkerServiceImpl {
     pub store: PgStore,
     pub work_distributor: WorkDistributorHandle,
+    pub worker_settings: WorkerSettings,
 }
 
 impl WorkerServiceImpl {
-    pub fn new(store: PgStore) -> Self {
+    pub fn new(store: PgStore, worker_settings: WorkerSettings) -> Self {
         let work_distributor = WorkDistributorHandle::new(store.clone());
         Self {
             store,
             work_distributor,
+            worker_settings,
         }
     }
 }
@@ -388,11 +391,7 @@ impl WorkerService for WorkerServiceImpl {
             }));
         }
 
-        let timeout = std::env::var("KAGZI_POLL_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(60));
+        let timeout = Duration::from_secs(self.worker_settings.poll_timeout_secs);
 
         match self
             .work_distributor

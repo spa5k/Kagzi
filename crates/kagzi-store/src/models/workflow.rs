@@ -4,10 +4,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Type;
 use std::time::Duration;
+use strum::{AsRefStr, Display, EnumString};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Display, EnumString, AsRefStr,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 #[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WorkflowStatus {
     Pending,
@@ -19,29 +23,6 @@ pub enum WorkflowStatus {
 }
 
 impl WorkflowStatus {
-    pub fn from_db_str(s: &str) -> Self {
-        match s {
-            "PENDING" => Self::Pending,
-            "RUNNING" => Self::Running,
-            "SLEEPING" => Self::Sleeping,
-            "COMPLETED" => Self::Completed,
-            "FAILED" => Self::Failed,
-            "CANCELLED" => Self::Cancelled,
-            _ => Self::Pending,
-        }
-    }
-
-    pub fn as_db_str(&self) -> &'static str {
-        match self {
-            Self::Pending => "PENDING",
-            Self::Running => "RUNNING",
-            Self::Sleeping => "SLEEPING",
-            Self::Completed => "COMPLETED",
-            Self::Failed => "FAILED",
-            Self::Cancelled => "CANCELLED",
-        }
-    }
-
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }

@@ -4,11 +4,10 @@ use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServic
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    run_scheduler, tracing_utils, watchdog,
+    config::Settings, run_scheduler, tracing_utils, watchdog,
 };
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
-use std::env;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
 use tracing::info;
@@ -17,14 +16,14 @@ use tracing::info;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_utils::init_tracing("kagzi-server")?;
 
-    let database_url = env::var("DATABASE_URL").map_err(|_| {
-        tracing::error!("DATABASE_URL environment variable not set");
-        "DATABASE_URL must be set"
+    let settings = Settings::new().map_err(|e| {
+        tracing::error!("Failed to load configuration: {:?}", e);
+        e
     })?;
 
     let pool = PgPoolOptions::new()
-        .max_connections(50)
-        .connect(&database_url)
+        .max_connections(settings.server.db_max_connections)
+        .connect(&settings.database_url)
         .await
         .map_err(|e| {
             tracing::error!("Failed to connect to database: {:?}", e);
@@ -37,24 +36,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = PgStore::new(pool);
 
     let shutdown = CancellationToken::new();
+    let scheduler_settings = settings.scheduler.clone();
+    let watchdog_settings = settings.watchdog.clone();
+    let worker_settings = settings.worker.clone();
 
     // Start the background watchdog
     let watchdog_store = store.clone();
     let watchdog_token = shutdown.child_token();
-    watchdog::spawn(watchdog_store, watchdog_token);
+    watchdog::spawn(watchdog_store, watchdog_settings, watchdog_token);
 
     // Start the scheduler loop
     let scheduler_store = store.clone();
     let scheduler_token = shutdown.child_token();
     tokio::spawn(async move {
-        run_scheduler(scheduler_store, scheduler_token).await;
+        run_scheduler(scheduler_store, scheduler_settings, scheduler_token).await;
     });
 
-    let addr = "0.0.0.0:50051".parse()?;
+    let addr = format!("{}:{}", settings.server.host, settings.server.port).parse()?;
     let workflow_service = WorkflowServiceImpl::new(store.clone());
     let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
     let admin_service = AdminServiceImpl::new(store.clone());
-    let worker_service = WorkerServiceImpl::new(store);
+    let worker_service = WorkerServiceImpl::new(store, worker_settings);
 
     info!("Kagzi Server listening on {}", addr);
 

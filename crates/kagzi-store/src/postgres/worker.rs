@@ -223,10 +223,14 @@ impl WorkerRepository for PgWorkerRepository {
     async fn list(&self, params: ListWorkersParams) -> Result<Vec<Worker>, StoreError> {
         let limit = (params.page_size.max(1) + 1) as i64; // fetch one extra to compute next_page_token
 
+        let status_filter = params
+            .filter_status
+            .map(|status| status.as_ref().to_owned());
+
         let mut filters = FilterBuilder::select(columns::worker::BASE, "kagzi.workers");
         filters.and_eq("namespace_id", &params.namespace_id);
         filters.and_optional_eq("task_queue", params.task_queue.as_deref());
-        filters.and_optional_eq("status", params.filter_status.map(|s| s.as_db_str()));
+        filters.and_optional_eq("status", status_filter);
         if let Some(cursor) = params.cursor {
             filters
                 .builder()
@@ -329,6 +333,8 @@ impl WorkerRepository for PgWorkerRepository {
         task_queue: Option<&str>,
         filter_status: Option<WorkerStatus>,
     ) -> Result<i64, StoreError> {
+        let status_filter = filter_status.map(|status| status.as_ref().to_owned());
+
         let row = sqlx::query!(
             r#"
             SELECT COUNT(*) as count
@@ -339,7 +345,7 @@ impl WorkerRepository for PgWorkerRepository {
             "#,
             namespace_id,
             task_queue,
-            filter_status.map(|s| s.as_db_str())
+            status_filter
         )
         .fetch_one(&self.pool)
         .await?;

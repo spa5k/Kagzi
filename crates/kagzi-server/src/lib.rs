@@ -1,4 +1,5 @@
 pub mod admin_service;
+pub mod config;
 pub mod helpers;
 pub mod scheduler;
 pub mod tracing_utils;

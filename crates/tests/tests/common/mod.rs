@@ -2,6 +2,7 @@
 
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
+    config::WorkerSettings,
 };
 use kagzi_store::PgStore;
 use sqlx::PgPool;
@@ -55,7 +56,7 @@ impl TestHarness {
         // Create the store
         let store = PgStore::new(pool.clone());
         let workflow_service = WorkflowServiceImpl::new(store.clone());
-        let worker_service = WorkerServiceImpl::new(store.clone());
+        let worker_service = WorkerServiceImpl::new(store.clone(), WorkerSettings::default());
         let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
         let admin_service = AdminServiceImpl::new(store.clone());
 

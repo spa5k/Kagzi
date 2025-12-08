@@ -1,34 +1,19 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Type;
+use strum::{AsRefStr, Display, EnumString};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Display, EnumString, AsRefStr,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 #[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WorkerStatus {
     Online,
     Draining,
     Offline,
-}
-
-impl WorkerStatus {
-    pub fn from_db_str(s: &str) -> Self {
-        match s {
-            "ONLINE" => Self::Online,
-            "DRAINING" => Self::Draining,
-            "OFFLINE" => Self::Offline,
-            _ => Self::Offline,
-        }
-    }
-
-    pub fn as_db_str(&self) -> &'static str {
-        match self {
-            Self::Online => "ONLINE",
-            Self::Draining => "DRAINING",
-            Self::Offline => "OFFLINE",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
