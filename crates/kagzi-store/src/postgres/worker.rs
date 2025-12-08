@@ -7,10 +7,11 @@ use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    ListWorkersParams, RegisterWorkerParams, Worker, WorkerHeartbeatParams, WorkerStatus,
-    WorkflowTypeConcurrency,
+    ListWorkersParams, RegisterWorkerParams, Worker, WorkerCursor, WorkerHeartbeatParams,
+    WorkerStatus, WorkflowTypeConcurrency,
 };
 use crate::postgres::columns;
+use crate::postgres::pagination::PaginatedResult;
 use crate::postgres::query::{FilterBuilder, push_limit};
 use crate::repository::WorkerRepository;
 
@@ -143,6 +144,7 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(row.worker_id)
     }
 
+    #[instrument(skip(self, params))]
     async fn heartbeat(&self, params: WorkerHeartbeatParams) -> Result<bool, StoreError> {
         let result = sqlx::query!(
             r#"
@@ -166,14 +168,16 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(result.is_some())
     }
 
-    async fn start_drain(&self, worker_id: Uuid) -> Result<(), StoreError> {
+    #[instrument(skip(self))]
+    async fn start_drain(&self, worker_id: Uuid, namespace_id: &str) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
             UPDATE kagzi.workers
             SET status = 'DRAINING'
-            WHERE worker_id = $1
+            WHERE worker_id = $1 AND namespace_id = $2
             "#,
-            worker_id
+            worker_id,
+            namespace_id
         )
         .execute(&self.pool)
         .await?;
@@ -181,16 +185,18 @@ impl WorkerRepository for PgWorkerRepository {
         Ok(())
     }
 
-    async fn deregister(&self, worker_id: Uuid) -> Result<(), StoreError> {
+    #[instrument(skip(self))]
+    async fn deregister(&self, worker_id: Uuid, namespace_id: &str) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
             UPDATE kagzi.workers
             SET status = 'OFFLINE',
                 active_count = 0,
                 deregistered_at = NOW()
-            WHERE worker_id = $1
+            WHERE worker_id = $1 AND namespace_id = $2
             "#,
-            worker_id
+            worker_id,
+            namespace_id
         )
         .execute(&self.pool)
         .await?;
@@ -220,8 +226,11 @@ impl WorkerRepository for PgWorkerRepository {
     }
 
     #[instrument(skip(self, params))]
-    async fn list(&self, params: ListWorkersParams) -> Result<Vec<Worker>, StoreError> {
-        let limit = (params.page_size.max(1) + 1) as i64; // fetch one extra to compute next_page_token
+    async fn list(
+        &self,
+        params: ListWorkersParams,
+    ) -> Result<PaginatedResult<Worker, WorkerCursor>, StoreError> {
+        let limit = (params.page_size.max(1) + 1) as i64;
 
         let status_filter = params
             .filter_status
@@ -231,11 +240,11 @@ impl WorkerRepository for PgWorkerRepository {
         filters.and_eq("namespace_id", &params.namespace_id);
         filters.and_optional_eq("task_queue", params.task_queue.as_deref());
         filters.and_optional_eq("status", status_filter);
-        if let Some(cursor) = params.cursor {
+        if let Some(ref cursor) = params.cursor {
             filters
                 .builder()
                 .push(" AND worker_id < ")
-                .push_bind(cursor);
+                .push_bind(cursor.worker_id);
         }
 
         let mut builder = filters.finalize();
@@ -245,7 +254,7 @@ impl WorkerRepository for PgWorkerRepository {
         let rows: Vec<WorkerRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
         if rows.is_empty() {
-            return Ok(Vec::new());
+            return Ok(PaginatedResult::empty());
         }
 
         // Collect unique (namespace_id, task_queue) pairs to batch concurrency lookups.
@@ -261,15 +270,28 @@ impl WorkerRepository for PgWorkerRepository {
         let queue_limits = self.fetch_queue_limits_for_pairs(&pairs).await?;
         let workflow_limits = self.fetch_workflow_limits_for_pairs(&pairs).await?;
 
-        let mut workers = Vec::with_capacity(rows.len());
-        for r in rows {
+        let has_more = rows.len() > params.page_size as usize;
+        let mut items = Vec::with_capacity(rows.len().min(params.page_size as usize));
+        for r in rows.into_iter().take(params.page_size as usize) {
             let key = (r.namespace_id.clone(), r.task_queue.clone());
             let queue_limit = queue_limits.get(&key).cloned().flatten();
-            let type_limits = workflow_limits.get(&key).cloned().unwrap_or_else(Vec::new);
-            workers.push(r.into_model(queue_limit, type_limits));
+            let type_limits = workflow_limits.get(&key).cloned().unwrap_or_default();
+            items.push(r.into_model(queue_limit, type_limits));
         }
 
-        Ok(workers)
+        let next_cursor = if has_more {
+            items.last().map(|w| WorkerCursor {
+                worker_id: w.worker_id,
+            })
+        } else {
+            None
+        };
+
+        Ok(PaginatedResult {
+            items,
+            next_cursor,
+            has_more,
+        })
     }
 
     #[instrument(skip(self))]
@@ -310,15 +332,21 @@ impl WorkerRepository for PgWorkerRepository {
     }
 
     #[instrument(skip(self))]
-    async fn update_active_count(&self, worker_id: Uuid, delta: i32) -> Result<(), StoreError> {
+    async fn update_active_count(
+        &self,
+        worker_id: Uuid,
+        namespace_id: &str,
+        delta: i32,
+    ) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
             UPDATE kagzi.workers
             SET active_count = GREATEST(active_count + $2, 0)
-            WHERE worker_id = $1
+            WHERE worker_id = $1 AND namespace_id = $3
             "#,
             worker_id,
-            delta
+            delta,
+            namespace_id
         )
         .execute(&self.pool)
         .await?;

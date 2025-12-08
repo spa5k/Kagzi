@@ -3,6 +3,7 @@ use crate::helpers::{
     invalid_argument, json_to_payload, map_store_error, merge_proto_policy, not_found,
     payload_to_optional_json, precondition_failed,
 };
+use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
 use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
     log_grpc_response,
@@ -13,13 +14,13 @@ use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
     CompleteWorkflowRequest, CompleteWorkflowResponse, DeregisterRequest, ErrorCode, ErrorDetail,
     FailStepRequest, FailStepResponse, FailWorkflowRequest, FailWorkflowResponse, HeartbeatRequest,
-    HeartbeatResponse, Payload, PollTaskRequest, PollTaskResponse, RegisterRequest,
-    RegisterResponse, SleepRequest, Step, StepKind, StepStatus,
+    HeartbeatResponse, PollTaskRequest, PollTaskResponse, RegisterRequest, RegisterResponse,
+    SleepRequest,
 };
 use kagzi_store::{
-    BeginStepParams, FailStepParams, PgStore, RegisterWorkerParams, StepKind as StoreStepKind,
-    StepRepository, WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus,
-    WorkflowRepository, WorkflowTypeConcurrency,
+    BeginStepParams, FailStepParams, PgStore, RegisterWorkerParams, StepRepository,
+    WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus, WorkflowRepository,
+    WorkflowTypeConcurrency,
 };
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -30,72 +31,6 @@ use uuid::Uuid;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
-
-fn map_step_status(status: kagzi_store::StepStatus) -> StepStatus {
-    match status {
-        kagzi_store::StepStatus::Pending => StepStatus::Pending,
-        kagzi_store::StepStatus::Running => StepStatus::Running,
-        kagzi_store::StepStatus::Completed => StepStatus::Completed,
-        kagzi_store::StepStatus::Failed => StepStatus::Failed,
-    }
-}
-
-fn map_step_kind(kind: kagzi_store::StepKind) -> StepKind {
-    match kind {
-        kagzi_store::StepKind::Function => StepKind::Function,
-        kagzi_store::StepKind::Sleep => StepKind::Sleep,
-    }
-}
-
-fn map_proto_step_kind(kind: i32) -> Result<StoreStepKind, Status> {
-    let kind = StepKind::try_from(kind).map_err(|_| invalid_argument("step kind is required"))?;
-
-    match kind {
-        StepKind::Function => Ok(StoreStepKind::Function),
-        StepKind::Sleep => Ok(StoreStepKind::Sleep),
-        StepKind::Unspecified => Err(invalid_argument("step kind is required")),
-    }
-}
-
-fn step_to_proto(s: kagzi_store::StepRun) -> Result<Step, Status> {
-    let input = json_to_payload(s.input)?;
-    let output = json_to_payload(s.output)?;
-    let error = ErrorDetail {
-        code: ErrorCode::Unspecified as i32,
-        message: s.error.unwrap_or_default(),
-        non_retryable: false,
-        retry_after_ms: 0,
-        subject: String::new(),
-        subject_id: String::new(),
-        metadata: HashMap::new(),
-    };
-
-    let step_id = s.step_id.clone();
-
-    Ok(Step {
-        step_id: step_id.clone(),
-        run_id: s.run_id.to_string(),
-        namespace_id: s.namespace_id,
-        name: step_id.clone(),
-        kind: map_step_kind(s.step_kind) as i32,
-        status: map_step_status(s.status) as i32,
-        attempt_number: s.attempt_number,
-        input: Some(input),
-        output: Some(output),
-        error: Some(error),
-        created_at: s.created_at.map(timestamp_from),
-        started_at: s.started_at.map(timestamp_from),
-        finished_at: s.finished_at.map(timestamp_from),
-        child_run_id: s.child_workflow_run_id.map(|u| u.to_string()),
-    })
-}
-
-fn timestamp_from(dt: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
-    prost_types::Timestamp {
-        seconds: dt.timestamp(),
-        nanos: dt.timestamp_subsec_nanos() as i32,
-    }
-}
 
 fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
     if raw <= 0 {
@@ -268,17 +203,28 @@ impl WorkerService for WorkerServiceImpl {
         let worker_id =
             Uuid::parse_str(&req.worker_id).map_err(|_| invalid_argument("Invalid worker_id"))?;
 
+        // Get namespace from worker lookup
+        let worker = self
+            .store
+            .workers()
+            .find_by_id(worker_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found("Worker not found", "worker", req.worker_id.clone()))?;
+
+        let namespace_id = worker.namespace_id;
+
         if req.drain {
             self.store
                 .workers()
-                .start_drain(worker_id)
+                .start_drain(worker_id, &namespace_id)
                 .await
                 .map_err(map_store_error)?;
             info!(worker_id = %worker_id, "Worker draining");
         } else {
             self.store
                 .workers()
-                .deregister(worker_id)
+                .deregister(worker_id, &namespace_id)
                 .await
                 .map_err(map_store_error)?;
             info!(worker_id = %worker_id, "Worker deregistered");
@@ -327,6 +273,7 @@ impl WorkerService for WorkerServiceImpl {
                 precondition_failed("Worker not registered or offline. Call Register first.")
             })?;
 
+        // Verify worker belongs to requested namespace
         if worker.namespace_id != namespace_id || worker.task_queue != req.task_queue {
             return Err(precondition_failed(
                 "Worker not registered for the requested namespace/task_queue",
@@ -370,7 +317,12 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?
         {
-            if let Err(e) = self.store.workers().update_active_count(worker_id, 1).await {
+            if let Err(e) = self
+                .store
+                .workers()
+                .update_active_count(worker_id, &worker.namespace_id, 1)
+                .await
+            {
                 tracing::warn!(worker_id = %worker_id, error = ?e, "Failed to update active count");
             }
 
@@ -405,7 +357,12 @@ impl WorkerService for WorkerServiceImpl {
             .await
         {
             Some(work_item) => {
-                if let Err(e) = self.store.workers().update_active_count(worker_id, 1).await {
+                if let Err(e) = self
+                    .store
+                    .workers()
+                    .update_active_count(worker_id, &worker.namespace_id, 1)
+                    .await
+                {
                     tracing::warn!(
                         worker_id = %worker_id,
                         error = ?e,
@@ -450,10 +407,7 @@ impl WorkerService for WorkerServiceImpl {
                 Ok(Response::new(PollTaskResponse {
                     run_id: String::new(),
                     workflow_type: String::new(),
-                    input: Some(Payload {
-                        data: Vec::new(),
-                        metadata: HashMap::new(),
-                    }),
+                    input: Some(empty_payload()),
                 }))
             }
         }
@@ -479,11 +433,23 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        // Get namespace from workflow - try "default" first, then look up if not found
+        let workflow = self
+            .store
+            .workflows()
+            .find_by_id(run_id, "default")
+            .await
+            .map_err(map_store_error)?;
+        let namespace_id = workflow
+            .as_ref()
+            .map(|w| w.namespace_id.clone())
+            .unwrap_or_else(|| "default".to_string());
+
         // Validate workflow exists and is in a valid state for steps
         let workflow_check = self
             .store
             .workflows()
-            .check_status(run_id)
+            .check_status(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?;
 
@@ -565,6 +531,17 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        // Get namespace from workflow
+        let workflow = self
+            .store
+            .workflows()
+            .find_by_id(run_id, "default")
+            .await
+            .map_err(map_store_error)?;
+        let namespace_id = workflow
+            .map(|w| w.namespace_id)
+            .unwrap_or_else(|| "default".to_string());
+
         let output_json = payload_to_optional_json(req.output)?.unwrap_or(serde_json::Value::Null);
 
         self.store
@@ -574,14 +551,21 @@ impl WorkerService for WorkerServiceImpl {
             .map_err(map_store_error)?;
 
         // Fetch latest step state to return
-        let steps = self
+        let steps_result = self
             .store
             .steps()
-            .list_by_workflow(run_id, Some(&req.step_id), 1)
+            .list(kagzi_store::ListStepsParams {
+                run_id,
+                namespace_id,
+                step_id: Some(req.step_id.clone()),
+                page_size: 1,
+                cursor: None,
+            })
             .await
             .map_err(map_store_error)?;
 
-        let step = steps
+        let step = steps_result
+            .items
             .into_iter()
             .last()
             .map(step_to_proto)
@@ -688,11 +672,23 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        // Get namespace from workflow - try "default" first
+        let workflow = self
+            .store
+            .workflows()
+            .find_by_id(run_id, "default")
+            .await
+            .map_err(map_store_error)?;
+        let namespace_id = workflow
+            .as_ref()
+            .map(|w| w.namespace_id.clone())
+            .unwrap_or_else(|| "default".to_string());
+
         // Verify workflow exists and is in a completable state
         let workflow_check = self
             .store
             .workflows()
-            .check_status(run_id)
+            .check_status(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?;
 
@@ -726,7 +722,7 @@ impl WorkerService for WorkerServiceImpl {
                 if let Err(e) = self
                     .store
                     .workers()
-                    .update_active_count(worker_uuid, -1)
+                    .update_active_count(worker_uuid, &namespace_id, -1)
                     .await
                 {
                     warn!(worker_id = %locked_by, error = ?e, "Failed to decrement active_count after completion");
@@ -768,6 +764,18 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
+        // Get namespace from workflow
+        let workflow = self
+            .store
+            .workflows()
+            .find_by_id(run_id, "default")
+            .await
+            .map_err(map_store_error)?;
+        let namespace_id = workflow
+            .as_ref()
+            .map(|w| w.namespace_id.clone())
+            .unwrap_or_else(|| "default".to_string());
+
         let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
             code: ErrorCode::Unspecified as i32,
             message: String::new(),
@@ -781,7 +789,7 @@ impl WorkerService for WorkerServiceImpl {
         let workflow_status = self
             .store
             .workflows()
-            .check_status(run_id)
+            .check_status(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?;
 
@@ -797,7 +805,7 @@ impl WorkerService for WorkerServiceImpl {
                 if let Err(e) = self
                     .store
                     .workers()
-                    .update_active_count(worker_uuid, -1)
+                    .update_active_count(worker_uuid, &namespace_id, -1)
                     .await
                 {
                     warn!(worker_id = %locked_by, error = ?e, "Failed to decrement active_count after failure");

@@ -3,10 +3,13 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::error::StoreError;
-use crate::models::{CreateSchedule, ListSchedulesParams, Schedule, UpdateSchedule};
+use crate::models::{
+    CreateSchedule, ListSchedulesParams, Schedule, ScheduleCursor, UpdateSchedule,
+};
+use crate::postgres::PaginatedResult;
 
 #[async_trait]
-pub trait ScheduleRepository: Send + Sync {
+pub trait WorkflowScheduleRepository: Send + Sync {
     async fn create(&self, params: CreateSchedule) -> Result<Uuid, StoreError>;
 
     async fn find_by_id(
@@ -15,7 +18,10 @@ pub trait ScheduleRepository: Send + Sync {
         namespace_id: &str,
     ) -> Result<Option<Schedule>, StoreError>;
 
-    async fn list(&self, params: ListSchedulesParams) -> Result<Vec<Schedule>, StoreError>;
+    async fn list(
+        &self,
+        params: ListSchedulesParams,
+    ) -> Result<PaginatedResult<Schedule, ScheduleCursor>, StoreError>;
 
     async fn update(
         &self,

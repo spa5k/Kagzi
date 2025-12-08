@@ -77,5 +77,10 @@ pub struct ListWorkersParams {
     pub task_queue: Option<String>,
     pub filter_status: Option<WorkerStatus>,
     pub page_size: i32,
-    pub cursor: Option<Uuid>,
+    pub cursor: Option<WorkerCursor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerCursor {
+    pub worker_id: Uuid,
 }

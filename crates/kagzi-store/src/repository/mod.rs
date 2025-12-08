@@ -6,4 +6,4 @@ mod workflow_schedule;
 pub use step::StepRepository;
 pub use worker::WorkerRepository;
 pub use workflow::WorkflowRepository;
-pub use workflow_schedule::ScheduleRepository;
+pub use workflow_schedule::WorkflowScheduleRepository;

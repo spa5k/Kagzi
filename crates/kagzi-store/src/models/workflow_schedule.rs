@@ -63,5 +63,12 @@ pub struct UpdateSchedule {
 pub struct ListSchedulesParams {
     pub namespace_id: String,
     pub task_queue: Option<String>,
-    pub limit: Option<i64>,
+    pub page_size: i32,
+    pub cursor: Option<ScheduleCursor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScheduleCursor {
+    pub created_at: DateTime<Utc>,
+    pub schedule_id: Uuid,
 }

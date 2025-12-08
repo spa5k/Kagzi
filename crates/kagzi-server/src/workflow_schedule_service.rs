@@ -17,8 +17,8 @@ use kagzi_proto::kagzi::{
     UpdateWorkflowScheduleRequest, UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
 use kagzi_store::{
-    CreateSchedule as StoreCreateSchedule, ListSchedulesParams, PgStore, ScheduleRepository,
-    UpdateSchedule as StoreUpdateSchedule, clamp_max_catchup,
+    CreateSchedule as StoreCreateSchedule, ListSchedulesParams, PgStore,
+    UpdateSchedule as StoreUpdateSchedule, WorkflowScheduleRepository, clamp_max_catchup,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -243,21 +243,27 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .unwrap_or(100)
             .min(500);
 
-        let schedules = self
+        let schedules_result = self
             .store
             .schedules()
             .list(ListSchedulesParams {
                 namespace_id: namespace_id.clone(),
                 task_queue: req.task_queue,
-                limit: Some(page_size as i64),
+                page_size,
+                cursor: None, // TODO: decode cursor from page_token
             })
             .await
             .map_err(map_store_error)?;
 
-        let mut proto_schedules = Vec::with_capacity(schedules.len());
-        for s in schedules {
+        let mut proto_schedules = Vec::with_capacity(schedules_result.items.len());
+        for s in schedules_result.items {
             proto_schedules.push(workflow_schedule_to_proto(s)?);
         }
+
+        let next_page_token = schedules_result
+            .next_cursor
+            .map(|c| format!("{}:{}", c.created_at.timestamp_millis(), c.schedule_id))
+            .unwrap_or_default();
 
         log_grpc_response(
             "ListWorkflowSchedules",
@@ -270,9 +276,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         Ok(Response::new(ListWorkflowSchedulesResponse {
             schedules: proto_schedules,
             page: Some(PageInfo {
-                next_page_token: String::new(), // TODO: implement cursor-based pagination
-                has_more: false, // TODO: compute has_more once pagination is implemented
-                total_count: 0,  // TODO: populate total_count when supported
+                next_page_token,
+                has_more: schedules_result.has_more,
+                total_count: 0, // TODO: populate total_count when supported
             }),
         }))
     }

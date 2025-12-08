@@ -1,16 +1,17 @@
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
 use tracing::{instrument, warn};
 use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, RetryPolicy, RetryTriggered,
-    StepKind, StepRetryInfo, StepRun, StepStatus,
+    BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams, RetryPolicy,
+    RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun, StepStatus,
 };
 use crate::postgres::columns;
-use crate::postgres::query::{FilterBuilder, push_limit};
+use crate::postgres::pagination::PaginatedResult;
+use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
 use crate::repository::StepRepository;
 
 #[derive(sqlx::FromRow)]
@@ -214,28 +215,60 @@ impl StepRepository for PgStepRepository {
         Ok(row.map(|r| r.into_model()))
     }
 
-    #[instrument(skip(self))]
-    async fn list_by_workflow(
+    #[instrument(skip(self, params))]
+    async fn list(
         &self,
-        run_id: Uuid,
-        step_id: Option<&str>,
-        limit: i32,
-    ) -> Result<Vec<StepRun>, StoreError> {
+        params: ListStepsParams,
+    ) -> Result<PaginatedResult<StepRun, StepCursor>, StoreError> {
+        let limit = (params.page_size.max(1) + 1) as i64;
+
         let mut filters = FilterBuilder::select(columns::step::BASE, "kagzi.step_runs");
-        filters.and_eq("run_id", run_id);
-        filters.and_optional_eq("step_id", step_id);
+        filters.and_eq("run_id", params.run_id);
+        filters.and_eq("namespace_id", &params.namespace_id);
+        filters.and_optional_eq("step_id", params.step_id.as_deref());
+
+        if let Some(ref cursor) = params.cursor {
+            push_tuple_cursor(
+                filters.builder(),
+                &["created_at", "attempt_id"],
+                ">",
+                |b: &mut QueryBuilder<'_, _>| {
+                    b.push_bind(cursor.created_at)
+                        .push(", ")
+                        .push_bind(cursor.attempt_id);
+                },
+            );
+        }
 
         let mut builder = filters.finalize();
-        if step_id.is_none() {
-            builder.push(" ORDER BY created_at ASC, attempt_number ASC");
-        } else {
-            builder.push(" ORDER BY attempt_number ASC");
-        }
-        push_limit(&mut builder, limit as i64);
+        builder.push(" ORDER BY created_at ASC, attempt_id ASC");
+        push_limit(&mut builder, limit);
 
         let rows: Vec<StepRunRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
-        Ok(rows.into_iter().map(|r| r.into_model()).collect())
+        let has_more = rows.len() > params.page_size as usize;
+        let items: Vec<StepRun> = rows
+            .into_iter()
+            .take(params.page_size as usize)
+            .map(|r| r.into_model())
+            .collect();
+
+        let next_cursor = if has_more {
+            items.last().and_then(|s| {
+                s.created_at.map(|created_at| StepCursor {
+                    created_at,
+                    attempt_id: s.attempt_id,
+                })
+            })
+        } else {
+            None
+        };
+
+        Ok(PaginatedResult {
+            items,
+            next_cursor,
+            has_more,
+        })
     }
 
     #[instrument(skip(self, params))]

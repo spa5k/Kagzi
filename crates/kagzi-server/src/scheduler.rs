@@ -2,7 +2,8 @@ use crate::config::SchedulerSettings;
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
 use kagzi_store::{
-    CreateWorkflow, PgStore, Schedule as WorkflowSchedule, ScheduleRepository, WorkflowRepository,
+    CreateWorkflow, PgStore, Schedule as WorkflowSchedule, WorkflowRepository,
+    WorkflowScheduleRepository,
 };
 use std::str::FromStr;
 use std::time::Duration;

@@ -3,9 +3,10 @@ use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedWorkflows,
-    RetryPolicy, WorkflowExistsResult, WorkflowRun,
+    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, RetryPolicy,
+    WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
+use crate::postgres::PaginatedResult;
 
 #[async_trait]
 pub trait WorkflowRepository: Send + Sync {
@@ -24,7 +25,10 @@ pub trait WorkflowRepository: Send + Sync {
         idempotency_suffix: Option<&str>,
     ) -> Result<Option<Uuid>, StoreError>;
 
-    async fn list(&self, params: ListWorkflowsParams) -> Result<PaginatedWorkflows, StoreError>;
+    async fn list(
+        &self,
+        params: ListWorkflowsParams,
+    ) -> Result<PaginatedResult<WorkflowRun, WorkflowCursor>, StoreError>;
 
     async fn check_exists(
         &self,
@@ -32,7 +36,11 @@ pub trait WorkflowRepository: Send + Sync {
         namespace_id: &str,
     ) -> Result<WorkflowExistsResult, StoreError>;
 
-    async fn check_status(&self, run_id: Uuid) -> Result<WorkflowExistsResult, StoreError>;
+    async fn check_status(
+        &self,
+        run_id: Uuid,
+        namespace_id: &str,
+    ) -> Result<WorkflowExistsResult, StoreError>;
 
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError>;
 
@@ -56,7 +64,7 @@ pub trait WorkflowRepository: Send + Sync {
         namespace_id: &str,
         supported_types: &[String],
         limit: i32,
-    ) -> Result<Vec<crate::models::WorkCandidate>, StoreError>;
+    ) -> Result<Vec<WorkCandidate>, StoreError>;
 
     async fn claim_by_id(
         &self,

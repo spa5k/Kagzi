@@ -5,10 +5,11 @@ use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedWorkflows,
-    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
+    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, RetryPolicy,
+    WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
 };
 use crate::postgres::columns;
+use crate::postgres::pagination::PaginatedResult;
 use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
 use crate::repository::WorkflowRepository;
 
@@ -291,7 +292,10 @@ impl WorkflowRepository for PgWorkflowRepository {
     }
 
     #[instrument(skip(self, params))]
-    async fn list(&self, params: ListWorkflowsParams) -> Result<PaginatedWorkflows, StoreError> {
+    async fn list(
+        &self,
+        params: ListWorkflowsParams,
+    ) -> Result<PaginatedResult<WorkflowRun, WorkflowCursor>, StoreError> {
         let limit = (params.page_size + 1) as i64;
 
         let mut filters = FilterBuilder::select(
@@ -324,14 +328,14 @@ impl WorkflowRepository for PgWorkflowRepository {
         let rows: Vec<WorkflowRunRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
         let has_more = rows.len() > params.page_size as usize;
-        let workflows: Vec<WorkflowRun> = rows
+        let items: Vec<WorkflowRun> = rows
             .into_iter()
             .take(params.page_size as usize)
             .map(|r| r.into_model())
             .collect();
 
         let next_cursor = if has_more {
-            workflows.last().and_then(|w| {
+            items.last().and_then(|w| {
                 w.created_at.map(|created_at| WorkflowCursor {
                     created_at,
                     run_id: w.run_id,
@@ -341,8 +345,8 @@ impl WorkflowRepository for PgWorkflowRepository {
             None
         };
 
-        Ok(PaginatedWorkflows {
-            workflows,
+        Ok(PaginatedResult {
+            items,
             next_cursor,
             has_more,
         })
@@ -380,13 +384,18 @@ impl WorkflowRepository for PgWorkflowRepository {
     }
 
     #[instrument(skip(self))]
-    async fn check_status(&self, run_id: Uuid) -> Result<WorkflowExistsResult, StoreError> {
+    async fn check_status(
+        &self,
+        run_id: Uuid,
+        namespace_id: &str,
+    ) -> Result<WorkflowExistsResult, StoreError> {
         let row = sqlx::query!(
             r#"
             SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
-            WHERE run_id = $1
+            WHERE run_id = $1 AND namespace_id = $2
             "#,
             run_id,
+            namespace_id,
         )
         .fetch_optional(&self.pool)
         .await?;
