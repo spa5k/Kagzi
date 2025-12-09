@@ -80,7 +80,7 @@ pub struct ListWorkersParams {
     pub cursor: Option<WorkerCursor>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerCursor {
     pub worker_id: Uuid,
 }

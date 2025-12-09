@@ -89,3 +89,4 @@ test-one name:
 tidy:
     cargo fmt --all
     buf format -w
+    cargo fix --all-targets --all-features --allow-dirty

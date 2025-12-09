@@ -4,8 +4,7 @@
 //! eliminating duplication across service implementations.
 
 use kagzi_proto::kagzi::{
-    ErrorCode, ErrorDetail, Payload, Step, StepKind, StepStatus, Worker, WorkerStatus, Workflow,
-    WorkflowStatus,
+    Payload, Step, StepKind, StepStatus, Worker, WorkerStatus, Workflow, WorkflowStatus,
 };
 use kagzi_store::{
     StepKind as StoreStepKind, StepRun, StepStatus as StoreStepStatus, Worker as StoreWorker,
@@ -117,17 +116,9 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
 pub fn step_to_proto(s: StepRun) -> Result<Step, Status> {
     let input = json_to_payload(s.input)?;
     let output = json_to_payload(s.output)?;
-    let error = s.error.map(|msg| ErrorDetail {
-        code: ErrorCode::Unspecified as i32,
-        message: msg,
-        non_retryable: false,
-        retry_after_ms: 0,
-        subject: String::new(),
-        subject_id: String::new(),
-        metadata: HashMap::new(),
-    });
+    let error = s.error.map(|msg| string_error_detail(Some(msg)));
 
-    let step_id = s.step_id.clone();
+    let step_id = s.step_id;
 
     Ok(Step {
         step_id: step_id.clone(),

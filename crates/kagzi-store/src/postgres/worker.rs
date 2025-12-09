@@ -7,11 +7,10 @@ use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    ListWorkersParams, RegisterWorkerParams, Worker, WorkerCursor, WorkerHeartbeatParams,
-    WorkerStatus, WorkflowTypeConcurrency,
+    ListWorkersParams, PaginatedResult, RegisterWorkerParams, Worker, WorkerCursor,
+    WorkerHeartbeatParams, WorkerStatus, WorkflowTypeConcurrency,
 };
 use crate::postgres::columns;
-use crate::postgres::pagination::PaginatedResult;
 use crate::postgres::query::{FilterBuilder, push_limit};
 use crate::repository::WorkerRepository;
 

@@ -6,11 +6,10 @@ use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    CreateSchedule, ListSchedulesParams, Schedule, ScheduleCursor, UpdateSchedule,
+    CreateSchedule, ListSchedulesParams, PaginatedResult, Schedule, ScheduleCursor, UpdateSchedule,
     clamp_max_catchup,
 };
 use crate::postgres::columns;
-use crate::postgres::pagination::PaginatedResult;
 use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
 use crate::repository::WorkflowScheduleRepository;
 
@@ -124,7 +123,8 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
         &self,
         params: ListSchedulesParams,
     ) -> Result<PaginatedResult<Schedule, ScheduleCursor>, StoreError> {
-        let limit = (params.page_size.max(1) + 1) as i64;
+        let page_size = params.page_size.max(1) as usize;
+        let limit = (page_size + 1) as i64;
 
         let mut filters = FilterBuilder::select(columns::schedule::BASE, "kagzi.schedules");
         filters.and_eq("namespace_id", &params.namespace_id);
@@ -149,10 +149,10 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
 
         let rows: Vec<ScheduleRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
-        let has_more = rows.len() > params.page_size as usize;
+        let has_more = rows.len() > page_size;
         let items: Vec<Schedule> = rows
             .into_iter()
-            .take(params.page_size as usize)
+            .take(page_size)
             .map(|r| r.into_model())
             .collect();
 

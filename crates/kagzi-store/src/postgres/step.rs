@@ -6,11 +6,11 @@ use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams, RetryPolicy,
-    RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun, StepStatus,
+    BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
+    PaginatedResult, RetryPolicy, RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun,
+    StepStatus,
 };
 use crate::postgres::columns;
-use crate::postgres::pagination::PaginatedResult;
 use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
 use crate::repository::StepRepository;
 
@@ -220,7 +220,8 @@ impl StepRepository for PgStepRepository {
         &self,
         params: ListStepsParams,
     ) -> Result<PaginatedResult<StepRun, StepCursor>, StoreError> {
-        let limit = (params.page_size.max(1) + 1) as i64;
+        let page_size = params.page_size.max(1) as usize;
+        let limit = (page_size + 1) as i64;
 
         let mut filters = FilterBuilder::select(columns::step::BASE, "kagzi.step_runs");
         filters.and_eq("run_id", params.run_id);
@@ -246,10 +247,10 @@ impl StepRepository for PgStepRepository {
 
         let rows: Vec<StepRunRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
-        let has_more = rows.len() > params.page_size as usize;
+        let has_more = rows.len() > page_size;
         let items: Vec<StepRun> = rows
             .into_iter()
-            .take(params.page_size as usize)
+            .take(page_size)
             .map(|r| r.into_model())
             .collect();
 

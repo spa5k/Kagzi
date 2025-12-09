@@ -102,7 +102,7 @@ pub struct ListStepsParams {
     pub cursor: Option<StepCursor>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepCursor {
     pub created_at: DateTime<Utc>,
     pub attempt_id: Uuid,

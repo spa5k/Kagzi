@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::StoreError;
+use crate::models::PaginatedResult;
 use crate::models::{
     ListWorkersParams, RegisterWorkerParams, Worker, WorkerCursor, WorkerHeartbeatParams,
     WorkerStatus,
 };
-use crate::postgres::PaginatedResult;
 
 #[async_trait]
 pub trait WorkerRepository: Send + Sync {
@@ -18,7 +18,6 @@ pub trait WorkerRepository: Send + Sync {
 
     async fn deregister(&self, worker_id: Uuid, namespace_id: &str) -> Result<(), StoreError>;
 
-    /// Find worker by ID. Worker UUIDs are globally unique.
     async fn find_by_id(&self, worker_id: Uuid) -> Result<Option<Worker>, StoreError>;
 
     async fn list(

@@ -8,7 +8,8 @@ use crate::{
         log_grpc_response,
     },
 };
-use chrono::Utc;
+use base64::Engine;
+use chrono::{TimeZone, Utc};
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleService;
 use kagzi_proto::kagzi::{
     CreateWorkflowScheduleRequest, CreateWorkflowScheduleResponse, DeleteWorkflowScheduleRequest,
@@ -243,6 +244,41 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .unwrap_or(100)
             .min(500);
 
+        let cursor = if let Some(page) = req.page.as_ref() {
+            if page.page_token.is_empty() {
+                None
+            } else {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(&page.page_token)
+                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+                let token_str = std::str::from_utf8(&decoded)
+                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+
+                let mut parts = token_str.splitn(2, ':');
+                let created_at_ms = parts
+                    .next()
+                    .and_then(|p| p.parse::<i64>().ok())
+                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                let schedule_id_str = parts
+                    .next()
+                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+
+                let created_at = Utc
+                    .timestamp_millis_opt(created_at_ms)
+                    .single()
+                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                let schedule_id = uuid::Uuid::parse_str(schedule_id_str)
+                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+
+                Some(kagzi_store::ScheduleCursor {
+                    created_at,
+                    schedule_id,
+                })
+            }
+        } else {
+            None
+        };
+
         let schedules_result = self
             .store
             .schedules()
@@ -250,7 +286,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 namespace_id: namespace_id.clone(),
                 task_queue: req.task_queue,
                 page_size,
-                cursor: None, // TODO: decode cursor from page_token
+                cursor,
             })
             .await
             .map_err(map_store_error)?;
@@ -262,7 +298,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let next_page_token = schedules_result
             .next_cursor
-            .map(|c| format!("{}:{}", c.created_at.timestamp_millis(), c.schedule_id))
+            .map(|c| {
+                let cursor_str = format!("{}:{}", c.created_at.timestamp_millis(), c.schedule_id);
+                base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
+            })
             .unwrap_or_default();
 
         log_grpc_response(

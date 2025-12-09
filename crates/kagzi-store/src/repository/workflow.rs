@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::StoreError;
+use crate::models::PaginatedResult;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, RetryPolicy,
     WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
-use crate::postgres::PaginatedResult;
 
 #[async_trait]
 pub trait WorkflowRepository: Send + Sync {

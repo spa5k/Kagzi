@@ -5,11 +5,10 @@ use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, RetryPolicy,
-    WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
+    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
+    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
 };
 use crate::postgres::columns;
-use crate::postgres::pagination::PaginatedResult;
 use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
 use crate::repository::WorkflowRepository;
 
@@ -233,19 +232,37 @@ impl WorkflowRepository for PgWorkflowRepository {
         run_id: Uuid,
         namespace_id: &str,
     ) -> Result<Option<WorkflowRun>, StoreError> {
-        let query = format!(
+        let query_with_namespace = format!(
             "SELECT {} FROM kagzi.workflow_runs w \
              JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id \
              WHERE w.run_id = $1 AND w.namespace_id = $2",
             columns::workflow::WITH_PAYLOAD
         );
-        let row = sqlx::query_as::<_, WorkflowRunRow>(&query)
+
+        let row = sqlx::query_as::<_, WorkflowRunRow>(&query_with_namespace)
             .bind(run_id)
             .bind(namespace_id)
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(row.map(|r| r.into_model()))
+        if row.is_some() {
+            return Ok(row.map(|r| r.into_model()));
+        }
+
+        // Fallback: run_id is globally unique, so allow lookup without namespace when caller
+        // does not know the correct namespace (e.g., admin APIs).
+        let query_any_namespace = format!(
+            "SELECT {} FROM kagzi.workflow_runs w \
+             JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id \
+             WHERE w.run_id = $1",
+            columns::workflow::WITH_PAYLOAD
+        );
+        let fallback = sqlx::query_as::<_, WorkflowRunRow>(&query_any_namespace)
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(fallback.map(|r| r.into_model()))
     }
 
     #[instrument(skip(self))]

@@ -203,7 +203,6 @@ impl WorkerService for WorkerServiceImpl {
         let worker_id =
             Uuid::parse_str(&req.worker_id).map_err(|_| invalid_argument("Invalid worker_id"))?;
 
-        // Get namespace from worker lookup
         let worker = self
             .store
             .workers()
@@ -273,7 +272,6 @@ impl WorkerService for WorkerServiceImpl {
                 precondition_failed("Worker not registered or offline. Call Register first.")
             })?;
 
-        // Verify worker belongs to requested namespace
         if worker.namespace_id != namespace_id || worker.task_queue != req.task_queue {
             return Err(precondition_failed(
                 "Worker not registered for the requested namespace/task_queue",
@@ -433,7 +431,6 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
-        // Get namespace from workflow - try "default" first, then look up if not found
         let workflow = self
             .store
             .workflows()
@@ -531,7 +528,6 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
-        // Get namespace from workflow
         let workflow = self
             .store
             .workflows()
@@ -672,7 +668,6 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
-        // Get namespace from workflow - try "default" first
         let workflow = self
             .store
             .workflows()
@@ -764,7 +759,6 @@ impl WorkerService for WorkerServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
-        // Get namespace from workflow
         let workflow = self
             .store
             .workflows()

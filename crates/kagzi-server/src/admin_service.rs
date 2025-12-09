@@ -4,6 +4,7 @@ use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
     log_grpc_response,
 };
+use chrono::{TimeZone, Utc};
 use kagzi_proto::kagzi::{
     GetServerInfoRequest, GetServerInfoResponse, GetStepRequest, GetStepResponse, GetWorkerRequest,
     GetWorkerResponse, HealthCheckRequest, HealthCheckResponse, ListStepsRequest,
@@ -244,7 +245,6 @@ impl AdminService for AdminServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
 
-        // Get namespace_id from the workflow
         let workflow = self
             .store
             .workflows()
@@ -264,6 +264,31 @@ impl AdminService for AdminServiceImpl {
             page.page_size
         };
 
+        let cursor = if page.page_token.is_empty() {
+            None
+        } else {
+            let mut parts = page.page_token.splitn(2, ':');
+            let created_at_ms = parts
+                .next()
+                .and_then(|p| p.parse::<i64>().ok())
+                .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+            let attempt_id_str = parts
+                .next()
+                .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+
+            let created_at = Utc
+                .timestamp_millis_opt(created_at_ms)
+                .single()
+                .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+            let attempt_id = Uuid::parse_str(attempt_id_str)
+                .map_err(|_| invalid_argument("Invalid page_token"))?;
+
+            Some(kagzi_store::StepCursor {
+                created_at,
+                attempt_id,
+            })
+        };
+
         let step_name = req.step_name.filter(|s| !s.is_empty());
 
         let steps_result = self
@@ -274,7 +299,7 @@ impl AdminService for AdminServiceImpl {
                 namespace_id,
                 step_id: step_name,
                 page_size,
-                cursor: None, // TODO: Add cursor support to proto
+                cursor,
             })
             .await
             .map_err(map_store_error)?;
