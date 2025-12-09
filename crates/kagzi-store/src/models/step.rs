@@ -92,3 +92,18 @@ pub struct RetryTriggered {
     pub step_id: String,
     pub attempt_number: i32,
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct ListStepsParams {
+    pub run_id: Uuid,
+    pub namespace_id: String,
+    pub step_id: Option<String>,
+    pub page_size: i32,
+    pub cursor: Option<StepCursor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepCursor {
+    pub created_at: DateTime<Utc>,
+    pub attempt_id: Uuid,
+}

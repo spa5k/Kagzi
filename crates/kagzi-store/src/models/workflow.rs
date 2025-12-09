@@ -138,13 +138,6 @@ pub struct WorkflowCursor {
 }
 
 #[derive(Debug, Clone)]
-pub struct PaginatedWorkflows {
-    pub workflows: Vec<WorkflowRun>,
-    pub next_cursor: Option<WorkflowCursor>,
-    pub has_more: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct ClaimedWorkflow {
     pub run_id: Uuid,
     pub workflow_type: String,

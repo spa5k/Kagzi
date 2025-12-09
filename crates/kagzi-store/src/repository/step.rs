@@ -2,20 +2,20 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::StoreError;
+use crate::models::PaginatedResult;
 use crate::models::{
-    BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, RetryTriggered, StepRun,
+    BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
+    RetryTriggered, StepCursor, StepRun,
 };
 
 #[async_trait]
 pub trait StepRepository: Send + Sync {
     async fn find_by_id(&self, attempt_id: Uuid) -> Result<Option<StepRun>, StoreError>;
 
-    async fn list_by_workflow(
+    async fn list(
         &self,
-        run_id: Uuid,
-        step_id: Option<&str>,
-        limit: i32,
-    ) -> Result<Vec<StepRun>, StoreError>;
+        params: ListStepsParams,
+    ) -> Result<PaginatedResult<StepRun, StepCursor>, StoreError>;
 
     async fn begin(&self, params: BeginStepParams) -> Result<BeginStepResult, StoreError>;
 

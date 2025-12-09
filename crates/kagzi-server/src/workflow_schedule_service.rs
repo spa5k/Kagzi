@@ -8,7 +8,8 @@ use crate::{
         log_grpc_response,
     },
 };
-use chrono::Utc;
+use base64::Engine;
+use chrono::{TimeZone, Utc};
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleService;
 use kagzi_proto::kagzi::{
     CreateWorkflowScheduleRequest, CreateWorkflowScheduleResponse, DeleteWorkflowScheduleRequest,
@@ -17,8 +18,8 @@ use kagzi_proto::kagzi::{
     UpdateWorkflowScheduleRequest, UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
 use kagzi_store::{
-    CreateSchedule as StoreCreateSchedule, ListSchedulesParams, PgStore, ScheduleRepository,
-    UpdateSchedule as StoreUpdateSchedule, clamp_max_catchup,
+    CreateSchedule as StoreCreateSchedule, ListSchedulesParams, PgStore,
+    UpdateSchedule as StoreUpdateSchedule, WorkflowScheduleRepository, clamp_max_catchup,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -243,21 +244,65 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .unwrap_or(100)
             .min(500);
 
-        let schedules = self
+        let cursor = if let Some(page) = req.page.as_ref() {
+            if page.page_token.is_empty() {
+                None
+            } else {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(&page.page_token)
+                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+                let token_str = std::str::from_utf8(&decoded)
+                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+
+                let mut parts = token_str.splitn(2, ':');
+                let created_at_ms = parts
+                    .next()
+                    .and_then(|p| p.parse::<i64>().ok())
+                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                let schedule_id_str = parts
+                    .next()
+                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+
+                let created_at = Utc
+                    .timestamp_millis_opt(created_at_ms)
+                    .single()
+                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                let schedule_id = uuid::Uuid::parse_str(schedule_id_str)
+                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+
+                Some(kagzi_store::ScheduleCursor {
+                    created_at,
+                    schedule_id,
+                })
+            }
+        } else {
+            None
+        };
+
+        let schedules_result = self
             .store
             .schedules()
             .list(ListSchedulesParams {
                 namespace_id: namespace_id.clone(),
                 task_queue: req.task_queue,
-                limit: Some(page_size as i64),
+                page_size,
+                cursor,
             })
             .await
             .map_err(map_store_error)?;
 
-        let mut proto_schedules = Vec::with_capacity(schedules.len());
-        for s in schedules {
+        let mut proto_schedules = Vec::with_capacity(schedules_result.items.len());
+        for s in schedules_result.items {
             proto_schedules.push(workflow_schedule_to_proto(s)?);
         }
+
+        let next_page_token = schedules_result
+            .next_cursor
+            .map(|c| {
+                let cursor_str = format!("{}:{}", c.created_at.timestamp_millis(), c.schedule_id);
+                base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
+            })
+            .unwrap_or_default();
 
         log_grpc_response(
             "ListWorkflowSchedules",
@@ -270,9 +315,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         Ok(Response::new(ListWorkflowSchedulesResponse {
             schedules: proto_schedules,
             page: Some(PageInfo {
-                next_page_token: String::new(), // TODO: implement cursor-based pagination
-                has_more: false, // TODO: compute has_more once pagination is implemented
-                total_count: 0,  // TODO: populate total_count when supported
+                next_page_token,
+                has_more: schedules_result.has_more,
+                total_count: 0, // TODO: populate total_count when supported
             }),
         }))
     }

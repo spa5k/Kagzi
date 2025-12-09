@@ -1,7 +1,8 @@
 use crate::helpers::{
-    invalid_argument, json_to_payload, map_store_error, merge_proto_policy, not_found,
-    payload_to_json, payload_to_optional_json, precondition_failed, string_error_detail,
+    invalid_argument, map_store_error, merge_proto_policy, not_found, payload_to_json,
+    payload_to_optional_json, precondition_failed,
 };
+use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
 use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
     log_grpc_response,
@@ -9,8 +10,7 @@ use crate::tracing_utils::{
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     CancelWorkflowRequest, GetWorkflowRequest, GetWorkflowResponse, ListWorkflowsRequest,
-    ListWorkflowsResponse, PageInfo, StartWorkflowRequest, StartWorkflowResponse, Workflow,
-    WorkflowStatus,
+    ListWorkflowsResponse, PageInfo, StartWorkflowRequest, StartWorkflowResponse, WorkflowStatus,
 };
 use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowCursor, WorkflowRepository,
@@ -26,61 +26,6 @@ impl WorkflowServiceImpl {
     pub fn new(store: PgStore) -> Self {
         Self { store }
     }
-}
-
-fn workflow_to_proto(w: kagzi_store::WorkflowRun) -> Result<Workflow, Status> {
-    Ok(Workflow {
-        run_id: w.run_id.to_string(),
-        external_id: w.external_id,
-        namespace_id: w.namespace_id,
-        task_queue: w.task_queue,
-        workflow_type: w.workflow_type,
-        status: map_workflow_status(w.status) as i32,
-        input: Some(json_to_payload(Some(w.input))?),
-        output: Some(json_to_payload(w.output)?),
-        context: Some(json_to_payload(w.context)?),
-        error: Some(string_error_detail(w.error)),
-        attempts: w.attempts,
-        created_at: w.created_at.map(timestamp_from),
-        started_at: w.started_at.map(timestamp_from),
-        finished_at: w.finished_at.map(timestamp_from),
-        wake_up_at: w.wake_up_at.map(timestamp_from),
-        deadline_at: w.deadline_at.map(timestamp_from),
-        worker_id: w.locked_by.unwrap_or_default(),
-        version: w.version.unwrap_or_default(),
-        parent_step_id: w.parent_step_attempt_id.unwrap_or_default(),
-    })
-}
-
-fn timestamp_from(dt: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
-    prost_types::Timestamp {
-        seconds: dt.timestamp(),
-        nanos: dt.timestamp_subsec_nanos() as i32,
-    }
-}
-
-fn map_workflow_status(status: kagzi_store::WorkflowStatus) -> WorkflowStatus {
-    match status {
-        kagzi_store::WorkflowStatus::Pending => WorkflowStatus::Pending,
-        kagzi_store::WorkflowStatus::Running => WorkflowStatus::Running,
-        kagzi_store::WorkflowStatus::Sleeping => WorkflowStatus::Sleeping,
-        kagzi_store::WorkflowStatus::Completed => WorkflowStatus::Completed,
-        kagzi_store::WorkflowStatus::Failed => WorkflowStatus::Failed,
-        kagzi_store::WorkflowStatus::Cancelled => WorkflowStatus::Cancelled,
-    }
-}
-
-fn workflow_status_to_string(status: WorkflowStatus) -> String {
-    match status {
-        WorkflowStatus::Pending => "PENDING",
-        WorkflowStatus::Running => "RUNNING",
-        WorkflowStatus::Sleeping => "SLEEPING",
-        WorkflowStatus::Completed => "COMPLETED",
-        WorkflowStatus::Failed => "FAILED",
-        WorkflowStatus::Cancelled => "CANCELLED",
-        WorkflowStatus::Unspecified => "UNSPECIFIED",
-    }
-    .to_string()
 }
 
 #[tonic::async_trait]
@@ -355,11 +300,8 @@ impl WorkflowService for WorkflowServiceImpl {
             })
             .unwrap_or_default();
 
-        let workflows: Result<Vec<_>, Status> = result
-            .workflows
-            .into_iter()
-            .map(workflow_to_proto)
-            .collect();
+        let workflows: Result<Vec<_>, Status> =
+            result.items.into_iter().map(workflow_to_proto).collect();
         let workflows = workflows?;
 
         let response = Response::new(ListWorkflowsResponse {

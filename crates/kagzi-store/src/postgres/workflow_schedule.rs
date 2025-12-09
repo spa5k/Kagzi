@@ -1,16 +1,17 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, QueryBuilder};
 use tracing::instrument;
 use uuid::Uuid;
 
 use crate::error::StoreError;
 use crate::models::{
-    CreateSchedule, ListSchedulesParams, Schedule, UpdateSchedule, clamp_max_catchup,
+    CreateSchedule, ListSchedulesParams, PaginatedResult, Schedule, ScheduleCursor, UpdateSchedule,
+    clamp_max_catchup,
 };
 use crate::postgres::columns;
-use crate::postgres::query::{FilterBuilder, push_limit};
-use crate::repository::ScheduleRepository;
+use crate::postgres::query::{FilterBuilder, push_limit, push_tuple_cursor};
+use crate::repository::WorkflowScheduleRepository;
 
 #[derive(sqlx::FromRow)]
 struct ScheduleRow {
@@ -63,7 +64,7 @@ impl PgScheduleRepository {
 }
 
 #[async_trait]
-impl ScheduleRepository for PgScheduleRepository {
+impl WorkflowScheduleRepository for PgScheduleRepository {
     #[instrument(skip(self, params))]
     async fn create(&self, params: CreateSchedule) -> Result<Uuid, StoreError> {
         let max_catchup = clamp_max_catchup(params.max_catchup);
@@ -118,18 +119,57 @@ impl ScheduleRepository for PgScheduleRepository {
     }
 
     #[instrument(skip(self, params))]
-    async fn list(&self, params: ListSchedulesParams) -> Result<Vec<Schedule>, StoreError> {
+    async fn list(
+        &self,
+        params: ListSchedulesParams,
+    ) -> Result<PaginatedResult<Schedule, ScheduleCursor>, StoreError> {
+        let page_size = params.page_size.max(1) as usize;
+        let limit = (page_size + 1) as i64;
+
         let mut filters = FilterBuilder::select(columns::schedule::BASE, "kagzi.schedules");
         filters.and_eq("namespace_id", &params.namespace_id);
         filters.and_optional_eq("task_queue", params.task_queue.as_deref());
 
+        if let Some(ref cursor) = params.cursor {
+            push_tuple_cursor(
+                filters.builder(),
+                &["created_at", "schedule_id"],
+                "<",
+                |b: &mut QueryBuilder<'_, _>| {
+                    b.push_bind(cursor.created_at)
+                        .push(", ")
+                        .push_bind(cursor.schedule_id);
+                },
+            );
+        }
+
         let mut builder = filters.finalize();
         builder.push(" ORDER BY created_at DESC, schedule_id DESC");
-        push_limit(&mut builder, params.limit.unwrap_or(100));
+        push_limit(&mut builder, limit);
 
         let rows: Vec<ScheduleRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
-        Ok(rows.into_iter().map(|r| r.into_model()).collect())
+        let has_more = rows.len() > page_size;
+        let items: Vec<Schedule> = rows
+            .into_iter()
+            .take(page_size)
+            .map(|r| r.into_model())
+            .collect();
+
+        let next_cursor = if has_more {
+            items.last().map(|s| ScheduleCursor {
+                created_at: s.created_at,
+                schedule_id: s.schedule_id,
+            })
+        } else {
+            None
+        };
+
+        Ok(PaginatedResult {
+            items,
+            next_cursor,
+            has_more,
+        })
     }
 
     #[instrument(skip(self, params))]
