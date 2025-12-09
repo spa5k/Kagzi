@@ -8,7 +8,7 @@ use kagzi_proto::kagzi::{
 };
 use uuid::Uuid;
 
-const NAMESPACE: &str = "test-ns";
+const NAMESPACE: &str = "default";
 const TASK_QUEUE: &str = "default";
 
 /// Ensures queue-level concurrency cap blocks additional claims until a slot frees.

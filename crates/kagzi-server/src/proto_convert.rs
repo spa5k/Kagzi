@@ -89,6 +89,8 @@ pub fn map_worker_status(status: StoreWorkerStatus) -> WorkerStatus {
 
 /// Convert store WorkflowRun to proto Workflow.
 pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
+    let error = w.error.map(|msg| string_error_detail(Some(msg)));
+
     Ok(Workflow {
         run_id: w.run_id.to_string(),
         external_id: w.external_id,
@@ -99,7 +101,7 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
         input: Some(json_to_payload(Some(w.input))?),
         output: Some(json_to_payload(w.output)?),
         context: Some(json_to_payload(w.context)?),
-        error: Some(string_error_detail(w.error)),
+        error,
         attempts: w.attempts,
         created_at: w.created_at.map(timestamp_from),
         started_at: w.started_at.map(timestamp_from),

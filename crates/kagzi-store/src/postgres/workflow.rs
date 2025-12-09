@@ -245,24 +245,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             .fetch_optional(&self.pool)
             .await?;
 
-        if row.is_some() {
-            return Ok(row.map(|r| r.into_model()));
-        }
-
-        // Fallback: run_id is globally unique, so allow lookup without namespace when caller
-        // does not know the correct namespace (e.g., admin APIs).
-        let query_any_namespace = format!(
-            "SELECT {} FROM kagzi.workflow_runs w \
-             JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id \
-             WHERE w.run_id = $1",
-            columns::workflow::WITH_PAYLOAD
-        );
-        let fallback = sqlx::query_as::<_, WorkflowRunRow>(&query_any_namespace)
-            .bind(run_id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(fallback.map(|r| r.into_model()))
+        Ok(row.map(|r| r.into_model()))
     }
 
     #[instrument(skip(self))]
