@@ -17,8 +17,10 @@ path = "src/main.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 base64 = "0.22"
-dashmap = "6.1"
 chrono.workspace = true
+config.workspace = true
+cron.workspace = true
+dashmap = "6.1"
 kagzi-proto = { path = "../kagzi-proto" }
 kagzi-store = { path = "../kagzi-store" }
 prost.workspace = true
@@ -34,8 +36,6 @@ tonic-reflection.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["json", "env-filter"] }
 uuid.workspace = true
-cron.workspace = true
-config.workspace = true
 
 [features]
 default = []

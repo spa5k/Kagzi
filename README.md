@@ -280,64 +280,32 @@ async fn workflow_function(mut ctx: WorkflowContext, input: Input) -> anyhow::Re
 
 ## Examples
 
-### 1. Simple Workflow
+Run any example with `cargo run -p kagzi --example <name> -- <variant>`.
 
-```rust
-// See: crates/kagzi/examples/simple.rs
-cargo run -p kagzi --example simple
-```
-
-A basic workflow demonstrating step execution, sleeping, and result handling.
-
-### 2. User Onboarding
-
-```rust
-// See: crates/kagzi/examples/twitter_example.rs
-cargo run -p kagzi --example twitter_example
-```
-
-A realistic user signup workflow with multiple steps, error handling, and email notifications.
-
-### 3. Traced Workflow
-
-```rust
-// See: crates/kagzi/examples/traced_workflow.rs
-cargo run -p kagzi --example traced_workflow
-```
-
-Demonstrates comprehensive tracing and observability features.
-
-### 4. Advanced Patterns
-
-```rust
-async fn complex_workflow(mut ctx: WorkflowContext, input: ComplexInput) -> anyhow::Result<ComplexOutput> {
-    // Parallel execution
-    let (result1, result2) = tokio::try_join!(
-        ctx.run("step1", async_step1(input.clone())),
-        ctx.run("step2", async_step2(input.clone()))
-    )?;
-
-    // Conditional execution
-    if result1.needs_processing {
-        ctx.run("process", async_process(result1)).await?;
-    }
-
-    // Sub-workflow
-    let sub_result = ctx.run("sub_workflow", sub_workflow_func(result2)).await?;
-
-    Ok(ComplexOutput::new(result1, result2, sub_result))
-}
-```
+- 01_basics: hello world, multi-step chain, context passing (`hello|chain|context`)
+- 02_error_handling: retries vs non-retryable, per-step override (`flaky|fatal|override`)
+- 03_scheduling: cron create/delete, durable sleep, catchup (`cron|sleep|catchup`)
+- 04_concurrency: local cap, shared queue cap, workflow-type limits (`local|queue|workflow`)
+- 05_fan_out_in: parallel static fetch + dynamic map-reduce (`static|mapreduce`)
+- 06_long_running: polling loop and timeout guard (`poll|timeout`)
+- 07_idempotency: external IDs and memoized steps (`external|memo`)
+- 08_saga_pattern: trip booking with compensation (`saga|partial`)
+- 09_data_pipeline: JSON transform and large-payload offload (`transform|large`)
+- 10_multi_queue: priority queues and tenant isolation (`priority|namespace`)
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable            | Description                  | Default                                                  |
-| ------------------- | ---------------------------- | -------------------------------------------------------- |
-| `DATABASE_URL`      | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/postgres` |
-| `RUST_LOG`          | Log level filter             | `info`                                                   |
-| `KAGZI_SERVER_ADDR` | Server bind address          | `0.0.0.0:50051`                                          |
+| Variable                                 | Description                    | Default                                                  |
+| ---------------------------------------- | ------------------------------ | -------------------------------------------------------- |
+| `KAGZI_DB_URL`                           | PostgreSQL connection string   | `postgresql://postgres:postgres@localhost:5432/postgres` |
+| `KAGZI_SERVER_HOST`                      | Server bind host               | `0.0.0.0`                                                |
+| `KAGZI_SERVER_PORT`                      | Server bind port               | `50051`                                                  |
+| `KAGZI_SCHEDULER_INTERVAL_SECS`          | Scheduler tick interval (secs) | `5`                                                      |
+| `KAGZI_SCHEDULER_BATCH_SIZE`             | Scheduler batch size           | `100`                                                    |
+| `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK` | Max workflows per tick         | `1000`                                                   |
+| `RUST_LOG`                               | Log level filter               | `info`                                                   |
 
 ### Payload Limits
 
@@ -465,7 +433,7 @@ spec:
           ports:
             - containerPort: 50051
           env:
-            - name: DATABASE_URL
+            - name: KAGZI_DB_URL
               valueFrom:
                 secretKeyRef:
                   name: kagzi-secrets
