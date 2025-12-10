@@ -61,6 +61,17 @@ setup: db-reset build
 run-example:
     cargo run -p kagzi --example simple
 
+# --- Examples ---
+
+# Run a single examples crate binary with optional args (default variant if empty).
+example name args="":
+    cargo run -p examples --example {{name}} -- {{args}}
+
+# Run all examples sequentially with defaults (requires server running).
+# Excludes `worker_hub` because it runs indefinitely.
+examples-all server="http://localhost:50051":
+    bash scripts/run_examples.sh {{server}}
+
 lint: build-proto
     cargo clippy --all-targets --all-features -- -D warnings
 
