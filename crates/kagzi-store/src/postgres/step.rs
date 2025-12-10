@@ -46,21 +46,24 @@ struct StepResultInsert<'a> {
 }
 
 impl StepRunRow {
-    fn into_model(self) -> StepRun {
-        StepRun {
+    fn into_model(self) -> Result<StepRun, StoreError> {
+        let step_kind = self
+            .step_kind
+            .parse()
+            .map_err(|_| StoreError::invalid_state(format!("invalid step kind: {}", self.step_kind)))?;
+        let status = self
+            .status
+            .parse()
+            .map_err(|_| StoreError::invalid_state(format!("invalid step status: {}", self.status)))?;
+
+        Ok(StepRun {
             attempt_id: self.attempt_id,
             run_id: self.run_id,
             step_id: self.step_id,
             namespace_id: self.namespace_id,
-            step_kind: self
-                .step_kind
-                .parse()
-                .expect("step_kind should be a valid StepKind"),
+            step_kind,
             attempt_number: self.attempt_number,
-            status: self
-                .status
-                .parse()
-                .expect("status should be a valid StepStatus"),
+            status,
             input: self.input,
             output: self.output,
             error: self.error,
@@ -72,7 +75,7 @@ impl StepRunRow {
             retry_policy: self
                 .retry_policy
                 .and_then(|v| serde_json::from_value(v).ok()),
-        }
+        })
     }
 }
 
@@ -242,7 +245,7 @@ impl StepRepository for PgStepRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| r.into_model()))
+        Ok(row.map(|r| r.into_model()).transpose()?)
     }
 
     #[instrument(skip(self, params))]
@@ -281,7 +284,7 @@ impl StepRepository for PgStepRepository {
             .into_iter()
             .take(page_size)
             .map(|r| r.into_model())
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let next_cursor = if has_more {
             items.last().and_then(|s| {

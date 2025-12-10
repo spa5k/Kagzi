@@ -42,17 +42,19 @@ struct WorkflowRunRow {
 }
 
 impl WorkflowRunRow {
-    fn into_model(self) -> WorkflowRun {
-        WorkflowRun {
+    fn into_model(self) -> Result<WorkflowRun, StoreError> {
+        let status = self
+            .status
+            .parse()
+            .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", self.status)))?;
+
+        Ok(WorkflowRun {
             run_id: self.run_id,
             namespace_id: self.namespace_id,
             external_id: self.external_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
-            status: self
-                .status
-                .parse()
-                .expect("status should be a valid WorkflowStatus"),
+            status,
             input: self.input,
             output: self.output,
             context: self.context,
@@ -69,7 +71,7 @@ impl WorkflowRunRow {
             retry_policy: self
                 .retry_policy
                 .and_then(|v| serde_json::from_value(v).ok()),
-        }
+        })
     }
 }
 
@@ -278,7 +280,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| r.into_model()))
+        Ok(row.map(|r| r.into_model()).transpose()?)
     }
 
     #[instrument(skip(self))]
@@ -357,7 +359,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             .into_iter()
             .take(params.page_size as usize)
             .map(|r| r.into_model())
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let next_cursor = items.last().and_then(|w| {
             w.created_at.map(|created_at| WorkflowCursor {
@@ -396,7 +398,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 status: Some(
                     r.status
                         .parse()
-                        .expect("status should be a valid WorkflowStatus"),
+                        .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", r.status)))?,
                 ),
                 locked_by: r.locked_by,
             }),
@@ -431,7 +433,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 status: Some(
                     r.status
                         .parse()
-                        .expect("status should be a valid WorkflowStatus"),
+                        .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", r.status)))?,
                 ),
                 locked_by: r.locked_by,
             }),
