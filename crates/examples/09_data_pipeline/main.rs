@@ -1,0 +1,152 @@
+use kagzi::WorkflowContext;
+use serde::{Deserialize, Serialize};
+use std::{env, time::Duration};
+use tokio::time::sleep;
+
+#[path = "../common.rs"]
+mod common;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TransformInput {
+    payload: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LargeInput {
+    content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LargeOutput {
+    blob_key: String,
+    size: usize,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    common::init_tracing()?;
+    let args: Vec<String> = env::args().collect();
+    let variant = args.get(1).map(|s| s.as_str()).unwrap_or("transform");
+
+    let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
+    let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "data-pipeline".into());
+
+    match variant {
+        "transform" => transform_demo(&server, &queue).await?,
+        "large" => large_payload_demo(&server, &queue).await?,
+        _ => {
+            eprintln!("Usage: cargo run -p kagzi --example 09_data_pipeline -- [transform|large]");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn transform_demo(server: &str, queue: &str) -> anyhow::Result<()> {
+    let mut worker = common::build_worker(server, queue).await?;
+    worker.register("json_transform", transform_workflow);
+
+    let mut client = common::connect_client(server).await?;
+    let run = client
+        .workflow(
+            "json_transform",
+            queue,
+            TransformInput {
+                payload: serde_json::json!({ "name": "kagzi", "version": 1 }),
+            },
+        )
+        .await?;
+
+    tracing::info!(%run, "Started pass-through transform workflow");
+    tokio::spawn(async move { worker.run().await });
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    Ok(())
+}
+
+async fn large_payload_demo(server: &str, queue: &str) -> anyhow::Result<()> {
+    let mut worker = common::build_worker(server, queue).await?;
+    let blob = common::InMemoryBlobStore::new();
+    worker.register(
+        "large_payload",
+        move |mut ctx: WorkflowContext, input: LargeInput| {
+            let blob = blob.clone();
+            async move {
+                // Step 1: offload large payload
+                let key = ctx
+                    .run_with_input(
+                        "store",
+                        &input,
+                        store_large(blob.clone(), input.content.clone()),
+                    )
+                    .await?;
+                // Step 2: download
+                let content = ctx
+                    .run_with_input("load", &key, load_large(blob.clone(), key.clone()))
+                    .await?;
+
+                Ok(LargeOutput {
+                    blob_key: key,
+                    size: content.len(),
+                })
+            }
+        },
+    );
+
+    let mut client = common::connect_client(server).await?;
+    let big = "x".repeat(1_200_000); // 1.2MB to trigger warning thresholds
+    let run = client
+        .workflow("large_payload", queue, LargeInput { content: big })
+        .await?;
+
+    tracing::info!(%run, "Started large payload workflow (stores data in mock blob)");
+    tokio::spawn(async move { worker.run().await });
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    Ok(())
+}
+
+async fn transform_workflow(
+    mut ctx: WorkflowContext,
+    input: TransformInput,
+) -> anyhow::Result<serde_json::Value> {
+    let uppercased = ctx
+        .run("upper-name", uppercase_name(input.payload.clone()))
+        .await?;
+    let enriched = ctx
+        .run_with_input("enrich", &uppercased, enrich_payload(uppercased.clone()))
+        .await?;
+    Ok(enriched)
+}
+
+async fn uppercase_name(mut payload: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    if let Some(name) = payload.get_mut("name")
+        && let Some(s) = name.as_str()
+    {
+        *name = serde_json::Value::String(s.to_uppercase());
+    }
+    sleep(Duration::from_millis(100)).await;
+    Ok(payload)
+}
+
+async fn enrich_payload(payload: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    let mut enriched = payload;
+    enriched["processed_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+    sleep(Duration::from_millis(100)).await;
+    Ok(enriched)
+}
+
+async fn store_large(blob: common::InMemoryBlobStore, content: String) -> anyhow::Result<String> {
+    let bytes = content.into_bytes();
+    let key = blob.put(bytes).await;
+    tracing::info!(%key, "stored payload in blob store (mock)");
+    Ok(key)
+}
+
+async fn load_large(blob: common::InMemoryBlobStore, key: String) -> anyhow::Result<String> {
+    let data = blob
+        .get(&key)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("missing key {key}"))?;
+    tracing::info!(%key, "loaded payload from blob store (mock)");
+    Ok(String::from_utf8_lossy(&data).to_string())
+}

@@ -17,4 +17,45 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tonic = { workspace = true, features = ["transport"] }
 hostname = "0.4.2"
+futures = "0.3"
+
+[[example]]
+name = "01_basics"
+path = "01_basics/main.rs"
+
+[[example]]
+name = "02_error_handling"
+path = "02_error_handling/main.rs"
+
+[[example]]
+name = "03_scheduling"
+path = "03_scheduling/main.rs"
+
+[[example]]
+name = "04_concurrency"
+path = "04_concurrency/main.rs"
+
+[[example]]
+name = "05_fan_out_in"
+path = "05_fan_out_in/main.rs"
+
+[[example]]
+name = "06_long_running"
+path = "06_long_running/main.rs"
+
+[[example]]
+name = "07_idempotency"
+path = "07_idempotency/main.rs"
+
+[[example]]
+name = "08_saga_pattern"
+path = "08_saga_pattern/main.rs"
+
+[[example]]
+name = "09_data_pipeline"
+path = "09_data_pipeline/main.rs"
+
+[[example]]
+name = "10_multi_queue"
+path = "10_multi_queue/main.rs"
 

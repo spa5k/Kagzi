@@ -677,6 +677,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "futures",
  "hostname",
  "kagzi",
  "kagzi-proto",
