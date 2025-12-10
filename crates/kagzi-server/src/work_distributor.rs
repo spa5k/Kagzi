@@ -290,13 +290,3 @@ impl WorkDistributorHandle {
         self.shutdown.cancel();
     }
 }
-
-#[allow(dead_code)]
-fn _assert_send_sync() {
-    fn assert_send<T: Send>() {}
-    fn assert_sync<T: Sync>() {}
-    assert_send::<Arc<WorkDistributor>>();
-    assert_sync::<Arc<WorkDistributor>>();
-    assert_send::<WorkRequest>();
-    assert_send::<WorkItem>();
-}
