@@ -207,7 +207,8 @@ impl PgStepRepository {
 impl StepRepository for PgStepRepository {
     #[instrument(skip(self))]
     async fn find_by_id(&self, attempt_id: Uuid) -> Result<Option<StepRun>, StoreError> {
-        let row = sqlx::query_as::<_, StepRunRow>(
+        let row = sqlx::query_as!(
+            StepRunRow,
             r#"
             SELECT
                 attempt_id as "attempt_id!",
@@ -229,8 +230,8 @@ impl StepRepository for PgStepRepository {
             FROM kagzi.step_runs
             WHERE attempt_id = $1
             "#,
+            attempt_id
         )
-        .bind(attempt_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -508,7 +509,8 @@ impl StepRepository for PgStepRepository {
 
     #[instrument(skip(self))]
     async fn process_pending_retries(&self) -> Result<Vec<RetryTriggered>, StoreError> {
-        let rows: Vec<RetryTriggeredRow> = sqlx::query_as::<_, RetryTriggeredRow>(
+        let rows: Vec<RetryTriggeredRow> = sqlx::query_as!(
+            RetryTriggeredRow,
             r#"
             UPDATE kagzi.step_runs
             SET status = 'PENDING', retry_at = NULL
@@ -522,7 +524,7 @@ impl StepRepository for PgStepRepository {
                 LIMIT 100
             )
             RETURNING run_id as "run_id!", step_id as "step_id!", attempt_number
-            "#,
+            "#
         )
         .fetch_all(&self.pool)
         .await?;

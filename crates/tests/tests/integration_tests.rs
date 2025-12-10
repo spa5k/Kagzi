@@ -87,42 +87,23 @@ async fn workflow_happy_path_with_registered_worker() {
     let worker_id = register_worker(&harness, vec!["TypeA"]).await;
     let run_id = start_workflow(&harness, "TypeA", serde_json::json!({"user_id": 123})).await;
 
-    // Sanity check DB state before polling.
-    let row = sqlx::query!(
-        r#"
-        SELECT workflow_type, namespace_id, task_queue, status::TEXT as status
-        FROM kagzi.workflow_runs
-        WHERE run_id = $1
-        "#,
-        Uuid::parse_str(&run_id).unwrap(),
-    )
-    .fetch_one(&harness.pool)
-    .await
-    .expect("workflow should exist");
+    // Sanity check workflow state before polling using service API.
+    let workflow = harness
+        .workflow_service
+        .get_workflow(make_request(GetWorkflowRequest {
+            run_id: run_id.clone(),
+            namespace_id: NAMESPACE.to_string(),
+        }))
+        .await
+        .expect("workflow should exist")
+        .into_inner()
+        .workflow
+        .expect("workflow should be present");
 
-    assert_eq!(row.workflow_type, "TypeA");
-    assert_eq!(row.namespace_id, NAMESPACE);
-    assert_eq!(row.task_queue, TASK_QUEUE);
-    assert_eq!(row.status, "PENDING");
-
-    let pending_match: i64 = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*)::BIGINT
-        FROM kagzi.workflow_runs
-        WHERE task_queue = $1
-          AND namespace_id = $2
-          AND workflow_type = ANY($3)
-          AND status = 'PENDING'
-        "#,
-        TASK_QUEUE,
-        NAMESPACE,
-        &[String::from("TypeA")]
-    )
-    .fetch_one(&harness.pool)
-    .await
-    .unwrap_or(None)
-    .unwrap_or(0);
-    assert_eq!(pending_match, 1);
+    assert_eq!(workflow.workflow_type, "TypeA");
+    assert_eq!(workflow.namespace_id, NAMESPACE);
+    assert_eq!(workflow.task_queue, TASK_QUEUE);
+    assert_eq!(workflow.status, WorkflowStatus::Pending as i32);
 
     let work = harness
         .worker_service

@@ -344,28 +344,26 @@ impl AdminService for AdminServiceImpl {
         log_grpc_request("HealthCheck", &correlation_id, &trace_id, None);
 
         let _req = request.into_inner();
-        let db_status = match sqlx::query_scalar!("SELECT 1")
-            .fetch_one(self.store.pool())
-            .await
-        {
-            Ok(_) => {
-                info!(
-                    correlation_id = correlation_id,
-                    trace_id = trace_id,
-                    "Database health check passed"
-                );
-                ServingStatus::Serving
-            }
-            Err(e) => {
-                tracing::error!(
-                    correlation_id = correlation_id,
-                    trace_id = trace_id,
-                    error = %e,
-                    "Database health check failed"
-                );
-                ServingStatus::NotServing
-            }
-        };
+        let db_status =
+            match kagzi_store::HealthRepository::health_check(&self.store.health()).await {
+                Ok(_) => {
+                    info!(
+                        correlation_id = correlation_id,
+                        trace_id = trace_id,
+                        "Database health check passed"
+                    );
+                    ServingStatus::Serving
+                }
+                Err(e) => {
+                    tracing::error!(
+                        correlation_id = correlation_id,
+                        trace_id = trace_id,
+                        error = %e,
+                        "Database health check failed"
+                    );
+                    ServingStatus::NotServing
+                }
+            };
 
         let response = HealthCheckResponse {
             status: db_status as i32,

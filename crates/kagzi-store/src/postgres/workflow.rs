@@ -598,7 +598,8 @@ impl WorkflowRepository for PgWorkflowRepository {
         // 3. `type_counter` - increment ONLY IF queue_counter succeeded AND under type limit
         // 4. `revert_queue` - decrement queue counter IF queue succeeded but type failed
         // 5. `claimed` - update workflow IF both counters succeeded
-        let row = sqlx::query_as::<_, ClaimedRow>(
+        let row = sqlx::query_as!(
+            ClaimedRow,
             r#"
             WITH limits AS (
                 SELECT
@@ -688,12 +689,12 @@ impl WorkflowRepository for PgWorkflowRepository {
             FROM claimed c
             JOIN kagzi.workflow_payloads p ON c.run_id = p.run_id
             "#,
+            worker_id,
+            task_queue,
+            namespace_id,
+            supported_types,
+            DEFAULT_QUEUE_CONCURRENCY_LIMIT
         )
-        .bind(worker_id)
-        .bind(task_queue)
-        .bind(namespace_id)
-        .bind(supported_types)
-        .bind(DEFAULT_QUEUE_CONCURRENCY_LIMIT)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -713,7 +714,8 @@ impl WorkflowRepository for PgWorkflowRepository {
         supported_types: &[String],
         limit: i32,
     ) -> Result<Vec<WorkCandidate>, StoreError> {
-        let rows: Vec<CandidateRow> = sqlx::query_as(
+        let rows: Vec<CandidateRow> = sqlx::query_as!(
+            CandidateRow,
             r#"
             SELECT run_id, workflow_type, wake_up_at
             FROM kagzi.workflow_runs
@@ -731,11 +733,11 @@ impl WorkflowRepository for PgWorkflowRepository {
             ORDER BY COALESCE(wake_up_at, created_at) ASC
             LIMIT $4
             "#,
+            task_queue,
+            namespace_id,
+            supported_types,
+            limit as i64
         )
-        .bind(task_queue)
-        .bind(namespace_id)
-        .bind(supported_types)
-        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
@@ -761,7 +763,8 @@ impl WorkflowRepository for PgWorkflowRepository {
         // 3. `type_counter` - increment ONLY IF queue_counter succeeded AND under type limit
         // 4. `revert_queue` - decrement queue counter IF queue succeeded but type failed
         // 5. `claimed` - update workflow IF both counters succeeded
-        let row = sqlx::query_as::<_, ClaimedRow>(
+        let row = sqlx::query_as!(
+            ClaimedRow,
             r#"
             WITH eligible AS (
                 SELECT run_id, namespace_id, task_queue, workflow_type
@@ -848,10 +851,10 @@ impl WorkflowRepository for PgWorkflowRepository {
             FROM claimed c
             JOIN kagzi.workflow_payloads p ON c.run_id = p.run_id
             "#,
+            run_id,
+            worker_id,
+            DEFAULT_QUEUE_CONCURRENCY_LIMIT
         )
-        .bind(run_id)
-        .bind(worker_id)
-        .bind(DEFAULT_QUEUE_CONCURRENCY_LIMIT)
         .fetch_optional(&self.pool)
         .await?;
 
