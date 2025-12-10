@@ -39,7 +39,7 @@ impl PgStore {
     }
 
     pub fn workflows(&self) -> PgWorkflowRepository {
-        PgWorkflowRepository::new(self.pool.clone())
+        PgWorkflowRepository::new(self.pool.clone(), self.config.clone())
     }
 
     pub fn steps(&self) -> PgStepRepository {

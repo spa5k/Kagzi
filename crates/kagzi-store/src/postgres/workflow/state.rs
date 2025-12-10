@@ -1,5 +1,5 @@
 use sqlx::QueryBuilder;
-use tracing::instrument;
+use tracing::{instrument, warn};
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -8,6 +8,7 @@ use crate::models::{
     WorkflowExistsResult, WorkflowRun,
 };
 
+use super::super::StoreConfig;
 use super::PgWorkflowRepository;
 use super::helpers::{WorkflowRunRow, decrement_counters_tx, set_failed_tx};
 
@@ -17,12 +18,38 @@ const WORKFLOW_COLUMNS_WITH_PAYLOAD: &str = "\
     w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at, \
     w.version, w.parent_step_attempt_id, w.retry_policy";
 
+fn validate_payload_size(
+    config: &StoreConfig,
+    bytes: &[u8],
+    context: &str,
+) -> Result<(), StoreError> {
+    let size = bytes.len();
+    if size > config.payload_max_size_bytes {
+        return Err(StoreError::invalid_argument(format!(
+            "{} exceeds maximum size of {} bytes ({} bytes). Do not use Kagzi for blob storage.",
+            context, config.payload_max_size_bytes, size
+        )));
+    }
+
+    if size > config.payload_warn_threshold_bytes {
+        warn!(
+            size_bytes = size,
+            context = context,
+            "Payload exceeds {} bytes. Consider storing large data externally.",
+            config.payload_warn_threshold_bytes
+        );
+    }
+
+    Ok(())
+}
+
 #[instrument(skip(repo, params))]
 pub(super) async fn create(
     repo: &PgWorkflowRepository,
     params: CreateWorkflow,
 ) -> Result<Uuid, StoreError> {
     let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
+    validate_payload_size(&repo.config, &params.input, "Workflow input")?;
     let mut tx = repo.pool.begin().await?;
     let run_id = Uuid::now_v7();
 
@@ -331,6 +358,7 @@ pub(super) async fn complete(
     run_id: Uuid,
     output: Vec<u8>,
 ) -> Result<(), StoreError> {
+    validate_payload_size(&repo.config, &output, "Workflow output")?;
     let mut tx = repo.pool.begin().await?;
 
     let counters = sqlx::query!(
@@ -504,6 +532,7 @@ pub(super) async fn create_batch(
     let mut ids = Vec::with_capacity(params.len());
 
     for p in params {
+        validate_payload_size(&repo.config, &p.input, "Workflow input")?;
         let retry_policy_json = p.retry_policy.map(serde_json::to_value).transpose()?;
         let run_id = Uuid::now_v7();
         let row = sqlx::query!(
@@ -547,4 +576,25 @@ pub(super) async fn create_batch(
     tx.commit().await?;
 
     Ok(ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(max: usize, warn: usize) -> StoreConfig {
+        StoreConfig {
+            payload_warn_threshold_bytes: warn,
+            payload_max_size_bytes: max,
+        }
+    }
+
+    #[test]
+    fn workflow_payload_rejects_when_over_limit() {
+        let cfg = config(2, 1);
+        let data = vec![0u8; 3];
+        let err = validate_payload_size(&cfg, &data, "Workflow input")
+            .expect_err("should reject oversized payload");
+        matches!(err, StoreError::InvalidArgument { .. });
+    }
 }

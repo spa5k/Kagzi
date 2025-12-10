@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 use uuid::Uuid;
 
+use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
@@ -18,11 +19,12 @@ use crate::repository::WorkflowRepository;
 #[derive(Clone)]
 pub struct PgWorkflowRepository {
     pub(super) pool: PgPool,
+    pub(super) config: StoreConfig,
 }
 
 impl PgWorkflowRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, config: StoreConfig) -> Self {
+        Self { pool, config }
     }
 }
 

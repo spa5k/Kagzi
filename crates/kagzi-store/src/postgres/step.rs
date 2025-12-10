@@ -578,3 +578,32 @@ impl StepRepository for PgStepRepository {
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+
+    fn make_repo(max: usize, warn: usize) -> PgStepRepository {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://postgres:postgres@localhost:5432/postgres")
+            .expect("connect_lazy should create pool");
+        PgStepRepository::new(
+            pool,
+            StoreConfig {
+                payload_warn_threshold_bytes: warn,
+                payload_max_size_bytes: max,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn step_payload_rejects_when_over_limit() {
+        let repo = make_repo(2, 1);
+        let data = vec![0u8; 3];
+        let err = repo
+            .validate_payload_size(&data, "Step input")
+            .expect_err("should reject oversized payload");
+        matches!(err, StoreError::InvalidArgument { .. });
+    }
+}
