@@ -193,16 +193,19 @@ impl WorkflowRepository for PgWorkflowRepository {
     async fn create(&self, params: CreateWorkflow) -> Result<Uuid, StoreError> {
         let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
         let mut tx = self.pool.begin().await?;
+        let run_id = Uuid::now_v7();
 
         let row = sqlx::query!(
             r#"
             INSERT INTO kagzi.workflow_runs (
+                run_id,
                 external_id, task_queue, workflow_type, status,
                 namespace_id, idempotency_suffix, deadline_at, version, retry_policy
             )
-            VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9)
             RETURNING run_id
             "#,
+            run_id,
             params.external_id,
             params.task_queue,
             params.workflow_type,
@@ -924,15 +927,18 @@ impl WorkflowRepository for PgWorkflowRepository {
 
         for p in params {
             let retry_policy_json = p.retry_policy.map(serde_json::to_value).transpose()?;
+            let run_id = Uuid::now_v7();
             let row = sqlx::query!(
                 r#"
                 INSERT INTO kagzi.workflow_runs (
+                    run_id,
                     external_id, task_queue, workflow_type, status,
                     namespace_id, idempotency_suffix, deadline_at, version, retry_policy
                 )
-                VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8)
+                VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9)
                 RETURNING run_id
                 "#,
+                run_id,
                 p.external_id,
                 p.task_queue,
                 p.workflow_type,
@@ -1100,5 +1106,40 @@ impl WorkflowRepository for PgWorkflowRepository {
         .await?;
 
         Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn reconcile_counters(&self) -> Result<u64, StoreError> {
+        let result = sqlx::query!(
+            r#"
+            WITH actual_counts AS (
+                SELECT namespace_id, task_queue, workflow_type, COUNT(*)::INT AS cnt
+                FROM kagzi.workflow_runs
+                WHERE status = 'RUNNING'
+                GROUP BY namespace_id, task_queue, workflow_type
+            ),
+            queue_totals AS (
+                SELECT namespace_id, task_queue, ''::TEXT AS workflow_type, COUNT(*)::INT AS cnt
+                FROM kagzi.workflow_runs
+                WHERE status = 'RUNNING'
+                GROUP BY namespace_id, task_queue
+            ),
+            all_counts AS (
+                SELECT * FROM actual_counts
+                UNION ALL
+                SELECT * FROM queue_totals
+            )
+            UPDATE kagzi.queue_counters qc
+            SET active_count = COALESCE(ac.cnt, 0)
+            FROM all_counts ac
+            WHERE qc.namespace_id = ac.namespace_id
+              AND qc.task_queue = ac.task_queue
+              AND qc.workflow_type = ac.workflow_type
+            "#
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
     }
 }

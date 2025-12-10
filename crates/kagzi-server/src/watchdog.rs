@@ -7,6 +7,7 @@ use tracing::{error, info, warn};
 pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationToken) {
     let interval = Duration::from_secs(settings.interval_secs.max(1));
     let stale_threshold_secs = settings.worker_stale_threshold_secs.max(1);
+    let reconcile_interval = Duration::from_secs(settings.counter_reconcile_interval_secs.max(1));
     info!(
         interval_secs = interval.as_secs(),
         "Watchdog spawning parallel tasks"
@@ -19,6 +20,11 @@ pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationT
         interval,
     ));
     tokio::spawn(run_find_orphaned(store.clone(), shutdown.clone(), interval));
+    tokio::spawn(run_reconcile_counters(
+        store.clone(),
+        shutdown.clone(),
+        reconcile_interval,
+    ));
     tokio::spawn(run_mark_stale(
         store,
         shutdown,
@@ -145,6 +151,30 @@ async fn run_find_orphaned(store: PgStore, shutdown: CancellationToken, interval
                     }
                     Err(e) => {
                         error!("Watchdog failed to recover orphaned workflows: {:?}", e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_reconcile_counters(store: PgStore, shutdown: CancellationToken, interval: Duration) {
+    let mut ticker = tokio::time::interval(interval);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                info!("Watchdog reconcile_counters exiting");
+                break;
+            }
+            _ = ticker.tick() => {
+                match store.workflows().reconcile_counters().await {
+                    Ok(updated) => {
+                        if updated > 0 {
+                            info!(updated, "Reconciled queue counters");
+                        }
+                    }
+                    Err(e) => {
+                        error!("Watchdog failed to reconcile counters: {:?}", e);
                     }
                 }
             }

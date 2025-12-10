@@ -110,4 +110,6 @@ pub trait WorkflowRepository: Send + Sync {
         task_queue: &str,
         workflow_type: &str,
     ) -> Result<(), StoreError>;
+
+    async fn reconcile_counters(&self) -> Result<u64, StoreError>;
 }

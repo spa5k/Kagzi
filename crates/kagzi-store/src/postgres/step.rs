@@ -106,13 +106,15 @@ impl PgStepRepository {
         tx: &mut Transaction<'_, Postgres>,
         params: StepResultInsert<'_>,
     ) -> Result<(), StoreError> {
+        let attempt_id = Uuid::now_v7();
         sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (run_id, step_id, step_kind, status, output, error, finished_at, is_latest, attempt_number, namespace_id)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW(), true, 
-                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1))
+            INSERT INTO kagzi.step_runs (attempt_id, run_id, step_id, step_kind, status, output, error, finished_at, is_latest, attempt_number, namespace_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), true, 
+                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $2 AND step_id = $3), 0) + 1,
+                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $2))
             "#,
+            attempt_id,
             params.run_id,
             params.step_id,
             params.step_kind.as_ref(),
@@ -339,15 +341,17 @@ impl StepRepository for PgStepRepository {
         .await?;
 
         let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
+        let attempt_id = Uuid::now_v7();
 
         sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (run_id, step_id, step_kind, status, input, started_at, is_latest, attempt_number, namespace_id, retry_policy)
-            VALUES ($1, $2, $3, 'RUNNING', $4, NOW(), true, 
-                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2), 0) + 1,
-                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1),
-                    $5)
+            INSERT INTO kagzi.step_runs (attempt_id, run_id, step_id, step_kind, status, input, started_at, is_latest, attempt_number, namespace_id, retry_policy)
+            VALUES ($1, $2, $3, $4, 'RUNNING', $5, NOW(), true, 
+                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $2 AND step_id = $3), 0) + 1,
+                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $2),
+                    $6)
             "#,
+            attempt_id,
             params.run_id,
             params.step_id,
             params.step_kind.as_ref(),
