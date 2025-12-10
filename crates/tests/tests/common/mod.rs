@@ -54,7 +54,7 @@ impl TestHarness {
             .expect("Failed to run migrations");
 
         // Create the store
-        let store = PgStore::new(pool.clone());
+        let store = PgStore::new(pool.clone(), kagzi_store::StoreConfig::default());
         let workflow_service = WorkflowServiceImpl::new(store.clone());
         let worker_service = WorkerServiceImpl::new(store.clone(), WorkerSettings::default());
         let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());

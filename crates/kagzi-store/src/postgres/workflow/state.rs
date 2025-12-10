@@ -329,7 +329,7 @@ pub(super) async fn cancel(
 pub(super) async fn complete(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
-    output: serde_json::Value,
+    output: Vec<u8>,
 ) -> Result<(), StoreError> {
     let mut tx = repo.pool.begin().await?;
 

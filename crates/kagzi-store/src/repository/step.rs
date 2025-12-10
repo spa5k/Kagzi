@@ -23,7 +23,7 @@ pub trait StepRepository: Send + Sync {
         &self,
         run_id: Uuid,
         step_id: &str,
-        output: serde_json::Value,
+        output: Vec<u8>,
     ) -> Result<(), StoreError>;
 
     async fn fail(&self, params: FailStepParams) -> Result<FailStepResult, StoreError>;

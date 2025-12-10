@@ -8,6 +8,7 @@ pub struct Settings {
     pub scheduler: SchedulerSettings,
     pub watchdog: WatchdogSettings,
     pub worker: WorkerSettings,
+    pub payload: PayloadSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,12 +39,22 @@ pub struct WatchdogSettings {
     pub worker_stale_threshold_secs: i64,
     #[serde(default = "default_counter_reconcile_interval_secs")]
     pub counter_reconcile_interval_secs: u64,
+    #[serde(default = "default_wake_sleeping_batch_size")]
+    pub wake_sleeping_batch_size: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerSettings {
     #[serde(default = "default_poll_timeout_secs")]
     pub poll_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PayloadSettings {
+    #[serde(default = "default_payload_warn_threshold_bytes")]
+    pub warn_threshold_bytes: usize,
+    #[serde(default = "default_payload_max_size_bytes")]
+    pub max_size_bytes: usize,
 }
 
 impl Settings {
@@ -106,4 +117,16 @@ fn default_counter_reconcile_interval_secs() -> u64 {
 
 fn default_poll_timeout_secs() -> u64 {
     60
+}
+
+fn default_wake_sleeping_batch_size() -> i32 {
+    100
+}
+
+fn default_payload_warn_threshold_bytes() -> usize {
+    1024 * 1024
+}
+
+fn default_payload_max_size_bytes() -> usize {
+    2 * 1024 * 1024
 }

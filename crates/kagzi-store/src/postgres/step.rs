@@ -10,6 +10,7 @@ use crate::models::{
     PaginatedResult, RetryPolicy, RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun,
 };
 use crate::repository::StepRepository;
+use super::StoreConfig;
 
 const STEP_COLUMNS: &str = "\
     attempt_id, run_id, step_id, namespace_id, step_kind, attempt_number, status, \
@@ -25,8 +26,8 @@ struct StepRunRow {
     step_kind: String,
     attempt_number: i32,
     status: String,
-    input: Option<serde_json::Value>,
-    output: Option<serde_json::Value>,
+    input: Option<Vec<u8>>,
+    output: Option<Vec<u8>>,
     error: Option<String>,
     child_workflow_run_id: Option<Uuid>,
     created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -86,7 +87,7 @@ struct RetryInfoRow {
 #[derive(sqlx::FromRow)]
 struct ExistingStepRow {
     status: String,
-    output: Option<serde_json::Value>,
+    output: Option<Vec<u8>>,
     retry_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -100,11 +101,33 @@ struct RetryTriggeredRow {
 #[derive(Clone)]
 pub struct PgStepRepository {
     pool: PgPool,
+    config: StoreConfig,
 }
 
 impl PgStepRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, config: StoreConfig) -> Self {
+        Self { pool, config }
+    }
+
+    fn validate_payload_size(&self, bytes: &[u8], context: &str) -> Result<(), StoreError> {
+        let size = bytes.len();
+        if size > self.config.payload_max_size_bytes {
+            return Err(StoreError::invalid_argument(format!(
+                "{} exceeds maximum size of {} bytes ({} bytes). Do not use Kagzi for blob storage.",
+                context, self.config.payload_max_size_bytes, size
+            )));
+        }
+
+        if size > self.config.payload_warn_threshold_bytes {
+            warn!(
+                size_bytes = size,
+                context = context,
+                "Payload exceeds {} bytes. Consider storing large data externally.",
+                self.config.payload_warn_threshold_bytes
+            );
+        }
+
+        Ok(())
     }
 
     async fn insert_step_result(
@@ -306,6 +329,10 @@ impl StepRepository for PgStepRepository {
     async fn begin(&self, params: BeginStepParams) -> Result<BeginStepResult, StoreError> {
         let mut tx = self.pool.begin().await?;
 
+        if let Some(ref input) = params.input {
+            self.validate_payload_size(input, "Step input")?;
+        }
+
         let existing: Option<ExistingStepRow> = sqlx::query_as!(
             ExistingStepRow,
             r#"
@@ -380,9 +407,11 @@ impl StepRepository for PgStepRepository {
         &self,
         run_id: Uuid,
         step_id: &str,
-        output: serde_json::Value,
+        output: Vec<u8>,
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
+
+        self.validate_payload_size(&output, "Step output")?;
 
         let step_kind = self.latest_step_kind_strict(run_id, step_id).await?;
 

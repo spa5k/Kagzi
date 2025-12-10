@@ -12,8 +12,8 @@ pub(super) struct WorkflowRunRow {
     pub task_queue: String,
     pub workflow_type: String,
     pub status: String,
-    pub input: serde_json::Value,
-    pub output: Option<serde_json::Value>,
+    pub input: Vec<u8>,
+    pub output: Option<Vec<u8>>,
     pub context: Option<serde_json::Value>,
     pub locked_by: Option<String>,
     pub attempts: i32,
@@ -73,7 +73,7 @@ impl WorkflowRunRow {
 pub(super) struct ClaimedRow {
     pub run_id: Uuid,
     pub workflow_type: String,
-    pub input: serde_json::Value,
+    pub input: Vec<u8>,
     pub locked_by: Option<String>,
 }
 

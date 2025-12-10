@@ -97,17 +97,18 @@ pub fn string_error_detail(message: Option<String>) -> ErrorDetail {
     )
 }
 
-pub fn payload_to_json(payload: Option<Payload>) -> Result<serde_json::Value, Status> {
-    match payload {
-        None => Ok(serde_json::json!(null)),
-        Some(p) => {
-            if p.data.is_empty() {
-                Ok(serde_json::json!(null))
-            } else {
-                serde_json::from_slice(&p.data)
-                    .map_err(|e| invalid_argument(format!("Payload must be valid JSON: {}", e)))
-            }
-        }
+pub fn payload_to_bytes(payload: Option<Payload>) -> Vec<u8> {
+    payload.map(|p| p.data).unwrap_or_default()
+}
+
+pub fn payload_to_optional_bytes(payload: Option<Payload>) -> Option<Vec<u8>> {
+    payload.map(|p| p.data).filter(|d| !d.is_empty())
+}
+
+pub fn bytes_to_payload(data: Option<Vec<u8>>) -> Payload {
+    Payload {
+        data: data.unwrap_or_default(),
+        metadata: HashMap::new(),
     }
 }
 

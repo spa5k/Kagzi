@@ -76,7 +76,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::cancel(self, run_id, namespace_id).await
     }
 
-    async fn complete(&self, run_id: Uuid, output: serde_json::Value) -> Result<(), StoreError> {
+    async fn complete(&self, run_id: Uuid, output: Vec<u8>) -> Result<(), StoreError> {
         state::complete(self, run_id, output).await
     }
 

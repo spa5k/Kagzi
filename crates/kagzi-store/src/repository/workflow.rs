@@ -44,7 +44,7 @@ pub trait WorkflowRepository: Send + Sync {
 
     async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError>;
 
-    async fn complete(&self, run_id: Uuid, output: serde_json::Value) -> Result<(), StoreError>;
+    async fn complete(&self, run_id: Uuid, output: Vec<u8>) -> Result<(), StoreError>;
 
     async fn fail(&self, run_id: Uuid, error: &str) -> Result<(), StoreError>;
 
