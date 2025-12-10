@@ -297,15 +297,16 @@ impl StepRepository for PgStepRepository {
     async fn begin(&self, params: BeginStepParams) -> Result<BeginStepResult, StoreError> {
         let mut tx = self.pool.begin().await?;
 
-        let existing: Option<ExistingStepRow> = sqlx::query_as(
+        let existing: Option<ExistingStepRow> = sqlx::query_as!(
+            ExistingStepRow,
             r#"
             SELECT status, output, retry_at
             FROM kagzi.step_runs
             WHERE run_id = $1 AND step_id = $2 AND is_latest = true
             "#,
+            params.run_id,
+            params.step_id
         )
-        .bind(params.run_id)
-        .bind(&params.step_id)
         .fetch_optional(&mut *tx)
         .await?;
 
@@ -338,7 +339,7 @@ impl StepRepository for PgStepRepository {
 
         let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO kagzi.step_runs (run_id, step_id, step_kind, status, input, started_at, is_latest, attempt_number, namespace_id, retry_policy)
             VALUES ($1, $2, $3, 'RUNNING', $4, NOW(), true, 
@@ -346,12 +347,12 @@ impl StepRepository for PgStepRepository {
                     (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1),
                     $5)
             "#,
+            params.run_id,
+            params.step_id,
+            params.step_kind.as_ref(),
+            params.input,
+            retry_policy_json
         )
-        .bind(params.run_id)
-        .bind(&params.step_id)
-        .bind(params.step_kind.as_ref())
-        .bind(params.input)
-        .bind(retry_policy_json)
         .execute(&mut *tx)
         .await?;
 
@@ -374,16 +375,16 @@ impl StepRepository for PgStepRepository {
 
         let step_kind = self.latest_step_kind_strict(run_id, step_id).await?;
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE kagzi.step_runs 
             SET status = 'COMPLETED', output = $3, finished_at = NOW()
             WHERE run_id = $1 AND step_id = $2 AND is_latest = true AND status = 'RUNNING'
             "#,
+            run_id,
+            step_id,
+            &output
         )
-        .bind(run_id)
-        .bind(step_id)
-        .bind(&output)
         .execute(&mut *tx)
         .await?;
 
@@ -431,7 +432,7 @@ impl StepRepository for PgStepRepository {
                     .retry_after_ms
                     .unwrap_or_else(|| policy.calculate_delay_ms(info.attempt_number));
 
-                sqlx::query(
+                sqlx::query!(
                     r#"
                     UPDATE kagzi.step_runs
                     SET status = 'PENDING',
@@ -439,11 +440,11 @@ impl StepRepository for PgStepRepository {
                         error = $4
                     WHERE run_id = $1 AND step_id = $2 AND is_latest = true
                     "#,
+                    params.run_id,
+                    params.step_id,
+                    delay_ms as f64,
+                    params.error
                 )
-                .bind(params.run_id)
-                .bind(&params.step_id)
-                .bind(delay_ms as f64)
-                .bind(&params.error)
                 .execute(&self.pool)
                 .await?;
 
@@ -461,16 +462,16 @@ impl StepRepository for PgStepRepository {
             .latest_step_kind_strict(params.run_id, &params.step_id)
             .await?;
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE kagzi.step_runs 
             SET status = 'FAILED', error = $3, finished_at = NOW()
             WHERE run_id = $1 AND step_id = $2 AND is_latest = true AND status = 'RUNNING'
             "#,
+            params.run_id,
+            params.step_id,
+            params.error
         )
-        .bind(params.run_id)
-        .bind(&params.step_id)
-        .bind(&params.error)
         .execute(&mut *tx)
         .await?;
 

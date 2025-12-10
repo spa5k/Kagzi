@@ -72,7 +72,7 @@ impl TestHarness {
     /// Clean up test data between tests (useful for test isolation if running multiple scenarios)
     #[allow(dead_code)]
     pub async fn cleanup(&self) {
-        sqlx::query("TRUNCATE kagzi.workflow_runs, kagzi.step_runs CASCADE")
+        sqlx::query!("TRUNCATE kagzi.workflow_runs, kagzi.step_runs CASCADE")
             .execute(&self.pool)
             .await
             .expect("Failed to cleanup test data");

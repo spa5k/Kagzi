@@ -506,15 +506,15 @@ impl WorkflowRepository for PgWorkflowRepository {
         .fetch_optional(tx.as_mut())
         .await?;
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE kagzi.workflow_payloads
             SET output = $2
             WHERE run_id = $1
             "#,
+            run_id,
+            output
         )
-        .bind(run_id)
-        .bind(&output)
         .execute(tx.as_mut())
         .await?;
 
@@ -592,6 +592,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         worker_id: &str,
         supported_types: &[String],
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
+        // CTE execution order:
+        // 1. `limits` - lock candidate row with FOR UPDATE SKIP LOCKED
+        // 2. `queue_counter` - increment ONLY IF under queue limit (atomic conditional update)
+        // 3. `type_counter` - increment ONLY IF queue_counter succeeded AND under type limit
+        // 4. `revert_queue` - decrement queue counter IF queue succeeded but type failed
+        // 5. `claimed` - update workflow IF both counters succeeded
         let row = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH limits AS (
@@ -749,6 +755,12 @@ impl WorkflowRepository for PgWorkflowRepository {
         run_id: Uuid,
         worker_id: &str,
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
+        // CTE execution order:
+        // 1. `limits` - lock candidate row with FOR UPDATE SKIP LOCKED
+        // 2. `queue_counter` - increment ONLY IF under queue limit (atomic conditional update)
+        // 3. `type_counter` - increment ONLY IF queue_counter succeeded AND under type limit
+        // 4. `revert_queue` - decrement queue counter IF queue succeeded but type failed
+        // 5. `claimed` - update workflow IF both counters succeeded
         let row = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH eligible AS (

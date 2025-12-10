@@ -344,7 +344,10 @@ impl AdminService for AdminServiceImpl {
         log_grpc_request("HealthCheck", &correlation_id, &trace_id, None);
 
         let _req = request.into_inner();
-        let db_status = match sqlx::query("SELECT 1").fetch_one(self.store.pool()).await {
+        let db_status = match sqlx::query_scalar!("SELECT 1")
+            .fetch_one(self.store.pool())
+            .await
+        {
             Ok(_) => {
                 info!(
                     correlation_id = correlation_id,

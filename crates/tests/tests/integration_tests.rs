@@ -13,11 +13,10 @@ use kagzi_proto::kagzi::{
     StartWorkflowRequest, WorkerStatus, WorkflowStatus,
 };
 use prost::Message;
-use sqlx::Row;
 use tonic::Code;
 use uuid::Uuid;
 
-const NAMESPACE: &str = "test-ns";
+const NAMESPACE: &str = "default";
 const TASK_QUEUE: &str = "default";
 
 async fn register_worker(harness: &TestHarness, workflow_types: Vec<&str>) -> String {
@@ -89,22 +88,22 @@ async fn workflow_happy_path_with_registered_worker() {
     let run_id = start_workflow(&harness, "TypeA", serde_json::json!({"user_id": 123})).await;
 
     // Sanity check DB state before polling.
-    let row = sqlx::query(
+    let row = sqlx::query!(
         r#"
-        SELECT workflow_type, namespace_id, task_queue, status
+        SELECT workflow_type, namespace_id, task_queue, status::TEXT as status
         FROM kagzi.workflow_runs
         WHERE run_id = $1
         "#,
+        Uuid::parse_str(&run_id).unwrap(),
     )
-    .bind(Uuid::parse_str(&run_id).unwrap())
     .fetch_one(&harness.pool)
     .await
     .expect("workflow should exist");
 
-    assert_eq!(row.get::<String, _>("workflow_type"), "TypeA");
-    assert_eq!(row.get::<String, _>("namespace_id"), NAMESPACE);
-    assert_eq!(row.get::<String, _>("task_queue"), TASK_QUEUE);
-    assert_eq!(row.get::<String, _>("status"), "PENDING");
+    assert_eq!(row.workflow_type, "TypeA");
+    assert_eq!(row.namespace_id, NAMESPACE);
+    assert_eq!(row.task_queue, TASK_QUEUE);
+    assert_eq!(row.status, "PENDING");
 
     let pending_match: i64 = sqlx::query_scalar!(
         r#"

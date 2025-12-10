@@ -8,7 +8,7 @@ use kagzi_proto::kagzi::{
 };
 use tonic::Code;
 
-const NAMESPACE: &str = "test-ns";
+const NAMESPACE: &str = "default";
 const TASK_QUEUE: &str = "default";
 
 #[tokio::test]
