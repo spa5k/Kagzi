@@ -60,6 +60,53 @@ pub struct PayloadSettings {
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
         let mut builder = Config::builder()
+            // Built-in defaults to avoid missing-section errors
+            .set_default("server.host", default_host())?
+            .set_default("server.port", default_port() as i64)?
+            .set_default(
+                "server.db_max_connections",
+                default_db_max_connections() as i64,
+            )?
+            .set_default(
+                "scheduler.interval_secs",
+                default_scheduler_interval_secs() as i64,
+            )?
+            .set_default(
+                "scheduler.batch_size",
+                default_scheduler_batch_size() as i64,
+            )?
+            .set_default(
+                "scheduler.max_workflows_per_tick",
+                default_max_workflows_per_tick() as i64,
+            )?
+            .set_default(
+                "watchdog.interval_secs",
+                default_watchdog_interval_secs() as i64,
+            )?
+            .set_default(
+                "watchdog.worker_stale_threshold_secs",
+                default_worker_stale_threshold_secs(),
+            )?
+            .set_default(
+                "watchdog.counter_reconcile_interval_secs",
+                default_counter_reconcile_interval_secs() as i64,
+            )?
+            .set_default(
+                "watchdog.wake_sleeping_batch_size",
+                default_wake_sleeping_batch_size() as i64,
+            )?
+            .set_default(
+                "worker.poll_timeout_secs",
+                default_poll_timeout_secs() as i64,
+            )?
+            .set_default(
+                "payload.warn_threshold_bytes",
+                default_payload_warn_threshold_bytes() as i64,
+            )?
+            .set_default(
+                "payload.max_size_bytes",
+                default_payload_max_size_bytes() as i64,
+            )?
             // Single canonical source: KAGZI_* (flat, single underscore)
             .add_source(Environment::with_prefix("KAGZI").separator("_"));
 
