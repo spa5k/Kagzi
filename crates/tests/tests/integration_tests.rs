@@ -12,7 +12,9 @@ use kagzi_proto::kagzi::{
     HeartbeatRequest, ListWorkersRequest, PageRequest, Payload, PollTaskRequest, RegisterRequest,
     StartWorkflowRequest, WorkerStatus, WorkflowStatus,
 };
+use kagzi_store::{PgStore, WorkflowRepository};
 use prost::Message;
+use std::time::Duration;
 use tonic::Code;
 use uuid::Uuid;
 
@@ -336,4 +338,100 @@ async fn list_workers_returns_registry() {
             .iter()
             .all(|w| w.status == WorkerStatus::Online as i32)
     );
+}
+
+#[tokio::test]
+async fn workflow_input_over_limit_is_rejected() {
+    let harness = TestHarness::new().await;
+    let too_large = vec![0u8; 3 * 1024 * 1024]; // 3MB > 2MB limit
+
+    let result = harness
+        .workflow_service
+        .start_workflow(make_request(StartWorkflowRequest {
+            external_id: format!("TypeA-{}", Uuid::now_v7()),
+            task_queue: TASK_QUEUE.to_string(),
+            workflow_type: "TypeA".to_string(),
+            input: Some(Payload {
+                data: too_large,
+                metadata: Default::default(),
+            }),
+            namespace_id: NAMESPACE.to_string(),
+            context: None,
+            deadline_at: None,
+            version: "1.0".to_string(),
+            retry_policy: None,
+        }))
+        .await;
+
+    assert!(result.is_err(), "expected payload size rejection");
+    assert_eq!(result.unwrap_err().code(), Code::InvalidArgument);
+}
+
+#[tokio::test]
+async fn workflow_output_over_limit_is_rejected() {
+    let harness = TestHarness::new().await;
+    let worker_id = register_worker(&harness, vec!["TypeA"]).await;
+    let run_id = start_workflow(&harness, "TypeA", serde_json::json!({})).await;
+
+    let work = harness
+        .worker_service
+        .poll_task(make_request(poll_request(&worker_id, &["TypeA"])))
+        .await
+        .expect("poll_task should succeed")
+        .into_inner();
+
+    assert_eq!(work.run_id, run_id);
+
+    let too_large = vec![0u8; 3 * 1024 * 1024]; // 3MB > 2MB limit
+    let result = harness
+        .worker_service
+        .complete_workflow(make_request(CompleteWorkflowRequest {
+            run_id: run_id.clone(),
+            output: Some(Payload {
+                data: too_large,
+                metadata: Default::default(),
+            }),
+        }))
+        .await;
+
+    assert!(result.is_err(), "expected payload size rejection");
+    assert_eq!(result.unwrap_err().code(), Code::InvalidArgument);
+}
+
+#[tokio::test]
+async fn claim_workflow_batch_returns_requested_amount() {
+    let harness = TestHarness::new().await;
+    let store = PgStore::new(harness.pool.clone(), kagzi_store::StoreConfig::default());
+
+    for _ in 0..3 {
+        let _ = start_workflow(&harness, "TypeA", serde_json::json!({})).await;
+    }
+
+    let claimed = store
+        .workflows()
+        .claim_workflow_batch(TASK_QUEUE, NAMESPACE, "worker-batch", &[], 3, 30)
+        .await
+        .expect("batch claim should succeed");
+
+    assert_eq!(claimed.len(), 3);
+}
+
+#[tokio::test]
+async fn wait_for_new_work_notifies_on_insert() {
+    let harness = TestHarness::new().await;
+    let store = PgStore::new(harness.pool.clone(), kagzi_store::StoreConfig::default());
+
+    let waiter_store = store.clone();
+    let notified = tokio::spawn(async move {
+        waiter_store
+            .workflows()
+            .wait_for_new_work(TASK_QUEUE, NAMESPACE, Duration::from_secs(2))
+            .await
+            .expect("wait_for_new_work should complete")
+    });
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let _ = start_workflow(&harness, "TypeA", serde_json::json!({})).await;
+
+    assert!(notified.await.expect("join waiter"), "should be notified");
 }

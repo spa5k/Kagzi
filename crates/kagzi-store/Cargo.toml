@@ -22,4 +22,5 @@ tracing.workspace = true
 uuid.workspace = true
 backoff.workspace = true
 strum.workspace = true
+md5 = "0.7"
 

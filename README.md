@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=for-the-badge)
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge)
 
-*A modern, distributed workflow engine built in Rust with gRPC*
+_A modern, distributed workflow engine built in Rust with gRPC_
 
 [Documentation](#documentation) • [Quick Start](#quick-start) • [Examples](#examples) • [API Reference](#api-reference)
 
@@ -56,16 +56,18 @@ Kagzi is a high-performance, distributed workflow engine designed for building r
 ### Installation
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/spa5k/kagzi.git
    cd kagzi
    ```
 
 2. **Set up the development environment**
+
    ```bash
    # Using Just (recommended)
    just setup
-   
+
    # Or manually:
    docker-compose up -d
    cargo run -p kagzi-server
@@ -103,7 +105,7 @@ async fn greet(name: String) -> anyhow::Result<String> {
 async fn greet_workflow(mut ctx: WorkflowContext, input: Input) -> anyhow::Result<Output> {
     // Run step - if replayed, returns cached result
     let greeting = ctx.run("greet", greet(input.name)).await?;
-    
+
     Ok(Output { message: greeting })
 }
 
@@ -115,13 +117,13 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     worker.register("greet", greet_workflow);
     tokio::spawn(async move { worker.run().await });
-    
+
     // Start workflow
     let mut client = Client::connect("http://localhost:50051").await?;
     let run_id = client.workflow("greet", "default", Input {
         name: "World".to_string(),
     }).await?;
-    
+
     println!("Started workflow: {}", run_id);
     Ok(())
 }
@@ -132,20 +134,26 @@ async fn main() -> anyhow::Result<()> {
 ### Core Concepts
 
 #### Workflows
+
 Workflows are the main unit of execution in Kagzi. They consist of multiple steps that can be executed sequentially, in parallel, or with complex dependencies.
 
 #### Steps
+
 Steps are individual units of work within a workflow. Each step can:
+
 - Execute async functions
 - Call other workflows (sub-workflows)
 - Sleep for specified durations
 - Handle failures and retries
 
 #### Workers
+
 Workers are processes that execute workflow steps. They poll the server for available work and execute steps using registered workflow functions.
 
 #### Context
+
 The `WorkflowContext` provides access to workflow operations like:
+
 - Running sub-steps
 - Sleeping
 - Accessing workflow metadata
@@ -242,7 +250,7 @@ client.delete_schedule(&schedule.schedule_id, "default").await?;
 async fn workflow_function(mut ctx: WorkflowContext, input: Input) -> anyhow::Result<Output> {
     // Run a step - results are memoized for replay
     let result = ctx.run("step_name", my_async_function(input.value)).await?;
-    
+
     // Run a step with explicit input tracking (for observability)
     let result2 = ctx.run_with_input("step_name", &input, my_async_function(input.value)).await?;
 
@@ -262,10 +270,10 @@ async fn workflow_function(mut ctx: WorkflowContext, input: Input) -> anyhow::Re
             my_async_function(input.value),
         )
         .await?;
-    
+
     // Durable sleep - survives server restarts
     ctx.sleep(Duration::from_secs(10)).await?;
-    
+
     Ok(Output { result })
 }
 ```
@@ -308,15 +316,15 @@ async fn complex_workflow(mut ctx: WorkflowContext, input: ComplexInput) -> anyh
         ctx.run("step1", async_step1(input.clone())),
         ctx.run("step2", async_step2(input.clone()))
     )?;
-    
+
     // Conditional execution
     if result1.needs_processing {
         ctx.run("process", async_process(result1)).await?;
     }
-    
+
     // Sub-workflow
     let sub_result = ctx.run("sub_workflow", sub_workflow_func(result2)).await?;
-    
+
     Ok(ComplexOutput::new(result1, result2, sub_result))
 }
 ```
@@ -325,20 +333,26 @@ async fn complex_workflow(mut ctx: WorkflowContext, input: ComplexInput) -> anyh
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/postgres` |
-| `RUST_LOG` | Log level filter | `info` |
-| `KAGZI_SERVER_ADDR` | Server bind address | `0.0.0.0:50051` |
+| Variable            | Description                  | Default                                                  |
+| ------------------- | ---------------------------- | -------------------------------------------------------- |
+| `DATABASE_URL`      | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/postgres` |
+| `RUST_LOG`          | Log level filter             | `info`                                                   |
+| `KAGZI_SERVER_ADDR` | Server bind address          | `0.0.0.0:50051`                                          |
+
+### Payload Limits
+
+Payloads over 1MB log a warning; payloads over 2MB are rejected to avoid bloating the database. Store large data externally and pass references instead.
 
 ### Database Setup
 
 Using Docker (recommended):
+
 ```bash
 docker-compose up -d
 ```
 
 Manual setup:
+
 ```bash
 # Create database
 createdb kagzi
@@ -446,16 +460,16 @@ spec:
         app: kagzi-server
     spec:
       containers:
-      - name: kagzi-server
-        image: kagzi-server:latest
-        ports:
-        - containerPort: 50051
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: kagzi-secrets
-              key: database-url
+        - name: kagzi-server
+          image: kagzi-server:latest
+          ports:
+            - containerPort: 50051
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kagzi-secrets
+                  key: database-url
 ```
 
 ## Monitoring & Observability
@@ -470,7 +484,7 @@ kagzi::tracing_utils::init_tracing("my-service")?;
 
 // All gRPC calls are automatically traced with:
 // - Correlation IDs
-// - Trace IDs  
+// - Trace IDs
 // - Method names
 // - Request/response timing
 // - Error context

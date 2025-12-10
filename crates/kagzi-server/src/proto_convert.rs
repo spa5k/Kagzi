@@ -13,7 +13,7 @@ use kagzi_store::{
 use std::collections::HashMap;
 use tonic::Status;
 
-use crate::helpers::{invalid_argument, json_to_payload, string_error_detail};
+use crate::helpers::{bytes_to_payload, invalid_argument, json_to_payload, string_error_detail};
 
 /// Convert chrono DateTime to proto Timestamp.
 pub fn timestamp_from(dt: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
@@ -98,8 +98,8 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
         task_queue: w.task_queue,
         workflow_type: w.workflow_type,
         status: map_workflow_status(w.status) as i32,
-        input: Some(json_to_payload(Some(w.input))?),
-        output: Some(json_to_payload(w.output)?),
+        input: Some(bytes_to_payload(Some(w.input))),
+        output: Some(bytes_to_payload(w.output)),
         context: Some(json_to_payload(w.context)?),
         error,
         attempts: w.attempts,
@@ -116,8 +116,8 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
 
 /// Convert store StepRun to proto Step.
 pub fn step_to_proto(s: StepRun) -> Result<Step, Status> {
-    let input = json_to_payload(s.input)?;
-    let output = json_to_payload(s.output)?;
+    let input = bytes_to_payload(s.input);
+    let output = bytes_to_payload(s.output);
     let error = s.error.map(|msg| string_error_detail(Some(msg)));
 
     let step_id = s.step_id;

@@ -33,7 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_migrations(&pool).await?;
 
     // Create the store
-    let store = PgStore::new(pool);
+    let store_config = kagzi_store::StoreConfig {
+        payload_warn_threshold_bytes: settings.payload.warn_threshold_bytes,
+        payload_max_size_bytes: settings.payload.max_size_bytes,
+    };
+    let store = PgStore::new(pool, store_config);
 
     let shutdown = CancellationToken::new();
     let scheduler_settings = settings.scheduler.clone();

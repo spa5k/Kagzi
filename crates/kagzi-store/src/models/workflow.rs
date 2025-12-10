@@ -91,8 +91,8 @@ pub struct WorkflowRun {
     pub task_queue: String,
     pub workflow_type: String,
     pub status: WorkflowStatus,
-    pub input: serde_json::Value,
-    pub output: Option<serde_json::Value>,
+    pub input: Vec<u8>,
+    pub output: Option<Vec<u8>>,
     pub context: Option<serde_json::Value>,
     pub locked_by: Option<String>,
     pub attempts: i32,
@@ -112,7 +112,7 @@ pub struct CreateWorkflow {
     pub external_id: String,
     pub task_queue: String,
     pub workflow_type: String,
-    pub input: serde_json::Value,
+    pub input: Vec<u8>,
     pub namespace_id: String,
     pub idempotency_suffix: Option<String>,
     pub context: Option<serde_json::Value>,
@@ -139,7 +139,7 @@ pub struct WorkflowCursor {
 pub struct ClaimedWorkflow {
     pub run_id: Uuid,
     pub workflow_type: String,
-    pub input: serde_json::Value,
+    pub input: Vec<u8>,
     pub locked_by: Option<String>,
 }
 
@@ -168,7 +168,7 @@ pub struct WorkCandidate {
 #[derive(Debug, Clone)]
 pub struct WorkflowPayload {
     pub run_id: Uuid,
-    pub input: serde_json::Value,
-    pub output: Option<serde_json::Value>,
+    pub input: Vec<u8>,
+    pub output: Option<Vec<u8>>,
     pub context: Option<serde_json::Value>,
 }

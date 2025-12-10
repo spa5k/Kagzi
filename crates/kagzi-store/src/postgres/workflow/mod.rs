@@ -1,11 +1,15 @@
 mod helpers;
+mod notify;
 mod queue;
 mod state;
+
+use std::time::Duration;
 
 use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
@@ -13,16 +17,15 @@ use crate::models::{
 };
 use crate::repository::WorkflowRepository;
 
-pub(super) const DEFAULT_QUEUE_CONCURRENCY_LIMIT: i32 = 10_000;
-
 #[derive(Clone)]
 pub struct PgWorkflowRepository {
     pub(super) pool: PgPool,
+    pub(super) config: StoreConfig,
 }
 
 impl PgWorkflowRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, config: StoreConfig) -> Self {
+        Self { pool, config }
     }
 }
 
@@ -76,7 +79,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::cancel(self, run_id, namespace_id).await
     }
 
-    async fn complete(&self, run_id: Uuid, output: serde_json::Value) -> Result<(), StoreError> {
+    async fn complete(&self, run_id: Uuid, output: Vec<u8>) -> Result<(), StoreError> {
         state::complete(self, run_id, output).await
     }
 
@@ -100,20 +103,22 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::get_retry_policy(self, run_id).await
     }
 
-    async fn claim_next_workflow(
+    async fn claim_workflow_batch(
         &self,
         task_queue: &str,
         namespace_id: &str,
         worker_id: &str,
         supported_types: &[String],
+        limit: usize,
         lock_duration_secs: i64,
-    ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        queue::claim_next_workflow(
+    ) -> Result<Vec<ClaimedWorkflow>, StoreError> {
+        queue::claim_workflow_batch(
             self,
             task_queue,
             namespace_id,
             worker_id,
             supported_types,
+            limit,
             lock_duration_secs,
         )
         .await
@@ -188,5 +193,14 @@ impl WorkflowRepository for PgWorkflowRepository {
 
     async fn reconcile_queue_counters(&self) -> Result<u64, StoreError> {
         queue::reconcile_queue_counters(self).await
+    }
+
+    async fn wait_for_new_work(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        timeout: Duration,
+    ) -> Result<bool, StoreError> {
+        notify::wait_for_new_work(&self.pool, task_queue, namespace_id, timeout).await
     }
 }

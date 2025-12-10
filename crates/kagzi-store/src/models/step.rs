@@ -36,8 +36,8 @@ pub struct StepRun {
     pub step_kind: StepKind,
     pub attempt_number: i32,
     pub status: StepStatus,
-    pub input: Option<serde_json::Value>,
-    pub output: Option<serde_json::Value>,
+    pub input: Option<Vec<u8>>,
+    pub output: Option<Vec<u8>>,
     pub error: Option<String>,
     pub child_workflow_run_id: Option<Uuid>,
     pub created_at: Option<DateTime<Utc>>,
@@ -52,14 +52,14 @@ pub struct BeginStepParams {
     pub run_id: Uuid,
     pub step_id: String,
     pub step_kind: StepKind,
-    pub input: Option<serde_json::Value>,
+    pub input: Option<Vec<u8>>,
     pub retry_policy: Option<RetryPolicy>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BeginStepResult {
     pub should_execute: bool,
-    pub cached_output: Option<serde_json::Value>,
+    pub cached_output: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]

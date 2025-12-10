@@ -1,7 +1,7 @@
 use crate::config::WorkerSettings;
 use crate::helpers::{
-    invalid_argument, json_to_payload, map_store_error, merge_proto_policy, not_found,
-    payload_to_optional_json, precondition_failed,
+    bytes_to_payload, invalid_argument, map_store_error, merge_proto_policy, not_found,
+    payload_to_optional_bytes, precondition_failed,
 };
 use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
 use crate::tracing_utils::{
@@ -304,19 +304,21 @@ impl WorkerService for WorkerServiceImpl {
             ));
         }
 
-        if let Some(work_item) = self
+        let claimed = self
             .store
             .workflows()
-            .claim_next_workflow(
+            .claim_workflow_batch(
                 &req.task_queue,
                 &namespace_id,
                 &req.worker_id,
                 &effective_types,
+                1,
                 Self::WORKFLOW_LOCK_DURATION_SECS,
             )
             .await
-            .map_err(map_store_error)?
-        {
+            .map_err(map_store_error)?;
+
+        if let Some(work_item) = claimed.into_iter().next() {
             if let Err(e) = self
                 .store
                 .workers()
@@ -326,7 +328,7 @@ impl WorkerService for WorkerServiceImpl {
                 tracing::warn!(worker_id = %worker_id, error = ?e, "Failed to update active count");
             }
 
-            let payload = json_to_payload(Some(work_item.input))?;
+            let payload = bytes_to_payload(Some(work_item.input));
 
             log_grpc_response(
                 "PollTask",
@@ -370,7 +372,7 @@ impl WorkerService for WorkerServiceImpl {
                     );
                 }
 
-                let payload = json_to_payload(Some(work_item.input))?;
+                let payload = bytes_to_payload(Some(work_item.input));
 
                 info!(
                     correlation_id = correlation_id,
@@ -477,7 +479,7 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?;
 
-        let input = payload_to_optional_json(req.input)?;
+        let input = payload_to_optional_bytes(req.input);
         let step_kind = map_proto_step_kind(req.kind)?;
 
         let result = self
@@ -493,7 +495,7 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?;
 
-        let cached_output = json_to_payload(result.cached_output)?;
+        let cached_output = bytes_to_payload(result.cached_output);
 
         log_grpc_response(
             "BeginStep",
@@ -540,11 +542,11 @@ impl WorkerService for WorkerServiceImpl {
             .map(|w| w.namespace_id)
             .unwrap_or_else(|| "default".to_string());
 
-        let output_json = payload_to_optional_json(req.output)?.unwrap_or(serde_json::Value::Null);
+        let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
         self.store
             .steps()
-            .complete(run_id, &req.step_id, output_json)
+            .complete(run_id, &req.step_id, output)
             .await
             .map_err(map_store_error)?;
 
@@ -706,11 +708,11 @@ impl WorkerService for WorkerServiceImpl {
             )));
         }
 
-        let output_json = payload_to_optional_json(req.output)?.unwrap_or(serde_json::Value::Null);
+        let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
         self.store
             .workflows()
-            .complete(run_id, output_json)
+            .complete(run_id, output)
             .await
             .map_err(map_store_error)?;
 
