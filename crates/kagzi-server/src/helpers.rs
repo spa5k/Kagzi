@@ -1,6 +1,7 @@
+use std::collections::HashMap;
+
 use kagzi_proto::kagzi::{ErrorCode, ErrorDetail, Payload, RetryPolicy};
 use prost::Message;
-use std::collections::HashMap;
 use tonic::{Code, Status};
 
 pub fn detail(

@@ -1,8 +1,10 @@
-use crate::config::WatchdogSettings;
-use kagzi_store::{PgStore, StepRepository, WorkerRepository, WorkflowRepository};
 use std::time::Duration;
+
+use kagzi_store::{PgStore, StepRepository, WorkerRepository, WorkflowRepository};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+
+use crate::config::WatchdogSettings;
 
 pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationToken) {
     let interval = Duration::from_secs(settings.interval_secs.max(1));

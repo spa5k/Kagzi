@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::time::Duration;
+
 use common::{TestHarness, json_bytes, make_request};
 use kagzi_proto::kagzi::admin_service_server::AdminService;
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
@@ -14,7 +16,6 @@ use kagzi_proto::kagzi::{
 };
 use kagzi_store::{PgStore, WorkflowRepository};
 use prost::Message;
-use std::time::Duration;
 use tonic::Code;
 use uuid::Uuid;
 

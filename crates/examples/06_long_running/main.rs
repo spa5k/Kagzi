@@ -1,10 +1,9 @@
+use std::env;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
-use std::{
-    env,
-    sync::atomic::{AtomicUsize, Ordering},
-    time::Duration,
-};
 use tokio::time::sleep;
 
 #[path = "../common.rs"]
@@ -42,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_polling(server: &str, queue: &str) -> anyhow::Result<()> {
+    FAST_COUNTER.store(0, Ordering::SeqCst);
     let mut worker = common::build_worker(server, queue).await?;
     worker.register("poll_job", polling_workflow);
 
@@ -63,6 +63,7 @@ async fn run_polling(server: &str, queue: &str) -> anyhow::Result<()> {
 }
 
 async fn run_timeout(server: &str, queue: &str) -> anyhow::Result<()> {
+    FAST_COUNTER.store(0, Ordering::SeqCst);
     let mut worker = common::build_worker(server, queue).await?;
     worker.register("poll_with_timeout", timeout_workflow);
 
@@ -87,9 +88,12 @@ async fn polling_workflow(mut ctx: WorkflowContext, input: JobInput) -> anyhow::
     // Simulate external job creation
     tracing::info!(job_id = %input.job_id, "Trigger external job");
 
+    let mut attempts = 0;
     loop {
+        attempts += 1;
+        let step_name = format!("check-status-{attempts}");
         let status = ctx
-            .run("check-status", check_status(input.job_id.clone(), false))
+            .run(&step_name, check_status(input.job_id.clone(), false))
             .await?;
 
         if status.state == "complete" {
@@ -106,11 +110,9 @@ async fn timeout_workflow(mut ctx: WorkflowContext, input: JobInput) -> anyhow::
     let mut attempts = 0;
     loop {
         attempts += 1;
+        let step_name = format!("check-status-timeout-{attempts}");
         let status = ctx
-            .run(
-                "check-status-timeout",
-                check_status(input.job_id.clone(), true),
-            )
+            .run(&step_name, check_status(input.job_id.clone(), true))
             .await?;
 
         if status.state == "complete" {

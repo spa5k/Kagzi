@@ -581,8 +581,9 @@ impl StepRepository for PgStepRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use sqlx::postgres::PgPoolOptions;
+
+    use super::*;
 
     fn make_repo(max: usize, warn: usize) -> PgStepRepository {
         let pool = PgPoolOptions::new()

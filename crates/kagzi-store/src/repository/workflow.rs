@@ -1,12 +1,12 @@
-use async_trait::async_trait;
 use std::time::Duration;
+
+use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::StoreError;
-use crate::models::PaginatedResult;
 use crate::models::{
-    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, RetryPolicy,
-    WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
+    ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
+    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
 
 #[async_trait]

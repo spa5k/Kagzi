@@ -1,6 +1,8 @@
+use std::env;
+use std::time::Duration;
+
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
-use std::{env, time::Duration};
 use tokio::time::sleep;
 
 #[path = "../common.rs"]
@@ -34,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         "saga" => run_saga(&server, &queue, false, true).await?,
         "partial" => run_saga(&server, &queue, true, false).await?,
         _ => {
-            eprintln!("Usage: cargo run -p kagzi --example 08_saga_pattern -- [saga|partial]");
+            eprintln!("Usage: cargo run -p examples --example 08_saga_pattern -- [saga|partial]");
             std::process::exit(1);
         }
     }

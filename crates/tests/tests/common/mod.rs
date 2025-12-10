@@ -1,13 +1,14 @@
 //! Common test utilities and PostgreSQL testcontainer setup
 
+use kagzi_server::config::WorkerSettings;
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    config::WorkerSettings,
 };
 use kagzi_store::PgStore;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::ContainerAsync;
+use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 /// Test harness that manages PostgreSQL container lifecycle
 #[allow(dead_code)]

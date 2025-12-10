@@ -1,11 +1,10 @@
 use tracing::instrument;
 use uuid::Uuid;
 
-use crate::error::StoreError;
-use crate::models::{ClaimedWorkflow, OrphanedWorkflow, RetryPolicy, WorkCandidate};
-
 use super::PgWorkflowRepository;
 use super::helpers::ClaimedRow;
+use crate::error::StoreError;
+use crate::models::{ClaimedWorkflow, OrphanedWorkflow, RetryPolicy, WorkCandidate};
 
 #[derive(sqlx::FromRow)]
 struct CandidateRow {

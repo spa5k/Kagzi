@@ -1,12 +1,3 @@
-use crate::helpers::{
-    invalid_argument, map_store_error, merge_proto_policy, not_found, payload_to_bytes,
-    payload_to_optional_json, precondition_failed,
-};
-use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
-};
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
     CancelWorkflowRequest, GetWorkflowRequest, GetWorkflowResponse, ListWorkflowsRequest,
@@ -17,6 +8,16 @@ use kagzi_store::{
 };
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
+
+use crate::helpers::{
+    invalid_argument, map_store_error, merge_proto_policy, not_found, payload_to_bytes,
+    payload_to_optional_json, precondition_failed,
+};
+use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
+use crate::tracing_utils::{
+    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
+    log_grpc_response,
+};
 
 pub struct WorkflowServiceImpl {
     pub store: PgStore,

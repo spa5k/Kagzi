@@ -1,5 +1,7 @@
 use std::cell::RefCell;
-use tonic::{Request, metadata::MetadataKey};
+
+use tonic::Request;
+use tonic::metadata::MetadataKey;
 use uuid::Uuid;
 
 pub const CORRELATION_ID_KEY: &str = "x-correlation-id";

@@ -1,6 +1,8 @@
+use std::env;
+use std::time::Duration;
+
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
-use std::{env, time::Duration};
 use tokio::time::sleep;
 
 #[path = "../common.rs"]

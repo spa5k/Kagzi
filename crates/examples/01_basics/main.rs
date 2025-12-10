@@ -1,6 +1,7 @@
+use std::env;
+
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
-use std::env;
 
 #[path = "../common.rs"]
 mod common;
@@ -116,7 +117,11 @@ async fn run_hello(server: &str, queue: &str) -> anyhow::Result<()> {
         .await?;
 
     tracing::info!(%run_id, "Started hello workflow");
-    tokio::spawn(async move { worker.run().await });
+    tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            tracing::error!(error = %e, "Worker error");
+        }
+    });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     Ok(())
 }
@@ -137,7 +142,11 @@ async fn run_chain(server: &str, queue: &str) -> anyhow::Result<()> {
         .await?;
 
     tracing::info!(%run_id, "Started chained workflow");
-    tokio::spawn(async move { worker.run().await });
+    tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            tracing::error!(error = %e, "Worker error");
+        }
+    });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     Ok(())
 }
@@ -159,7 +168,11 @@ async fn run_context(server: &str, queue: &str) -> anyhow::Result<()> {
         .await?;
 
     tracing::info!(%run_id, "Started context workflow");
-    tokio::spawn(async move { worker.run().await });
+    tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            tracing::error!(error = %e, "Worker error");
+        }
+    });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     Ok(())
 }

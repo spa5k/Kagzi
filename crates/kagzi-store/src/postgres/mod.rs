@@ -4,9 +4,8 @@ mod worker;
 mod workflow;
 mod workflow_schedule;
 
-use sqlx::PgPool;
-
 pub use health::PgHealthRepository;
+use sqlx::PgPool;
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;
 pub use workflow::PgWorkflowRepository;

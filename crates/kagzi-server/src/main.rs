@@ -2,9 +2,10 @@ use kagzi_proto::kagzi::admin_service_server::AdminServiceServer;
 use kagzi_proto::kagzi::worker_service_server::WorkerServiceServer;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServiceServer;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
+use kagzi_server::config::Settings;
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    config::Settings, run_scheduler, tracing_utils, watchdog,
+    run_scheduler, tracing_utils, watchdog,
 };
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;

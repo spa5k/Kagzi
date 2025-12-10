@@ -2,10 +2,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::StoreError;
-use crate::models::PaginatedResult;
 use crate::models::{
     BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
-    RetryTriggered, StepCursor, StepRun,
+    PaginatedResult, RetryTriggered, StepCursor, StepRun,
 };
 
 #[async_trait]

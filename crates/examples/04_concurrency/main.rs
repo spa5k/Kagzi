@@ -1,6 +1,8 @@
+use std::env;
+use std::time::Duration;
+
 use kagzi::{Worker, WorkflowContext};
 use serde::{Deserialize, Serialize};
-use std::{env, time::Duration};
 use tokio::time::sleep;
 
 #[path = "../common.rs"]
@@ -26,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         "workflow" => workflow_type_cap(server, queue).await?,
         _ => {
             eprintln!(
-                "Usage: cargo run -p kagzi --example 04_concurrency -- [local|queue|workflow]"
+                "Usage: cargo run -p examples --example 04_concurrency -- [local|queue|workflow]"
             );
             std::process::exit(1);
         }

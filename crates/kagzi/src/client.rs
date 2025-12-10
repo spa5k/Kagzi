@@ -223,8 +223,8 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
 }
 
 impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowBuilder<'a, I> {
-    type Output = anyhow::Result<String>;
     type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + 'a>>;
+    type Output = anyhow::Result<String>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.execute())
@@ -328,8 +328,8 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
 }
 
 impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowScheduleBuilder<'a, I> {
-    type Output = anyhow::Result<WorkflowSchedule>;
     type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + 'a>>;
+    type Output = anyhow::Result<WorkflowSchedule>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.create())

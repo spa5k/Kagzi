@@ -1,14 +1,7 @@
-use crate::config::WorkerSettings;
-use crate::helpers::{
-    bytes_to_payload, invalid_argument, map_store_error, merge_proto_policy, not_found,
-    payload_to_optional_bytes, precondition_failed,
-};
-use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
-};
-use crate::work_distributor::WorkDistributorHandle;
+use std::collections::HashMap;
+use std::convert::TryInto;
+use std::time::Duration;
+
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
@@ -22,12 +15,21 @@ use kagzi_store::{
     WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus, WorkflowRepository,
     WorkflowTypeConcurrency,
 };
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::time::Duration;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
+
+use crate::config::WorkerSettings;
+use crate::helpers::{
+    bytes_to_payload, invalid_argument, map_store_error, merge_proto_policy, not_found,
+    payload_to_optional_bytes, precondition_failed,
+};
+use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
+use crate::tracing_utils::{
+    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
+    log_grpc_response,
+};
+use crate::work_distributor::WorkDistributorHandle;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
@@ -49,6 +51,7 @@ pub struct WorkerServiceImpl {
 
 impl WorkerServiceImpl {
     const WORKFLOW_LOCK_DURATION_SECS: i64 = 30;
+
     pub fn new(store: PgStore, worker_settings: WorkerSettings) -> Self {
         let work_distributor = WorkDistributorHandle::new(store.clone());
         Self {

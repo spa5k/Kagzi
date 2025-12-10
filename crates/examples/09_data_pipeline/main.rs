@@ -1,6 +1,8 @@
+use std::env;
+use std::time::Duration;
+
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
-use std::{env, time::Duration};
 use tokio::time::sleep;
 
 #[path = "../common.rs"]
@@ -148,5 +150,5 @@ async fn load_large(blob: common::InMemoryBlobStore, key: String) -> anyhow::Res
         .await
         .ok_or_else(|| anyhow::anyhow!("missing key {key}"))?;
     tracing::info!(%key, "loaded payload from blob store (mock)");
-    Ok(String::from_utf8_lossy(&data).to_string())
+    String::from_utf8(data).map_err(|e| anyhow::anyhow!("invalid UTF-8 in blob {key}: {e}"))
 }

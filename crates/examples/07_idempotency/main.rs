@@ -1,10 +1,9 @@
+use std::env;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
-use std::{
-    env,
-    sync::atomic::{AtomicUsize, Ordering},
-    time::Duration,
-};
 
 #[path = "../common.rs"]
 mod common;
@@ -70,7 +69,11 @@ async fn external_id_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         .await?;
 
     tracing::info!(%run1, %run2, "Both calls return the same run id due to idempotency");
-    tokio::spawn(async move { worker.run().await });
+    tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            tracing::error!(error = %e, "Worker error");
+        }
+    });
     tokio::time::sleep(Duration::from_secs(6)).await;
     Ok(())
 }
@@ -85,7 +88,11 @@ async fn memoization_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         .await?;
 
     tracing::info!(%run, "Started memoization workflow; expensive step should run once even if called twice");
-    tokio::spawn(async move { worker.run().await });
+    tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            tracing::error!(error = %e, "Worker error");
+        }
+    });
     tokio::time::sleep(Duration::from_secs(6)).await;
     Ok(())
 }

@@ -2,10 +2,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::StoreError;
-use crate::models::PaginatedResult;
 use crate::models::{
-    ListWorkersParams, RegisterWorkerParams, Worker, WorkerCursor, WorkerHeartbeatParams,
-    WorkerStatus,
+    ListWorkersParams, PaginatedResult, RegisterWorkerParams, Worker, WorkerCursor,
+    WorkerHeartbeatParams, WorkerStatus,
 };
 
 #[async_trait]

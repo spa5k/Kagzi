@@ -1,7 +1,8 @@
-use kagzi::{KagziError, RetryPolicy, Worker, WorkflowContext};
-use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
+
+use kagzi::{KagziError, RetryPolicy, Worker, WorkflowContext};
+use serde::{Deserialize, Serialize};
 
 #[path = "../common.rs"]
 mod common;

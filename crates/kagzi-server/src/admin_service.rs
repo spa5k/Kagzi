@@ -1,15 +1,10 @@
-use crate::helpers::{invalid_argument, map_store_error, not_found};
-use crate::proto_convert::{step_to_proto, worker_to_proto};
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
-};
 use chrono::{TimeZone, Utc};
+use kagzi_proto::kagzi::admin_service_server::AdminService;
 use kagzi_proto::kagzi::{
     GetServerInfoRequest, GetServerInfoResponse, GetStepRequest, GetStepResponse, GetWorkerRequest,
     GetWorkerResponse, HealthCheckRequest, HealthCheckResponse, ListStepsRequest,
     ListStepsResponse, ListWorkersRequest, ListWorkersResponse, PageInfo, ServingStatus,
-    WorkerStatus, admin_service_server::AdminService,
+    WorkerStatus,
 };
 use kagzi_store::{
     PgStore, StepRepository, WorkerRepository, WorkerStatus as StoreWorkerStatus,
@@ -18,6 +13,13 @@ use kagzi_store::{
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
 use uuid::Uuid;
+
+use crate::helpers::{invalid_argument, map_store_error, not_found};
+use crate::proto_convert::{step_to_proto, worker_to_proto};
+use crate::tracing_utils::{
+    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
+    log_grpc_response,
+};
 
 fn normalize_worker_status(status: Option<i32>) -> Result<Option<StoreWorkerStatus>, Status> {
     match status {

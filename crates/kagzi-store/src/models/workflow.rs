@@ -1,8 +1,9 @@
+use std::time::Duration;
+
 use backoff::ExponentialBackoff;
 use backoff::backoff::Backoff;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use strum::{AsRefStr, Display, EnumString};
 use uuid::Uuid;
 

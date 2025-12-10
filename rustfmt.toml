@@ -1,0 +1,7 @@
+# rustfmt.toml
+edition = "2024"
+use_small_heuristics = "Default"
+unstable_features = true
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"
+reorder_impl_items = true

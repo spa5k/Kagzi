@@ -3,6 +3,8 @@
 //! This module provides consistent conversion between store models and proto messages,
 //! eliminating duplication across service implementations.
 
+use std::collections::HashMap;
+
 use kagzi_proto::kagzi::{
     Payload, Step, StepKind, StepStatus, Worker, WorkerStatus, Workflow, WorkflowStatus,
 };
@@ -10,7 +12,6 @@ use kagzi_store::{
     StepKind as StoreStepKind, StepRun, StepStatus as StoreStepStatus, Worker as StoreWorker,
     WorkerStatus as StoreWorkerStatus, WorkflowRun, WorkflowStatus as StoreWorkflowStatus,
 };
-use std::collections::HashMap;
 use tonic::Status;
 
 use crate::helpers::{bytes_to_payload, invalid_argument, json_to_payload, string_error_detail};

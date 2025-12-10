@@ -3,9 +3,8 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::error::StoreError;
-use crate::models::PaginatedResult;
 use crate::models::{
-    CreateSchedule, ListSchedulesParams, Schedule, ScheduleCursor, UpdateSchedule,
+    CreateSchedule, ListSchedulesParams, PaginatedResult, Schedule, ScheduleCursor, UpdateSchedule,
 };
 
 #[async_trait]
