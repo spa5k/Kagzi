@@ -62,7 +62,7 @@ impl WorkDistributor {
         let candidates = self
             .store
             .workflows()
-            .scan_available(task_queue, namespace_id, supported_types, 50)
+            .list_available_workflows(task_queue, namespace_id, supported_types, 50)
             .await?;
 
         if !candidates.is_empty() {
@@ -89,7 +89,7 @@ impl WorkDistributor {
                 match self
                     .store
                     .workflows()
-                    .claim_by_id(candidate.run_id, &request.worker_id)
+                    .claim_specific_workflow(candidate.run_id, &request.worker_id)
                     .await?
                 {
                     Some(item) => {

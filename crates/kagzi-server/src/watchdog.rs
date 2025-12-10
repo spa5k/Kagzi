@@ -167,7 +167,7 @@ async fn run_reconcile_counters(store: PgStore, shutdown: CancellationToken, int
                 break;
             }
             _ = ticker.tick() => {
-                match store.workflows().reconcile_counters().await {
+                match store.workflows().reconcile_queue_counters().await {
                     Ok(updated) => {
                         if updated > 0 {
                             info!(updated, "Reconciled queue counters");

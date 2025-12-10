@@ -165,7 +165,7 @@ impl WorkerService for WorkerServiceImpl {
         let extended = self
             .store
             .workflows()
-            .extend_locks_for_worker(&req.worker_id, 30)
+            .extend_worker_locks(&req.worker_id, 30)
             .await
             .map_err(map_store_error)?;
 
@@ -306,7 +306,7 @@ impl WorkerService for WorkerServiceImpl {
         if let Some(work_item) = self
             .store
             .workflows()
-            .claim_next_filtered(
+            .claim_next_workflow(
                 &req.task_queue,
                 &namespace_id,
                 &req.worker_id,
