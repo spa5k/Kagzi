@@ -2,6 +2,16 @@
 
 set dotenv-load
 
+# Ensure sqlx compile-time macros see our connection URL
+export DATABASE_URL := env_var_or_default(
+    "KAGZI_DB_URL",
+    env_var_or_default("DATABASE_URL", ""),
+)
+export SQLX_DATABASE_URL := env_var_or_default(
+    "KAGZI_DB_URL",
+    env_var_or_default("DATABASE_URL", ""),
+)
+
 # --- Database ---
 
 # Start the database container
