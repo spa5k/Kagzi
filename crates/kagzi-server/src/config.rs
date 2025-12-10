@@ -79,6 +79,15 @@ impl Default for WorkerSettings {
     }
 }
 
+impl Default for PayloadSettings {
+    fn default() -> Self {
+        Self {
+            warn_threshold_bytes: default_payload_warn_threshold_bytes(),
+            max_size_bytes: default_payload_max_size_bytes(),
+        }
+    }
+}
+
 fn default_host() -> String {
     "0.0.0.0".to_string()
 }

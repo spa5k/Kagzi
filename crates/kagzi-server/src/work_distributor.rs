@@ -1,7 +1,8 @@
-use kagzi_store::{PgStore, WorkflowRepository};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
+
+use kagzi_store::{PgStore, WorkflowRepository};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -100,115 +101,129 @@ impl WorkDistributor {
 
         tokio::spawn(async move {
             let processor = Arc::clone(&self);
-            let cleanup = Arc::clone(&self);
 
             processor.process_queue(key.clone()).await;
-
-            let mut running = cleanup.running_queues.lock().await;
-            running.remove(&key);
         });
     }
 
     async fn process_queue(self: Arc<Self>, key: (String, String)) {
-        loop {
-            // Take all pending requests for this (namespace, queue)
-            let requests = {
-                let mut pending = self.pending_requests.lock().await;
-                let entry = pending.entry(key.clone()).or_default();
-                if entry.is_empty() {
-                    return;
+        'outer: loop {
+            // Process current pending requests for this (namespace, queue)
+            loop {
+                let requests = {
+                    let mut pending = self.pending_requests.lock().await;
+                    let entry = pending.entry(key.clone()).or_default();
+                    if entry.is_empty() {
+                        break;
+                    }
+                    std::mem::take(entry)
+                };
+
+                // Group requests by (worker_id, supported_workflow_types) to preserve lock ownership
+                let mut grouped: HashMap<(String, Vec<String>), Vec<WorkRequest>> = HashMap::new();
+                for mut req in requests {
+                    // Canonicalize types for grouping (sorted copy)
+                    req.supported_workflow_types.sort();
+                    let key_group = (req.worker_id.clone(), req.supported_workflow_types.clone());
+                    grouped.entry(key_group).or_default().push(req);
                 }
-                std::mem::take(entry)
-            };
 
-            // Group requests by (worker_id, supported_workflow_types) to preserve lock ownership
-            let mut grouped: HashMap<(String, Vec<String>), Vec<WorkRequest>> = HashMap::new();
-            for mut req in requests {
-                // Canonicalize types for grouping (sorted copy)
-                req.supported_workflow_types.sort();
-                let key_group = (req.worker_id.clone(), req.supported_workflow_types.clone());
-                grouped.entry(key_group).or_default().push(req);
-            }
+                let mut remaining = Vec::new();
 
-            let mut remaining = Vec::new();
-
-            for ((worker_id, supported_types), mut group_requests) in grouped {
-                let limit = group_requests.len();
-                match self
-                    .store
-                    .workflows()
-                    .claim_workflow_batch(
-                        &key.1,
-                        &key.0,
-                        &worker_id,
-                        &supported_types,
-                        limit,
-                        WORKFLOW_LOCK_DURATION_SECS,
-                    )
-                    .await
-                {
-                    Ok(mut claimed) => {
-                        // Distribute claimed workflows to compatible waiters
-                        for request in group_requests.drain(..) {
-                            if let Some(pos) = claimed.iter().position(|wf| {
-                                supported_types.is_empty()
-                                    || supported_types.contains(&wf.workflow_type)
-                            }) {
-                                let claimed_workflow = claimed.remove(pos);
-                                let work_item = WorkItem {
-                                    run_id: claimed_workflow.run_id,
-                                    task_queue: key.1.clone(),
-                                    namespace_id: key.0.clone(),
-                                    workflow_type: claimed_workflow.workflow_type,
-                                    input: claimed_workflow.input,
-                                    locked_by: worker_id.clone(),
-                                };
-                                let _ = request.response_tx.send(Some(work_item));
-                            } else {
-                                remaining.push(request);
+                for ((worker_id, supported_types), mut group_requests) in grouped {
+                    let limit = group_requests.len();
+                    match self
+                        .store
+                        .workflows()
+                        .claim_workflow_batch(
+                            &key.1,
+                            &key.0,
+                            &worker_id,
+                            &supported_types,
+                            limit,
+                            WORKFLOW_LOCK_DURATION_SECS,
+                        )
+                        .await
+                    {
+                        Ok(mut claimed) => {
+                            // Distribute claimed workflows to compatible waiters
+                            for request in group_requests.drain(..) {
+                                if let Some(pos) = claimed.iter().position(|wf| {
+                                    supported_types.is_empty()
+                                        || supported_types.contains(&wf.workflow_type)
+                                }) {
+                                    let claimed_workflow = claimed.remove(pos);
+                                    let work_item = WorkItem {
+                                        run_id: claimed_workflow.run_id,
+                                        task_queue: key.1.clone(),
+                                        namespace_id: key.0.clone(),
+                                        workflow_type: claimed_workflow.workflow_type,
+                                        input: claimed_workflow.input,
+                                        locked_by: worker_id.clone(),
+                                    };
+                                    let _ = request.response_tx.send(Some(work_item));
+                                } else {
+                                    remaining.push(request);
+                                }
                             }
                         }
+                        Err(e) => {
+                            error!(
+                                task_queue = %key.1,
+                                namespace_id = %key.0,
+                                error = ?e,
+                                "Failed to claim workflow batch"
+                            );
+                            remaining.extend(group_requests);
+                        }
+                    }
+                }
 
-                        // Any unassigned claimed workflows are returned to the pool by lock expiry;
-                        // none are left undispatched because we only claim up to needed.
-                    }
-                    Err(e) => {
-                        error!(
-                            task_queue = %key.1,
-                            namespace_id = %key.0,
-                            error = ?e,
-                            "Failed to claim workflow batch"
-                        );
-                        remaining.extend(group_requests);
-                    }
+                if remaining.is_empty() {
+                    break;
+                }
+
+                // Re-queue remaining waiters
+                {
+                    let mut pending = self.pending_requests.lock().await;
+                    pending.entry(key.clone()).or_default().extend(remaining);
+                }
+
+                // Wait for notification or timeout before retrying to avoid busy-looping
+                let workflows = self.store.workflows();
+                let notified = tokio::select! {
+                    _ = self.shutdown.cancelled() => false,
+                    res = workflows.wait_for_new_work(
+                        &key.1,
+                        &key.0,
+                        Duration::from_secs(WAIT_FOR_NEW_WORK_TIMEOUT_SECS),
+                    ) => res.unwrap_or(false),
+                };
+
+                if !notified && self.shutdown.is_cancelled() {
+                    break;
+                }
+                // Loop to reprocess pending after notify or timeout
+            }
+
+            {
+                let mut running = self.running_queues.lock().await;
+                running.remove(&key);
+            }
+
+            let has_pending = {
+                let pending = self.pending_requests.lock().await;
+                pending.get(&key).map_or(false, |v| !v.is_empty())
+            };
+
+            if has_pending {
+                let mut running = self.running_queues.lock().await;
+                if running.insert(key.clone()) {
+                    continue 'outer;
                 }
             }
 
-            if remaining.is_empty() {
-                return;
-            }
-
-            // Re-queue remaining waiters
-            {
-                let mut pending = self.pending_requests.lock().await;
-                pending.entry(key.clone()).or_default().extend(remaining);
-            }
-
-            // Wait for notification or timeout before retrying to avoid busy-looping
-            let workflows = self.store.workflows();
-            let notified = tokio::select! {
-                _ = self.shutdown.cancelled() => false,
-                res = workflows.wait_for_new_work(
-                    &key.1,
-                    &key.0,
-                    Duration::from_secs(WAIT_FOR_NEW_WORK_TIMEOUT_SECS),
-                ) => res.unwrap_or(false),
-            };
-
-            if !notified && self.shutdown.is_cancelled() {
-                return;
-            }
-            // Loop to reprocess pending after notify or timeout
+            break;
         }
     }
 

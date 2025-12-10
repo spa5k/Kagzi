@@ -430,7 +430,7 @@ async fn wait_for_new_work_notifies_on_insert() {
             .expect("wait_for_new_work should complete")
     });
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     let _ = start_workflow(&harness, "TypeA", serde_json::json!({})).await;
 
     assert!(notified.await.expect("join waiter"), "should be notified");

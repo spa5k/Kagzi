@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, QueryBuilder};
-use tracing::instrument;
+use tracing::{instrument, warn};
 use uuid::Uuid;
 
+use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     CreateSchedule, ListSchedulesParams, PaginatedResult, Schedule, ScheduleCursor, UpdateSchedule,
@@ -19,11 +20,33 @@ const SCHEDULE_COLUMNS: &str = "\
 #[derive(Clone)]
 pub struct PgScheduleRepository {
     pool: PgPool,
+    config: StoreConfig,
 }
 
 impl PgScheduleRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, config: StoreConfig) -> Self {
+        Self { pool, config }
+    }
+
+    fn validate_payload_size(&self, bytes: &[u8], context: &str) -> Result<(), StoreError> {
+        let size = bytes.len();
+        if size > self.config.payload_max_size_bytes {
+            return Err(StoreError::invalid_argument(format!(
+                "{} exceeds maximum size of {} bytes ({} bytes). Do not use Kagzi for blob storage.",
+                context, self.config.payload_max_size_bytes, size
+            )));
+        }
+
+        if size > self.config.payload_warn_threshold_bytes {
+            warn!(
+                size_bytes = size,
+                context = context,
+                "Payload exceeds {} bytes. Consider storing large data externally.",
+                self.config.payload_warn_threshold_bytes
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -33,6 +56,8 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
     async fn create(&self, params: CreateSchedule) -> Result<Uuid, StoreError> {
         let max_catchup = clamp_max_catchup(params.max_catchup);
         let schedule_id = Uuid::now_v7();
+
+        self.validate_payload_size(&params.input, "Schedule input")?;
 
         let schedule_id: Uuid = sqlx::query_scalar!(
             r#"
@@ -140,6 +165,10 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
         params: UpdateSchedule,
     ) -> Result<(), StoreError> {
         let max_catchup = params.max_catchup.map(clamp_max_catchup);
+
+        if let Some(ref input) = params.input {
+            self.validate_payload_size(input, "Schedule input")?;
+        }
 
         sqlx::query!(
             r#"

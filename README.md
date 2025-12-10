@@ -341,12 +341,7 @@ async fn complex_workflow(mut ctx: WorkflowContext, input: ComplexInput) -> anyh
 
 ### Payload Limits
 
-Kagzi enforces payload size limits to avoid bloating the database:
-
-- Warning threshold: 1MB (logs a warning)
-- Hard limit: 2MB (request is rejected)
-
-Kagzi is not intended for blob storage. For large data, store it in object storage or another database and pass references instead.
+Payloads over 1MB log a warning; payloads over 2MB are rejected to avoid bloating the database. Store large data externally and pass references instead.
 
 ### Database Setup
 

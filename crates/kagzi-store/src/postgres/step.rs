@@ -604,6 +604,6 @@ mod tests {
         let err = repo
             .validate_payload_size(&data, "Step input")
             .expect_err("should reject oversized payload");
-        matches!(err, StoreError::InvalidArgument { .. });
+        assert!(matches!(err, StoreError::InvalidArgument { .. }));
     }
 }

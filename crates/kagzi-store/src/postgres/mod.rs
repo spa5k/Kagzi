@@ -12,7 +12,7 @@ pub use worker::PgWorkerRepository;
 pub use workflow::PgWorkflowRepository;
 pub use workflow_schedule::PgScheduleRepository;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoreConfig {
     pub payload_warn_threshold_bytes: usize,
     pub payload_max_size_bytes: usize,
@@ -51,7 +51,7 @@ impl PgStore {
     }
 
     pub fn schedules(&self) -> PgScheduleRepository {
-        PgScheduleRepository::new(self.pool.clone())
+        PgScheduleRepository::new(self.pool.clone(), self.config.clone())
     }
 
     pub fn health(&self) -> PgHealthRepository {

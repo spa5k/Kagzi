@@ -3,9 +3,10 @@ mod notify;
 mod queue;
 mod state;
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use sqlx::PgPool;
-use std::time::Duration;
 use uuid::Uuid;
 
 use super::StoreConfig;

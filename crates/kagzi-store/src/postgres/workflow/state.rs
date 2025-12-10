@@ -595,6 +595,6 @@ mod tests {
         let data = vec![0u8; 3];
         let err = validate_payload_size(&cfg, &data, "Workflow input")
             .expect_err("should reject oversized payload");
-        matches!(err, StoreError::InvalidArgument { .. });
+        assert!(matches!(err, StoreError::InvalidArgument { .. }));
     }
 }

@@ -1,6 +1,6 @@
 CREATE OR REPLACE FUNCTION kagzi.notify_new_work() RETURNS trigger AS $$
 BEGIN
-  PERFORM pg_notify('kagzi_work_' || NEW.namespace_id || '_' || NEW.task_queue, NEW.run_id::text);
+  PERFORM pg_notify('kagzi_work_' || md5(NEW.namespace_id || '_' || NEW.task_queue), NEW.run_id::text);
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
