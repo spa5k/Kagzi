@@ -35,7 +35,7 @@ pub trait WorkflowScheduleRepository: Send + Sync {
     async fn due_schedules(
         &self,
         now: DateTime<Utc>,
-        limit: i32,
+        limit: i64,
     ) -> Result<Vec<Schedule>, StoreError>;
 
     async fn advance_schedule(

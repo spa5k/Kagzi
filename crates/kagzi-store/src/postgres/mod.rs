@@ -1,5 +1,5 @@
+mod health;
 mod pagination;
-mod query;
 mod step;
 mod worker;
 mod workflow;
@@ -7,8 +7,8 @@ mod workflow_schedule;
 
 use sqlx::PgPool;
 
+pub use health::PgHealthRepository;
 pub use pagination::PaginatedResult;
-pub use query::{FilterBuilder, columns};
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;
 pub use workflow::PgWorkflowRepository;
@@ -38,6 +38,10 @@ impl PgStore {
 
     pub fn schedules(&self) -> PgScheduleRepository {
         PgScheduleRepository::new(self.pool.clone())
+    }
+
+    pub fn health(&self) -> PgHealthRepository {
+        PgHealthRepository::new(self.pool.clone())
     }
 
     pub fn pool(&self) -> &PgPool {

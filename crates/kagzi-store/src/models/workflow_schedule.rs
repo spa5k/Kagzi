@@ -1,12 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use uuid::Uuid;
 
 pub fn clamp_max_catchup(max_catchup: i32) -> i32 {
     max_catchup.clamp(1, 10_000)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Schedule {
     pub schedule_id: Uuid,
     pub namespace_id: String,

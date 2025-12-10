@@ -199,6 +199,7 @@ pub fn map_store_error(e: kagzi_store::StoreError) -> Status {
         kagzi_store::StoreError::InvalidArgument { message } => invalid_argument(message),
         kagzi_store::StoreError::InvalidState { message } => precondition_failed(message),
         kagzi_store::StoreError::AlreadyCompleted { message } => precondition_failed(message),
+        kagzi_store::StoreError::Conflict { message } => conflict(message),
         kagzi_store::StoreError::LockConflict { message } => conflict(message),
         kagzi_store::StoreError::PreconditionFailed { message } => precondition_failed(message),
         kagzi_store::StoreError::Unauthorized { message } => permission_denied(message),

@@ -7,5 +7,6 @@ pub use error::StoreError;
 pub use models::*;
 pub use postgres::PgStore;
 pub use repository::{
-    StepRepository, WorkerRepository, WorkflowRepository, WorkflowScheduleRepository,
+    HealthRepository, StepRepository, WorkerRepository, WorkflowRepository,
+    WorkflowScheduleRepository,
 };
