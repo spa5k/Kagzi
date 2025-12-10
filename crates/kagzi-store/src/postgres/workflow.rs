@@ -43,10 +43,9 @@ struct WorkflowRunRow {
 
 impl WorkflowRunRow {
     fn into_model(self) -> Result<WorkflowRun, StoreError> {
-        let status = self
-            .status
-            .parse()
-            .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", self.status)))?;
+        let status = self.status.parse().map_err(|_| {
+            StoreError::invalid_state(format!("invalid workflow status: {}", self.status))
+        })?;
 
         Ok(WorkflowRun {
             run_id: self.run_id,
@@ -395,11 +394,9 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(
-                    r.status
-                        .parse()
-                        .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", r.status)))?,
-                ),
+                status: Some(r.status.parse().map_err(|_| {
+                    StoreError::invalid_state(format!("invalid workflow status: {}", r.status))
+                })?),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {
@@ -430,11 +427,9 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(
-                    r.status
-                        .parse()
-                        .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", r.status)))?,
-                ),
+                status: Some(r.status.parse().map_err(|_| {
+                    StoreError::invalid_state(format!("invalid workflow status: {}", r.status))
+                })?),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {

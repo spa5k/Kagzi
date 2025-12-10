@@ -43,10 +43,9 @@ impl WorkerRow {
         queue_concurrency_limit: Option<i32>,
         workflow_type_concurrency: Vec<WorkflowTypeConcurrency>,
     ) -> Result<Worker, StoreError> {
-        let status = self
-            .status
-            .parse()
-            .map_err(|_| StoreError::invalid_state(format!("invalid worker status: {}", self.status)))?;
+        let status = self.status.parse().map_err(|_| {
+            StoreError::invalid_state(format!("invalid worker status: {}", self.status))
+        })?;
 
         Ok(Worker {
             worker_id: self.worker_id,

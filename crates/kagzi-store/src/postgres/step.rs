@@ -47,14 +47,12 @@ struct StepResultInsert<'a> {
 
 impl StepRunRow {
     fn into_model(self) -> Result<StepRun, StoreError> {
-        let step_kind = self
-            .step_kind
-            .parse()
-            .map_err(|_| StoreError::invalid_state(format!("invalid step kind: {}", self.step_kind)))?;
-        let status = self
-            .status
-            .parse()
-            .map_err(|_| StoreError::invalid_state(format!("invalid step status: {}", self.status)))?;
+        let step_kind = self.step_kind.parse().map_err(|_| {
+            StoreError::invalid_state(format!("invalid step kind: {}", self.step_kind))
+        })?;
+        let status = self.status.parse().map_err(|_| {
+            StoreError::invalid_state(format!("invalid step status: {}", self.status))
+        })?;
 
         Ok(StepRun {
             attempt_id: self.attempt_id,
