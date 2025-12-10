@@ -1112,29 +1112,15 @@ impl WorkflowRepository for PgWorkflowRepository {
     async fn reconcile_counters(&self) -> Result<u64, StoreError> {
         let result = sqlx::query!(
             r#"
-            WITH actual_counts AS (
-                SELECT namespace_id, task_queue, workflow_type, COUNT(*)::INT AS cnt
-                FROM kagzi.workflow_runs
-                WHERE status = 'RUNNING'
-                GROUP BY namespace_id, task_queue, workflow_type
-            ),
-            queue_totals AS (
-                SELECT namespace_id, task_queue, ''::TEXT AS workflow_type, COUNT(*)::INT AS cnt
-                FROM kagzi.workflow_runs
-                WHERE status = 'RUNNING'
-                GROUP BY namespace_id, task_queue
-            ),
-            all_counts AS (
-                SELECT * FROM actual_counts
-                UNION ALL
-                SELECT * FROM queue_totals
-            )
             UPDATE kagzi.queue_counters qc
-            SET active_count = COALESCE(ac.cnt, 0)
-            FROM all_counts ac
-            WHERE qc.namespace_id = ac.namespace_id
-              AND qc.task_queue = ac.task_queue
-              AND qc.workflow_type = ac.workflow_type
+            SET active_count = COALESCE((
+                SELECT COUNT(*)::INT
+                FROM kagzi.workflow_runs wr
+                WHERE wr.status = 'RUNNING'
+                  AND wr.namespace_id = qc.namespace_id
+                  AND wr.task_queue = qc.task_queue
+                  AND (qc.workflow_type = '' OR wr.workflow_type = qc.workflow_type)
+            ), 0)
             "#
         )
         .execute(&self.pool)
