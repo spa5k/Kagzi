@@ -3,7 +3,10 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum StoreError {
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(sqlx::Error),
+
+    #[error("Conflict: {message}")]
+    Conflict { message: String },
 
     #[error("Invalid argument: {message}")]
     InvalidArgument { message: String },
@@ -94,5 +97,26 @@ impl StoreError {
 
     pub fn is_unique_violation(&self) -> bool {
         matches!(self, Self::Database(sqlx::Error::Database(db_err)) if db_err.code().is_some_and(|c| c == "23505"))
+    }
+}
+
+impl From<sqlx::Error> for StoreError {
+    fn from(e: sqlx::Error) -> Self {
+        if let sqlx::Error::Database(db_err) = &e {
+            match db_err.code().as_deref() {
+                Some("23505") => {
+                    return StoreError::Conflict {
+                        message: db_err.message().to_string(),
+                    };
+                }
+                Some("23503") => {
+                    return StoreError::InvalidArgument {
+                        message: db_err.message().to_string(),
+                    };
+                }
+                _ => {}
+            }
+        }
+        StoreError::Database(e)
     }
 }

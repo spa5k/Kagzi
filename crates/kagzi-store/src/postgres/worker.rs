@@ -10,9 +10,12 @@ use crate::models::{
     ListWorkersParams, PaginatedResult, RegisterWorkerParams, Worker, WorkerCursor,
     WorkerHeartbeatParams, WorkerStatus, WorkflowTypeConcurrency,
 };
-use crate::postgres::columns;
-use crate::postgres::query::{FilterBuilder, push_limit};
 use crate::repository::WorkerRepository;
+
+const WORKER_COLUMNS: &str = "\
+    worker_id, namespace_id, task_queue, status, hostname, pid, version, \
+    workflow_types, max_concurrent, active_count, total_completed, total_failed, \
+    registered_at, last_heartbeat_at, deregistered_at, labels";
 
 #[derive(sqlx::FromRow)]
 struct WorkerRow {
@@ -205,14 +208,33 @@ impl WorkerRepository for PgWorkerRepository {
 
     #[instrument(skip(self))]
     async fn find_by_id(&self, worker_id: Uuid) -> Result<Option<Worker>, StoreError> {
-        let query = format!(
-            "SELECT {} FROM kagzi.workers WHERE worker_id = $1",
-            columns::worker::BASE
-        );
-        let row = sqlx::query_as::<_, WorkerRow>(&query)
-            .bind(worker_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_as!(
+            WorkerRow,
+            r#"
+            SELECT 
+                worker_id,
+                namespace_id,
+                task_queue,
+                status as "status: WorkerStatus",
+                hostname,
+                pid,
+                version,
+                workflow_types,
+                max_concurrent,
+                active_count,
+                total_completed,
+                total_failed,
+                registered_at,
+                last_heartbeat_at,
+                deregistered_at,
+                labels
+            FROM kagzi.workers
+            WHERE worker_id = $1
+            "#,
+            worker_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         if let Some(r) = row {
             let (queue_limit, type_limits) = self
@@ -231,24 +253,24 @@ impl WorkerRepository for PgWorkerRepository {
     ) -> Result<PaginatedResult<Worker, WorkerCursor>, StoreError> {
         let limit = (params.page_size.max(1) + 1) as i64;
 
-        let status_filter = params
-            .filter_status
-            .map(|status| status.as_ref().to_owned());
-
-        let mut filters = FilterBuilder::select(columns::worker::BASE, "kagzi.workers");
-        filters.and_eq("namespace_id", &params.namespace_id);
-        filters.and_optional_eq("task_queue", params.task_queue.as_deref());
-        filters.and_optional_eq("status", status_filter);
+        let mut builder = QueryBuilder::new("SELECT ");
+        builder.push(WORKER_COLUMNS);
+        builder.push(" FROM kagzi.workers WHERE namespace_id = ");
+        builder.push_bind(&params.namespace_id);
+        if let Some(task_queue) = &params.task_queue {
+            builder.push(" AND task_queue = ").push_bind(task_queue);
+        }
+        if let Some(status) = params.filter_status {
+            let status_str = status.as_ref().to_string();
+            builder.push(" AND status = ").push_bind(status_str);
+        }
         if let Some(ref cursor) = params.cursor {
-            filters
-                .builder()
+            builder
                 .push(" AND worker_id < ")
                 .push_bind(cursor.worker_id);
         }
-
-        let mut builder = filters.finalize();
-        builder.push(" ORDER BY worker_id DESC");
-        push_limit(&mut builder, limit);
+        builder.push(" ORDER BY worker_id DESC LIMIT ");
+        builder.push_bind(limit);
 
         let rows: Vec<WorkerRow> = builder.build_query_as().fetch_all(&self.pool).await?;
 
