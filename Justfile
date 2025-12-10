@@ -67,10 +67,6 @@ grpcui:
 setup: db-reset build
     echo "Setup complete!"
 
-# Run the simple example
-run-example:
-    cargo run -p kagzi --example simple
-
 # --- Examples ---
 
 # Run a single examples crate binary with optional args (default variant if empty).
