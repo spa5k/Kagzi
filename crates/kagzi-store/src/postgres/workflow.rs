@@ -592,14 +592,6 @@ impl WorkflowRepository for PgWorkflowRepository {
         worker_id: &str,
         supported_types: &[String],
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        // CTE execution order:
-        // 1. limits       - locks a candidate row with FOR UPDATE SKIP LOCKED.
-        // 2. queue_counter- increments queue-level counter only if under limit (atomic conditional update).
-        // 3. type_counter - increments type-level counter only if queue increment succeeded and under type limit.
-        // 4. revert_queue - rolls back queue increment if type increment fails.
-        // 5. claimed      - transitions workflow to RUNNING only if both counters succeeded.
-        // Count predicates align with partial index `idx_workflow_runs_running` on
-        // (task_queue, namespace_id, workflow_type) WHERE status = 'RUNNING'.
         let row = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH limits AS (
@@ -757,7 +749,6 @@ impl WorkflowRepository for PgWorkflowRepository {
         run_id: Uuid,
         worker_id: &str,
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        // CTE execution order mirrors claim_next_filtered; see comment there.
         let row = sqlx::query_as::<_, ClaimedRow>(
             r#"
             WITH eligible AS (

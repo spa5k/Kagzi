@@ -139,8 +139,6 @@ pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: Cancella
             }
 
             let remaining_budget = (max_workflows_per_tick - created_this_tick) as usize;
-            // Use `last_fired_at` if available; otherwise, shift `next_fire_at` back by 1ns
-            // so that `schedule.after(&from)` includes the scheduled fire time itself.
             let from = schedule
                 .last_fired_at
                 .unwrap_or_else(|| schedule.next_fire_at - chrono::Duration::nanoseconds(1));
