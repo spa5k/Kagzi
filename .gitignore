@@ -23,3 +23,5 @@ target
 # Generated protobuf descriptor files
 **/descriptor.bin
 .osgrep
+
+.sqlx/
