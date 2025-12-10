@@ -125,17 +125,17 @@ pub(super) async fn get_retry_policy(
     .fetch_optional(&repo.pool)
     .await?;
 
-    Ok(row
-        .and_then(|r| r.retry_policy)
-        .and_then(|v| {
-            serde_json::from_value::<RetryPolicy>(v).map_err(|e| {
+    Ok(row.and_then(|r| r.retry_policy).and_then(|v| {
+        serde_json::from_value::<RetryPolicy>(v)
+            .map_err(|e| {
                 tracing::warn!(
                     run_id = %run_id,
                     error = %e,
                     "Failed to deserialize retry_policy; defaulting to None"
                 );
-            }).ok()
-        }))
+            })
+            .ok()
+    }))
 }
 
 #[instrument(skip(repo))]

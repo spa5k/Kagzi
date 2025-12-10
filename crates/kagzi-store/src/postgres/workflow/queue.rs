@@ -287,8 +287,7 @@ pub(super) async fn wake_sleeping(
             FOR UPDATE SKIP LOCKED
             LIMIT $1
         )
-        "#
-        ,
+        "#,
         batch_size
     )
     .execute(&repo.pool)
@@ -320,17 +319,17 @@ pub(super) async fn find_orphaned(
             run_id: r.run_id,
             locked_by: r.locked_by,
             attempts: r.attempts,
-            retry_policy: r
-                .retry_policy
-                .and_then(|v| {
-                    serde_json::from_value::<RetryPolicy>(v).map_err(|e| {
+            retry_policy: r.retry_policy.and_then(|v| {
+                serde_json::from_value::<RetryPolicy>(v)
+                    .map_err(|e| {
                         tracing::warn!(
                             run_id = %r.run_id,
                             error = %e,
                             "Failed to deserialize retry_policy; defaulting to None"
                         );
-                    }).ok()
-                }),
+                    })
+                    .ok()
+            }),
         })
         .collect())
 }
