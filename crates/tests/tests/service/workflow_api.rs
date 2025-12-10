@@ -1,11 +1,8 @@
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::collections::HashMap;
 
-use common::TestHarness;
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{GetWorkflowRequest, Payload, StartWorkflowRequest, WorkflowStatus};
+use tests::common::TestHarness;
 use tonic::Request;
 use uuid::Uuid;
 

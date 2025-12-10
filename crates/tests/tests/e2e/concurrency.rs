@@ -1,13 +1,10 @@
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::TestHarness;
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
+use tests::common::TestHarness;
 use tokio::time::sleep;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]

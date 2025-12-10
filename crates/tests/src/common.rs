@@ -55,6 +55,7 @@ impl Default for TestConfig {
 pub struct TestHarness {
     pub pool: PgPool,
     pub server_url: String,
+    pub server_addr: SocketAddr,
     _container: ContainerAsync<Postgres>,
     shutdown: CancellationToken,
 }
@@ -164,6 +165,7 @@ impl TestHarness {
         TestHarness {
             pool,
             server_url: format!("http://{}", addr),
+            server_addr: addr,
             _container: container,
             shutdown,
         }
@@ -182,6 +184,11 @@ impl TestHarness {
             .build()
             .await
             .expect("Failed to build worker")
+    }
+
+    /// Expose the bound server address for diagnostics.
+    pub fn server_addr(&self) -> SocketAddr {
+        self.server_addr
     }
 
     /// Lookup workflow status by run_id (raw DB string value).

@@ -1,12 +1,9 @@
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::collections::HashMap;
 
-use common::TestHarness;
 use kagzi_proto::kagzi::admin_service_client::AdminServiceClient;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{ListWorkersRequest, PageRequest, RegisterRequest};
+use tests::common::TestHarness;
 use tonic::Request;
 
 #[tokio::test]

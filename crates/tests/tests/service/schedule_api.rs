@@ -1,11 +1,8 @@
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::collections::HashMap;
 
-use common::TestHarness;
 use kagzi_proto::kagzi::workflow_schedule_service_client::WorkflowScheduleServiceClient;
 use kagzi_proto::kagzi::{CreateWorkflowScheduleRequest, Payload, UpdateWorkflowScheduleRequest};
+use tests::common::TestHarness;
 use tonic::Request;
 use uuid::Uuid;
 

@@ -1,13 +1,10 @@
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::time::Duration;
 
-use common::TestHarness;
 use kagzi::WorkflowContext;
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
 use serde::{Deserialize, Serialize};
+use tests::common::{TestConfig, TestHarness};
 use tonic::Request;
 use uuid::Uuid;
 
@@ -134,7 +131,7 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn orphaned_workflow_recovered_after_worker_death() -> anyhow::Result<()> {
-    let harness = TestHarness::with_config(common::TestConfig {
+    let harness = TestHarness::with_config(TestConfig {
         worker_stale_threshold_secs: 2,
         watchdog_interval_secs: 1,
         ..Default::default()

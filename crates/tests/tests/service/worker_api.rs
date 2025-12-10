@@ -1,12 +1,9 @@
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::collections::HashMap;
 
-use common::TestHarness;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{Payload, PollTaskRequest, RegisterRequest, StartWorkflowRequest};
+use tests::common::TestHarness;
 use tonic::Request;
 use uuid::Uuid;
 

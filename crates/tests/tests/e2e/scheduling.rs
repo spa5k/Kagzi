@@ -1,11 +1,8 @@
-#[path = "../common/mod.rs"]
-mod common;
-
 use std::time::Duration;
 
-use common::TestHarness;
 use kagzi::WorkflowContext;
 use serde::{Deserialize, Serialize};
+use tests::common::TestHarness;
 use tokio::time::sleep;
 use uuid::Uuid;
 
