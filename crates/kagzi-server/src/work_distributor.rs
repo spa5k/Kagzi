@@ -1,5 +1,5 @@
 use kagzi_store::{PgStore, WorkflowRepository};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -34,6 +34,7 @@ pub struct WorkDistributor {
     store: PgStore,
     request_tx: mpsc::Sender<WorkRequest>,
     pending_requests: Arc<Mutex<PendingRequests>>,
+    running_queues: Arc<Mutex<HashSet<(String, String)>>>,
     shutdown: CancellationToken,
 }
 
@@ -45,6 +46,7 @@ impl WorkDistributor {
             store,
             request_tx: request_tx.clone(),
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            running_queues: Arc::new(Mutex::new(HashSet::new())),
             shutdown: shutdown.clone(),
         });
 
@@ -74,7 +76,7 @@ impl WorkDistributor {
                                 let mut pending = self.pending_requests.lock().await;
                                 pending.entry(key.clone()).or_default().push(request);
                             }
-                            Arc::clone(&self).process_queue(key).await;
+                            Arc::clone(&self).spawn_queue_processor(key).await;
                         }
                         None => {
                             info!("Work distributor channel closed");
@@ -87,112 +89,126 @@ impl WorkDistributor {
         }
     }
 
-    #[allow(clippy::manual_async_fn)]
-    fn process_queue(
-        self: Arc<Self>,
-        key: (String, String),
-    ) -> impl std::future::Future<Output = ()> + Send {
-        async move {
-            loop {
-                // Take all pending requests for this (namespace, queue)
-                let requests = {
-                    let mut pending = self.pending_requests.lock().await;
-                    let entry = pending.entry(key.clone()).or_default();
-                    if entry.is_empty() {
-                        return;
-                    }
-                    std::mem::take(entry)
-                };
+    async fn spawn_queue_processor(self: Arc<Self>, key: (String, String)) {
+        {
+            let mut running = self.running_queues.lock().await;
+            if running.contains(&key) {
+                return;
+            }
+            running.insert(key.clone());
+        }
 
-                // Group requests by (worker_id, supported_workflow_types) to preserve lock ownership
-                let mut grouped: HashMap<(String, Vec<String>), Vec<WorkRequest>> = HashMap::new();
-                for mut req in requests {
-                    // Canonicalize types for grouping (sorted copy)
-                    req.supported_workflow_types.sort();
-                    let key_group = (req.worker_id.clone(), req.supported_workflow_types.clone());
-                    grouped.entry(key_group).or_default().push(req);
-                }
+        tokio::spawn(async move {
+            let processor = Arc::clone(&self);
+            let cleanup = Arc::clone(&self);
 
-                let mut remaining = Vec::new();
+            processor.process_queue(key.clone()).await;
 
-                for ((worker_id, supported_types), mut group_requests) in grouped {
-                    let limit = group_requests.len();
-                    match self
-                        .store
-                        .workflows()
-                        .claim_workflow_batch(
-                            &key.1,
-                            &key.0,
-                            &worker_id,
-                            &supported_types,
-                            limit,
-                            WORKFLOW_LOCK_DURATION_SECS,
-                        )
-                        .await
-                    {
-                        Ok(mut claimed) => {
-                            // Distribute claimed workflows to compatible waiters
-                            for request in group_requests.drain(..) {
-                                if let Some(pos) = claimed.iter().position(|wf| {
-                                    supported_types.is_empty()
-                                        || supported_types.contains(&wf.workflow_type)
-                                }) {
-                                    let claimed_workflow = claimed.remove(pos);
-                                    let work_item = WorkItem {
-                                        run_id: claimed_workflow.run_id,
-                                        task_queue: key.1.clone(),
-                                        namespace_id: key.0.clone(),
-                                        workflow_type: claimed_workflow.workflow_type,
-                                        input: claimed_workflow.input,
-                                        locked_by: worker_id.clone(),
-                                    };
-                                    let _ = request.response_tx.send(Some(work_item));
-                                } else {
-                                    remaining.push(request);
-                                }
-                            }
+            let mut running = cleanup.running_queues.lock().await;
+            running.remove(&key);
+        });
+    }
 
-                            // Any unassigned claimed workflows are returned to the pool by lock expiry;
-                            // none are left undispatched because we only claim up to needed.
-                        }
-                        Err(e) => {
-                            error!(
-                                task_queue = %key.1,
-                                namespace_id = %key.0,
-                                error = ?e,
-                                "Failed to claim workflow batch"
-                            );
-                            remaining.extend(group_requests);
-                        }
-                    }
-                }
-
-                if remaining.is_empty() {
+    async fn process_queue(self: Arc<Self>, key: (String, String)) {
+        loop {
+            // Take all pending requests for this (namespace, queue)
+            let requests = {
+                let mut pending = self.pending_requests.lock().await;
+                let entry = pending.entry(key.clone()).or_default();
+                if entry.is_empty() {
                     return;
                 }
+                std::mem::take(entry)
+            };
 
-                // Re-queue remaining waiters
-                {
-                    let mut pending = self.pending_requests.lock().await;
-                    pending.entry(key.clone()).or_default().extend(remaining);
-                }
+            // Group requests by (worker_id, supported_workflow_types) to preserve lock ownership
+            let mut grouped: HashMap<(String, Vec<String>), Vec<WorkRequest>> = HashMap::new();
+            for mut req in requests {
+                // Canonicalize types for grouping (sorted copy)
+                req.supported_workflow_types.sort();
+                let key_group = (req.worker_id.clone(), req.supported_workflow_types.clone());
+                grouped.entry(key_group).or_default().push(req);
+            }
 
-                // Wait for notification or timeout before retrying to avoid busy-looping
-                let workflows = self.store.workflows();
-                let notified = tokio::select! {
-                    _ = self.shutdown.cancelled() => false,
-                    res = workflows.wait_for_new_work(
+            let mut remaining = Vec::new();
+
+            for ((worker_id, supported_types), mut group_requests) in grouped {
+                let limit = group_requests.len();
+                match self
+                    .store
+                    .workflows()
+                    .claim_workflow_batch(
                         &key.1,
                         &key.0,
-                        Duration::from_secs(WAIT_FOR_NEW_WORK_TIMEOUT_SECS),
-                    ) => res.unwrap_or(false),
-                };
+                        &worker_id,
+                        &supported_types,
+                        limit,
+                        WORKFLOW_LOCK_DURATION_SECS,
+                    )
+                    .await
+                {
+                    Ok(mut claimed) => {
+                        // Distribute claimed workflows to compatible waiters
+                        for request in group_requests.drain(..) {
+                            if let Some(pos) = claimed.iter().position(|wf| {
+                                supported_types.is_empty()
+                                    || supported_types.contains(&wf.workflow_type)
+                            }) {
+                                let claimed_workflow = claimed.remove(pos);
+                                let work_item = WorkItem {
+                                    run_id: claimed_workflow.run_id,
+                                    task_queue: key.1.clone(),
+                                    namespace_id: key.0.clone(),
+                                    workflow_type: claimed_workflow.workflow_type,
+                                    input: claimed_workflow.input,
+                                    locked_by: worker_id.clone(),
+                                };
+                                let _ = request.response_tx.send(Some(work_item));
+                            } else {
+                                remaining.push(request);
+                            }
+                        }
 
-                if !notified && self.shutdown.is_cancelled() {
-                    return;
+                        // Any unassigned claimed workflows are returned to the pool by lock expiry;
+                        // none are left undispatched because we only claim up to needed.
+                    }
+                    Err(e) => {
+                        error!(
+                            task_queue = %key.1,
+                            namespace_id = %key.0,
+                            error = ?e,
+                            "Failed to claim workflow batch"
+                        );
+                        remaining.extend(group_requests);
+                    }
                 }
-                // Loop to reprocess pending after notify or timeout
             }
+
+            if remaining.is_empty() {
+                return;
+            }
+
+            // Re-queue remaining waiters
+            {
+                let mut pending = self.pending_requests.lock().await;
+                pending.entry(key.clone()).or_default().extend(remaining);
+            }
+
+            // Wait for notification or timeout before retrying to avoid busy-looping
+            let workflows = self.store.workflows();
+            let notified = tokio::select! {
+                _ = self.shutdown.cancelled() => false,
+                res = workflows.wait_for_new_work(
+                    &key.1,
+                    &key.0,
+                    Duration::from_secs(WAIT_FOR_NEW_WORK_TIMEOUT_SECS),
+                ) => res.unwrap_or(false),
+            };
+
+            if !notified && self.shutdown.is_cancelled() {
+                return;
+            }
+            // Loop to reprocess pending after notify or timeout
         }
     }
 
