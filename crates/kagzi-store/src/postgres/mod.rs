@@ -1,5 +1,4 @@
 mod health;
-mod pagination;
 mod step;
 mod worker;
 mod workflow;
@@ -8,7 +7,6 @@ mod workflow_schedule;
 use sqlx::PgPool;
 
 pub use health::PgHealthRepository;
-pub use pagination::PaginatedResult;
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;
 pub use workflow::PgWorkflowRepository;

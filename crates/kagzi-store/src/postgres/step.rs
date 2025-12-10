@@ -8,7 +8,6 @@ use crate::error::StoreError;
 use crate::models::{
     BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
     PaginatedResult, RetryPolicy, RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun,
-    StepStatus,
 };
 use crate::repository::StepRepository;
 
@@ -23,9 +22,9 @@ struct StepRunRow {
     run_id: Uuid,
     step_id: String,
     namespace_id: String,
-    step_kind: StepKind,
+    step_kind: String,
     attempt_number: i32,
-    status: StepStatus,
+    status: String,
     input: Option<serde_json::Value>,
     output: Option<serde_json::Value>,
     error: Option<String>,
@@ -47,15 +46,24 @@ struct StepResultInsert<'a> {
 }
 
 impl StepRunRow {
-    fn into_model(self) -> StepRun {
-        StepRun {
+    fn into_model(self) -> Result<StepRun, StoreError> {
+        let step_kind = self
+            .step_kind
+            .parse()
+            .map_err(|_| StoreError::invalid_state(format!("invalid step kind: {}", self.step_kind)))?;
+        let status = self
+            .status
+            .parse()
+            .map_err(|_| StoreError::invalid_state(format!("invalid step status: {}", self.status)))?;
+
+        Ok(StepRun {
             attempt_id: self.attempt_id,
             run_id: self.run_id,
             step_id: self.step_id,
             namespace_id: self.namespace_id,
-            step_kind: self.step_kind,
+            step_kind,
             attempt_number: self.attempt_number,
-            status: self.status,
+            status,
             input: self.input,
             output: self.output,
             error: self.error,
@@ -67,7 +75,7 @@ impl StepRunRow {
             retry_policy: self
                 .retry_policy
                 .and_then(|v| serde_json::from_value(v).ok()),
-        }
+        })
     }
 }
 
@@ -217,9 +225,9 @@ impl StepRepository for PgStepRepository {
                 run_id as "run_id!",
                 step_id as "step_id!",
                 namespace_id as "namespace_id!",
-                step_kind as "step_kind: StepKind",
+                step_kind,
                 attempt_number,
-                status as "status: StepStatus",
+                status,
                 input,
                 output,
                 error,
@@ -237,7 +245,7 @@ impl StepRepository for PgStepRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| r.into_model()))
+        Ok(row.map(|r| r.into_model()).transpose()?)
     }
 
     #[instrument(skip(self, params))]
@@ -276,7 +284,7 @@ impl StepRepository for PgStepRepository {
             .into_iter()
             .take(page_size)
             .map(|r| r.into_model())
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let next_cursor = if has_more {
             items.last().and_then(|s| {

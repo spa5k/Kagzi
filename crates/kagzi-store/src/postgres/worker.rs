@@ -22,7 +22,7 @@ struct WorkerRow {
     worker_id: Uuid,
     namespace_id: String,
     task_queue: String,
-    status: WorkerStatus,
+    status: String,
     hostname: Option<String>,
     pid: Option<i32>,
     version: Option<String>,
@@ -42,12 +42,17 @@ impl WorkerRow {
         self,
         queue_concurrency_limit: Option<i32>,
         workflow_type_concurrency: Vec<WorkflowTypeConcurrency>,
-    ) -> Worker {
-        Worker {
+    ) -> Result<Worker, StoreError> {
+        let status = self
+            .status
+            .parse()
+            .map_err(|_| StoreError::invalid_state(format!("invalid worker status: {}", self.status)))?;
+
+        Ok(Worker {
             worker_id: self.worker_id,
             namespace_id: self.namespace_id,
             task_queue: self.task_queue,
-            status: self.status,
+            status,
             hostname: self.hostname,
             pid: self.pid,
             version: self.version,
@@ -62,7 +67,7 @@ impl WorkerRow {
             labels: self.labels,
             queue_concurrency_limit,
             workflow_type_concurrency,
-        }
+        })
     }
 }
 
@@ -215,7 +220,7 @@ impl WorkerRepository for PgWorkerRepository {
                 worker_id,
                 namespace_id,
                 task_queue,
-                status as "status: WorkerStatus",
+                status,
                 hostname,
                 pid,
                 version,
@@ -240,7 +245,7 @@ impl WorkerRepository for PgWorkerRepository {
             let (queue_limit, type_limits) = self
                 .fetch_concurrency(&r.namespace_id, &r.task_queue)
                 .await?;
-            Ok(Some(r.into_model(queue_limit, type_limits)))
+            Ok(Some(r.into_model(queue_limit, type_limits)?))
         } else {
             Ok(None)
         }
@@ -297,7 +302,7 @@ impl WorkerRepository for PgWorkerRepository {
             let key = (r.namespace_id.clone(), r.task_queue.clone());
             let queue_limit = queue_limits.get(&key).cloned().flatten();
             let type_limits = workflow_limits.get(&key).cloned().unwrap_or_default();
-            items.push(r.into_model(queue_limit, type_limits));
+            items.push(r.into_model(queue_limit, type_limits)?);
         }
 
         let next_cursor = if has_more {

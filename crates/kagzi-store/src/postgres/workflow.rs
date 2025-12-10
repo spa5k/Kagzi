@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
-    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
+    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
 use crate::repository::WorkflowRepository;
 
@@ -24,7 +24,7 @@ struct WorkflowRunRow {
     external_id: String,
     task_queue: String,
     workflow_type: String,
-    status: WorkflowStatus,
+    status: String,
     input: serde_json::Value,
     output: Option<serde_json::Value>,
     context: Option<serde_json::Value>,
@@ -42,14 +42,19 @@ struct WorkflowRunRow {
 }
 
 impl WorkflowRunRow {
-    fn into_model(self) -> WorkflowRun {
-        WorkflowRun {
+    fn into_model(self) -> Result<WorkflowRun, StoreError> {
+        let status = self
+            .status
+            .parse()
+            .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", self.status)))?;
+
+        Ok(WorkflowRun {
             run_id: self.run_id,
             namespace_id: self.namespace_id,
             external_id: self.external_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
-            status: self.status,
+            status,
             input: self.input,
             output: self.output,
             context: self.context,
@@ -66,7 +71,7 @@ impl WorkflowRunRow {
             retry_policy: self
                 .retry_policy
                 .and_then(|v| serde_json::from_value(v).ok()),
-        }
+        })
     }
 }
 
@@ -250,7 +255,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 w.external_id,
                 w.task_queue,
                 w.workflow_type,
-                w.status as "status: WorkflowStatus",
+                w.status,
                 p.input,
                 p.output,
                 p.context,
@@ -275,7 +280,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| r.into_model()))
+        Ok(row.map(|r| r.into_model()).transpose()?)
     }
 
     #[instrument(skip(self))]
@@ -354,7 +359,7 @@ impl WorkflowRepository for PgWorkflowRepository {
             .into_iter()
             .take(params.page_size as usize)
             .map(|r| r.into_model())
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let next_cursor = items.last().and_then(|w| {
             w.created_at.map(|created_at| WorkflowCursor {
@@ -378,7 +383,7 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<WorkflowExistsResult, StoreError> {
         let row = sqlx::query!(
             r#"
-            SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
+            SELECT status, locked_by FROM kagzi.workflow_runs
             WHERE run_id = $1 AND namespace_id = $2
             "#,
             run_id,
@@ -390,7 +395,11 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(r.status),
+                status: Some(
+                    r.status
+                        .parse()
+                        .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", r.status)))?,
+                ),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {
@@ -409,7 +418,7 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<WorkflowExistsResult, StoreError> {
         let row = sqlx::query!(
             r#"
-            SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
+            SELECT status, locked_by FROM kagzi.workflow_runs
             WHERE run_id = $1 AND namespace_id = $2
             "#,
             run_id,
@@ -421,7 +430,11 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(r.status),
+                status: Some(
+                    r.status
+                        .parse()
+                        .map_err(|_| StoreError::invalid_state(format!("invalid workflow status: {}", r.status)))?,
+                ),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {
