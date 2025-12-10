@@ -36,6 +36,8 @@ pub struct WatchdogSettings {
     pub interval_secs: u64,
     #[serde(default = "default_worker_stale_threshold_secs")]
     pub worker_stale_threshold_secs: i64,
+    #[serde(default = "default_counter_reconcile_interval_secs")]
+    pub counter_reconcile_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,6 +98,10 @@ fn default_watchdog_interval_secs() -> u64 {
 
 fn default_worker_stale_threshold_secs() -> i64 {
     30
+}
+
+fn default_counter_reconcile_interval_secs() -> u64 {
+    300
 }
 
 fn default_poll_timeout_secs() -> u64 {

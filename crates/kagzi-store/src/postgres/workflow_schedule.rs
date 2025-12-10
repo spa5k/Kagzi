@@ -32,16 +32,18 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
     #[instrument(skip(self, params))]
     async fn create(&self, params: CreateSchedule) -> Result<Uuid, StoreError> {
         let max_catchup = clamp_max_catchup(params.max_catchup);
+        let schedule_id = Uuid::now_v7();
 
         let schedule_id: Uuid = sqlx::query_scalar!(
             r#"
             INSERT INTO kagzi.schedules (
-                namespace_id, task_queue, workflow_type, cron_expr, input, context,
+                schedule_id, namespace_id, task_queue, workflow_type, cron_expr, input, context,
                 enabled, max_catchup, next_fire_at, last_fired_at, version
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11)
             RETURNING schedule_id
             "#,
+            schedule_id,
             params.namespace_id,
             params.task_queue,
             params.workflow_type,

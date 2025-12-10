@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS kagzi.schedules (
-    schedule_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schedule_id UUID PRIMARY KEY,
     namespace_id TEXT NOT NULL DEFAULT 'default',
     task_queue TEXT NOT NULL,
     workflow_type TEXT NOT NULL,

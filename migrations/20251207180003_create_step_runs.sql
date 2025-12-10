@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS kagzi.step_runs (
-    attempt_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    attempt_id UUID PRIMARY KEY,
     run_id UUID REFERENCES kagzi.workflow_runs(run_id),
     step_id TEXT NOT NULL,
     namespace_id TEXT NOT NULL DEFAULT 'default',
