@@ -105,14 +105,17 @@ pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: Cancella
         }
         let now = Utc::now();
 
-        let due: Vec<WorkflowSchedule> =
-            match store.schedules().due_schedules(now, batch_size).await {
-                Ok(due) => due,
-                Err(e) => {
-                    error!("Failed to fetch due schedules: {:?}", e);
-                    continue;
-                }
-            };
+        let due: Vec<WorkflowSchedule> = match store
+            .schedules()
+            .due_schedules(now, batch_size as i64)
+            .await
+        {
+            Ok(due) => due,
+            Err(e) => {
+                error!("Failed to fetch due schedules: {:?}", e);
+                continue;
+            }
+        };
 
         if due.is_empty() {
             continue;
