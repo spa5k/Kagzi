@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::error::StoreError;
@@ -50,14 +51,16 @@ pub trait WorkflowRepository: Send + Sync {
 
     async fn schedule_sleep(&self, run_id: Uuid, duration_secs: u64) -> Result<(), StoreError>;
 
-    async fn claim_next_workflow(
+    /// Batch claim multiple workflows atomically.
+    async fn claim_workflow_batch(
         &self,
         task_queue: &str,
         namespace_id: &str,
         worker_id: &str,
         supported_types: &[String],
+        limit: usize,
         lock_duration_secs: i64,
-    ) -> Result<Option<ClaimedWorkflow>, StoreError>;
+    ) -> Result<Vec<ClaimedWorkflow>, StoreError>;
 
     async fn list_available_workflows(
         &self,
@@ -114,4 +117,12 @@ pub trait WorkflowRepository: Send + Sync {
     ) -> Result<(), StoreError>;
 
     async fn reconcile_queue_counters(&self) -> Result<u64, StoreError>;
+
+    /// Wait for new work notification (database specific implementation).
+    async fn wait_for_new_work(
+        &self,
+        task_queue: &str,
+        namespace_id: &str,
+        timeout: Duration,
+    ) -> Result<bool, StoreError>;
 }

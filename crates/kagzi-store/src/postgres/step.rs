@@ -4,13 +4,13 @@ use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
 use tracing::{instrument, warn};
 use uuid::Uuid;
 
+use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
     PaginatedResult, RetryPolicy, RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun,
 };
 use crate::repository::StepRepository;
-use super::StoreConfig;
 
 const STEP_COLUMNS: &str = "\
     attempt_id, run_id, step_id, namespace_id, step_kind, attempt_number, status, \
@@ -42,7 +42,7 @@ struct StepResultInsert<'a> {
     step_id: &'a str,
     step_kind: StepKind,
     status: &'a str,
-    output: Option<&'a serde_json::Value>,
+    output: Option<&'a [u8]>,
     error: Option<&'a str>,
 }
 
@@ -444,7 +444,7 @@ impl StepRepository for PgStepRepository {
                     step_id,
                     step_kind,
                     status: "COMPLETED",
-                    output: Some(&output),
+                    output: Some(output.as_slice()),
                     error: None,
                 },
             )

@@ -77,45 +77,6 @@ pub(super) struct ClaimedRow {
     pub locked_by: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
-pub(super) struct CandidateWithLimits {
-    pub run_id: Uuid,
-    pub namespace_id: String,
-    pub task_queue: String,
-    pub workflow_type: String,
-    pub queue_limit: i32,
-    pub type_limit: i32,
-}
-
-pub(super) type CounterInfo = (String, String, String);
-
-pub(super) async fn try_increment_counter_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    namespace_id: &str,
-    task_queue: &str,
-    workflow_type: &str,
-    max: i32,
-) -> Result<bool, StoreError> {
-    let result = sqlx::query_scalar!(
-        r#"
-        INSERT INTO kagzi.queue_counters (namespace_id, task_queue, workflow_type, active_count)
-        VALUES ($1, $2, $3, 1)
-        ON CONFLICT (namespace_id, task_queue, workflow_type)
-        DO UPDATE SET active_count = queue_counters.active_count + 1
-        WHERE queue_counters.active_count < $4
-        RETURNING active_count
-        "#,
-        namespace_id,
-        task_queue,
-        workflow_type,
-        max
-    )
-    .fetch_optional(tx.as_mut())
-    .await?;
-
-    Ok(result.is_some())
-}
-
 pub(super) async fn decrement_counter_tx(
     tx: &mut Transaction<'_, Postgres>,
     namespace_id: &str,
@@ -152,7 +113,7 @@ pub(super) async fn set_failed_tx(
     tx: &mut Transaction<'_, Postgres>,
     run_id: Uuid,
     error: &str,
-) -> Result<Option<CounterInfo>, StoreError> {
+) -> Result<Option<(String, String, String)>, StoreError> {
     let row = sqlx::query!(
         r#"
         UPDATE kagzi.workflow_runs

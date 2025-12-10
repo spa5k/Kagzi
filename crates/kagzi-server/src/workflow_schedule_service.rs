@@ -1,7 +1,7 @@
 use crate::{
     helpers::{
-        invalid_argument, json_to_payload, map_store_error, not_found, payload_to_json,
-        payload_to_optional_json,
+        bytes_to_payload, invalid_argument, json_to_payload, map_store_error, not_found,
+        payload_to_optional_bytes, payload_to_optional_json,
     },
     tracing_utils::{
         extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
@@ -62,7 +62,7 @@ fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timesta
 }
 
 fn workflow_schedule_to_proto(s: kagzi_store::Schedule) -> Result<WorkflowSchedule, Status> {
-    let input = json_to_payload(Some(s.input))?;
+    let input = bytes_to_payload(Some(s.input));
     let context = option_json_to_payload(s.context)?;
 
     Ok(WorkflowSchedule {
@@ -122,7 +122,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             req.namespace_id
         };
 
-        let input_json = payload_to_json(req.input)?;
+        let input = payload_to_optional_bytes(req.input).unwrap_or_default();
         let context_json = payload_to_optional_json(req.context)?;
 
         let enabled = req.enabled.unwrap_or(true);
@@ -142,7 +142,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 task_queue: req.task_queue,
                 workflow_type: req.workflow_type,
                 cron_expr: req.cron_expr,
-                input: input_json,
+                input,
                 context: context_json,
                 enabled,
                 max_catchup,
@@ -381,7 +381,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             None
         };
 
-        let input_json = payload_to_optional_json(req.input)?;
+        let input = payload_to_optional_bytes(req.input);
         let context_json = payload_to_optional_json(req.context)?;
         let max_catchup = req.max_catchup.map(clamp_max_catchup);
 
@@ -394,7 +394,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                     task_queue: req.task_queue,
                     workflow_type: req.workflow_type,
                     cron_expr,
-                    input: input_json,
+                    input,
                     context: context_json,
                     enabled: req.enabled,
                     max_catchup,

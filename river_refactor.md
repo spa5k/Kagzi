@@ -187,6 +187,7 @@ Kagzi enforces payload size limits to prevent database bloat:
 - **Hard limit:** 2MB - Rejects payloads exceeding this size with an error
 
 **Important:** Kagzi is a workflow orchestration engine, not a blob store. For large data:
+
 - Store blobs in S3/GCS/MinIO and pass references through workflows
 - Use external databases for large datasets
 - Compress data before passing through Kagzi if necessary
@@ -371,6 +372,7 @@ Key changes:
 1. Remove `cache: Arc<DashMap<..., VecDeque<WorkCandidate>>>`
 2. Remove `poll_interval`
 3. Implement request-wait-dispatch loop with batch claiming
+
 ```rust
 async fn run_distribution_loop(self: Arc<Self>, mut request_rx: mpsc::Receiver<WorkRequest>) {
     loop {
@@ -410,7 +412,6 @@ async fn run_distribution_loop(self: Arc<Self>, mut request_rx: mpsc::Receiver<W
     }
 }
 ```
-
 
 ---
 
