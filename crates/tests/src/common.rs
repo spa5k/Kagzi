@@ -6,6 +6,8 @@ use std::net::SocketAddr;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use kagzi::{Client, Worker};
+use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
+use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
 use kagzi_server::config::{SchedulerSettings, WatchdogSettings, WorkerSettings};
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
@@ -20,6 +22,7 @@ use testcontainers_modules::postgres::Postgres;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tokio_util::sync::CancellationToken;
+use tonic::Request;
 use tonic::transport::Server;
 use uuid::Uuid;
 
@@ -211,6 +214,44 @@ impl TestHarness {
         .context("fetch workflow locked_by")
     }
 
+    /// Lookup step status for a given run_id and step_id.
+    pub async fn db_step_status(
+        &self,
+        run_id: &Uuid,
+        step_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT status FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
+        )
+        .bind(run_id)
+        .bind(step_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|opt| opt.flatten())
+        .context("fetch step status")
+    }
+
+    /// Count step attempts for a given run_id and step_id.
+    pub async fn db_step_attempt_count(&self, run_id: &Uuid, step_id: &str) -> anyhow::Result<i64> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM kagzi.step_runs WHERE run_id = $1 AND step_id = $2",
+        )
+        .bind(run_id)
+        .bind(step_id)
+        .fetch_one(&self.pool)
+        .await
+        .context("fetch step attempt count")
+    }
+
+    /// Get workflow attempts count.
+    pub async fn db_workflow_attempts(&self, run_id: &Uuid) -> anyhow::Result<i32> {
+        sqlx::query_scalar::<_, i32>("SELECT attempts FROM kagzi.workflow_runs WHERE run_id = $1")
+            .bind(run_id)
+            .fetch_one(&self.pool)
+            .await
+            .context("fetch workflow attempts")
+    }
+
     /// Lookup worker status by worker_id.
     pub async fn db_worker_status(&self, worker_id: &Uuid) -> anyhow::Result<String> {
         sqlx::query_scalar::<_, String>("SELECT status FROM kagzi.workers WHERE worker_id = $1")
@@ -239,6 +280,48 @@ impl TestHarness {
             .await
             .context("count workflows by status")
     }
+}
+
+/// Fetch workflow via gRPC by run_id (string).
+pub async fn fetch_workflow(
+    server_url: &str,
+    run_id: &str,
+) -> anyhow::Result<kagzi_proto::kagzi::Workflow> {
+    let mut client = WorkflowServiceClient::connect(server_url.to_string()).await?;
+    let resp = client
+        .get_workflow(Request::new(GetWorkflowRequest {
+            run_id: run_id.to_string(),
+            namespace_id: "default".to_string(),
+        }))
+        .await?;
+    resp.into_inner()
+        .workflow
+        .ok_or_else(|| anyhow::anyhow!("workflow not found"))
+}
+
+/// Wait for a workflow to reach a status, polling with a fixed attempt limit.
+pub async fn wait_for_status(
+    server_url: &str,
+    run_id: &str,
+    expected: WorkflowStatus,
+    attempts: usize,
+) -> anyhow::Result<kagzi_proto::kagzi::Workflow> {
+    for attempt in 0..attempts {
+        let wf = fetch_workflow(server_url, run_id).await?;
+        if wf.status == expected as i32 {
+            return Ok(wf);
+        }
+        if attempt == attempts - 1 {
+            anyhow::bail!(
+                "workflow {} did not reach status {:?}, last status={:?}",
+                run_id,
+                expected,
+                wf.status
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    unreachable!()
 }
 
 impl Drop for TestHarness {

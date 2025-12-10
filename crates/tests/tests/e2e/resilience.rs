@@ -1,11 +1,9 @@
 use std::time::Duration;
 
 use kagzi::WorkflowContext;
-use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
-use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
+use kagzi_proto::kagzi::WorkflowStatus;
 use serde::{Deserialize, Serialize};
-use tests::common::{TestConfig, TestHarness};
-use tonic::Request;
+use tests::common::{TestConfig, TestHarness, wait_for_status};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -13,56 +11,20 @@ struct SleepInput {
     seconds: u64,
 }
 
-async fn fetch_workflow(
-    server_url: &str,
-    run_id: &str,
-) -> anyhow::Result<kagzi_proto::kagzi::Workflow> {
-    let mut client = WorkflowServiceClient::connect(server_url.to_string()).await?;
-    let resp = client
-        .get_workflow(Request::new(GetWorkflowRequest {
-            run_id: run_id.to_string(),
-            namespace_id: "default".to_string(),
-        }))
-        .await?;
-    resp.into_inner()
-        .workflow
-        .ok_or_else(|| anyhow::anyhow!("workflow not found"))
-}
-
-async fn wait_for_status(
-    server_url: &str,
-    run_id: &str,
-    expected: WorkflowStatus,
-    attempts: usize,
-) -> anyhow::Result<kagzi_proto::kagzi::Workflow> {
-    for attempt in 0..attempts {
-        let wf = fetch_workflow(server_url, run_id).await?;
-        if wf.status == expected as i32 {
-            return Ok(wf);
-        }
-        if attempt == attempts - 1 {
-            anyhow::bail!(
-                "workflow {} did not reach status {:?}, last status={:?}",
-                run_id,
-                expected,
-                wf.status
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    unreachable!()
-}
-
+/// Test that a sleeping workflow can be resumed by a different worker after the original
+/// worker dies. This verifies that:
+/// 1. Sleep steps are properly persisted and can be replayed
+/// 2. A new worker can claim and complete the workflow after the sleep expires
 #[tokio::test]
 async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
-    let queue = "e2e-resilience-sleep";
+    let queue = "e2e-resilience-sleep-v2";
 
     let mut worker1 = harness.worker(queue).await;
     worker1.register(
-        "sleep_wf",
-        |mut ctx: WorkflowContext, input: SleepInput| async move {
-            ctx.sleep(Duration::from_secs(input.seconds)).await?;
+        "simple_sleep",
+        |mut ctx: WorkflowContext, _input: SleepInput| async move {
+            ctx.sleep(Duration::from_secs(2)).await?;
             Ok::<_, anyhow::Error>(())
         },
     );
@@ -71,58 +33,64 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
 
     let mut client = harness.client().await;
     let run_id = client
-        .workflow("sleep_wf", queue, SleepInput { seconds: 2 })
+        .workflow("simple_sleep", queue, SleepInput { seconds: 0 })
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for workflow to enter SLEEPING state
+    for _ in 0..20 {
+        let status = harness.db_workflow_status(&run_uuid).await?;
+        if status == "SLEEPING" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    let pre_kill_status = harness.db_workflow_status(&run_uuid).await?;
+    assert_eq!(
+        pre_kill_status, "SLEEPING",
+        "workflow should be sleeping before worker dies"
+    );
+
+    // Wait for the sleep step to be marked COMPLETED. There's a window between workflow
+    // entering SLEEPING and the step being marked COMPLETED.
+    for _ in 0..20 {
+        if harness.db_step_status(&run_uuid, "__sleep_0").await? == Some("COMPLETED".to_string()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let step_status = harness.db_step_status(&run_uuid, "__sleep_0").await?;
+    assert_eq!(
+        step_status,
+        Some("COMPLETED".to_string()),
+        "sleep step should be COMPLETED before killing worker"
+    );
+
+    // Gracefully shutdown worker1
     shutdown1.cancel();
     let _ = handle1.await;
 
-    // Allow wake + reschedule.
+    // Wait for sleep to expire (2s) + buffer
     tokio::time::sleep(Duration::from_secs(4)).await;
-    let sleeping = harness.db_workflow_status(&run_uuid).await?;
-    assert!(
-        sleeping == "SLEEPING" || sleeping == "RUNNING",
-        "expected sleeping or running after worker crash, got {}",
-        sleeping
-    );
 
+    // Start worker2 which should pick up and complete the resumed workflow
     let mut worker2 = harness.worker(queue).await;
     worker2.register(
-        "sleep_wf",
-        |mut ctx: WorkflowContext, input: SleepInput| async move {
-            ctx.sleep(Duration::from_secs(input.seconds)).await?;
+        "simple_sleep",
+        |mut ctx: WorkflowContext, _input: SleepInput| async move {
+            // Must match worker1's sleep duration for deterministic replay
+            ctx.sleep(Duration::from_secs(2)).await?;
             Ok::<_, anyhow::Error>(())
         },
     );
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    let mut last = None;
-    for _ in 0..80 {
-        let wf = fetch_workflow(&harness.server_url, &run_id).await?;
-        last = Some(wf.clone());
-        if wf.status == WorkflowStatus::Completed as i32
-            || wf.status == WorkflowStatus::Running as i32
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    let wf = last.expect("workflow fetched");
-    assert!(
-        wf.status == WorkflowStatus::Completed as i32
-            || wf.status == WorkflowStatus::Running as i32,
-        "expected workflow to be running or completed after recovery, got {}",
-        wf.status
-    );
-    let final_status = harness.db_workflow_status(&run_uuid).await?;
-    assert!(
-        final_status == "COMPLETED" || final_status == "RUNNING",
-        "expected final DB status running/completed, got {}",
-        final_status
-    );
+    // Workflow should complete after worker2 picks it up and replays the sleep step
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 30).await?;
+    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
 
     shutdown2.cancel();
     let _ = handle2.await;

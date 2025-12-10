@@ -1,11 +1,7 @@
-use std::time::Duration;
-
 use kagzi::WorkflowContext;
-use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
-use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
+use kagzi_proto::kagzi::WorkflowStatus;
 use serde::{Deserialize, Serialize};
-use tests::common::TestHarness;
-use tonic::Request;
+use tests::common::{TestHarness, wait_for_status};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -16,46 +12,6 @@ struct GreetingInput {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct GreetingOutput {
     greeting: String,
-}
-
-async fn fetch_workflow(
-    server_url: &str,
-    run_id: &str,
-) -> anyhow::Result<kagzi_proto::kagzi::Workflow> {
-    let mut client = WorkflowServiceClient::connect(server_url.to_string()).await?;
-    let resp = client
-        .get_workflow(Request::new(GetWorkflowRequest {
-            run_id: run_id.to_string(),
-            namespace_id: "default".to_string(),
-        }))
-        .await?;
-    resp.into_inner()
-        .workflow
-        .ok_or_else(|| anyhow::anyhow!("workflow not found"))
-}
-
-async fn wait_for_status(
-    server_url: &str,
-    run_id: &str,
-    expected: WorkflowStatus,
-) -> anyhow::Result<kagzi_proto::kagzi::Workflow> {
-    let max_attempts = 20;
-    for attempt in 0..max_attempts {
-        let wf = fetch_workflow(server_url, run_id).await?;
-        if wf.status == expected as i32 {
-            return Ok(wf);
-        }
-        if attempt == max_attempts - 1 {
-            anyhow::bail!(
-                "workflow {} did not reach status {:?}, last status={:?}",
-                run_id,
-                expected,
-                wf.status
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    unreachable!()
 }
 
 #[tokio::test]
@@ -90,7 +46,7 @@ async fn happy_path_workflow_execution() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed).await?;
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
     let output: GreetingOutput =
         serde_json::from_slice(&wf.output.unwrap().data).expect("output should decode");
     assert_eq!(
@@ -140,7 +96,7 @@ async fn workflow_with_multiple_steps() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed).await?;
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
     let output: GreetingOutput = serde_json::from_slice(&wf.output.unwrap().data)?;
     assert_eq!(
         output.greeting, "CHAIN-suffix",
@@ -175,7 +131,7 @@ async fn workflow_failure_propagates_error() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed).await?;
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 40).await?;
     assert_eq!(wf.status, WorkflowStatus::Failed as i32);
     let detail = wf.error.unwrap_or_default();
     let message = detail.message;

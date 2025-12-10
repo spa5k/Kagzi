@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
-use kagzi_proto::kagzi::{Payload, PollTaskRequest, RegisterRequest, StartWorkflowRequest};
+use kagzi_proto::kagzi::{
+    CompleteWorkflowRequest, Payload, PollTaskRequest, RegisterRequest, StartWorkflowRequest,
+};
 use tests::common::TestHarness;
 use tonic::Request;
 use uuid::Uuid;
@@ -65,7 +67,7 @@ async fn poll_filters_by_workflow_types() -> anyhow::Result<()> {
     let mut worker_client = WorkerServiceClient::connect(harness.server_url.clone()).await?;
     let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
 
-    let _run_a = workflow_client
+    let run_a_id = workflow_client
         .start_workflow(Request::new(StartWorkflowRequest {
             external_id: Uuid::now_v7().to_string(),
             task_queue: "svc-worker-filter".to_string(),
@@ -80,9 +82,11 @@ async fn poll_filters_by_workflow_types() -> anyhow::Result<()> {
             version: "v1".to_string(),
             retry_policy: None,
         }))
-        .await?;
+        .await?
+        .into_inner()
+        .run_id;
 
-    let _run_b = workflow_client
+    let run_b_id = workflow_client
         .start_workflow(Request::new(StartWorkflowRequest {
             external_id: Uuid::now_v7().to_string(),
             task_queue: "svc-worker-filter".to_string(),
@@ -97,7 +101,9 @@ async fn poll_filters_by_workflow_types() -> anyhow::Result<()> {
             version: "v1".to_string(),
             retry_policy: None,
         }))
-        .await?;
+        .await?
+        .into_inner()
+        .run_id;
 
     let worker = worker_client
         .register(Request::new(RegisterRequest {
@@ -124,21 +130,61 @@ async fn poll_filters_by_workflow_types() -> anyhow::Result<()> {
         }))
         .await?
         .into_inner();
+    assert_eq!(first.run_id, run_a_id);
     assert_eq!(first.workflow_type, "TypeA");
 
-    let second = worker_client
-        .poll_task(Request::new(PollTaskRequest {
-            task_queue: "svc-worker-filter".to_string(),
-            worker_id: worker.worker_id,
+    worker_client
+        .complete_workflow(Request::new(CompleteWorkflowRequest {
+            run_id: first.run_id.clone(),
+            output: Some(Payload {
+                data: payload_bytes(&serde_json::json!({ "ok": true })),
+                metadata: HashMap::new(),
+            }),
+        }))
+        .await?;
+
+    let worker_b = worker_client
+        .register(Request::new(RegisterRequest {
             namespace_id: "default".to_string(),
-            workflow_types: vec!["TypeA".to_string()],
+            task_queue: "svc-worker-filter".to_string(),
+            workflow_types: vec!["TypeB".to_string()],
+            hostname: "host".to_string(),
+            pid: 3333,
+            version: "v1".to_string(),
+            max_concurrent: 2,
+            labels: HashMap::new(),
+            queue_concurrency_limit: None,
+            workflow_type_concurrency: vec![],
         }))
         .await?
         .into_inner();
 
-    assert!(
-        second.run_id.is_empty(),
-        "worker should not receive TypeB tasks"
+    let second = worker_client
+        .poll_task(Request::new(PollTaskRequest {
+            task_queue: "svc-worker-filter".to_string(),
+            worker_id: worker_b.worker_id.clone(),
+            namespace_id: "default".to_string(),
+            workflow_types: vec!["TypeB".to_string()],
+        }))
+        .await?
+        .into_inner();
+
+    assert_eq!(
+        second.workflow_type, "TypeB",
+        "TypeB worker should receive TypeB"
     );
+    assert_eq!(
+        second.run_id, run_b_id,
+        "TypeB run should be delivered to matching worker"
+    );
+    worker_client
+        .complete_workflow(Request::new(CompleteWorkflowRequest {
+            run_id: second.run_id,
+            output: Some(Payload {
+                data: payload_bytes(&serde_json::json!({ "ok": true })),
+                metadata: HashMap::new(),
+            }),
+        }))
+        .await?;
     Ok(())
 }
