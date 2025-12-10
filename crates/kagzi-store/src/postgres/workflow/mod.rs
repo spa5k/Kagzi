@@ -106,8 +106,17 @@ impl WorkflowRepository for PgWorkflowRepository {
         namespace_id: &str,
         worker_id: &str,
         supported_types: &[String],
+        lock_duration_secs: i64,
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        queue::claim_next_workflow(self, task_queue, namespace_id, worker_id, supported_types).await
+        queue::claim_next_workflow(
+            self,
+            task_queue,
+            namespace_id,
+            worker_id,
+            supported_types,
+            lock_duration_secs,
+        )
+        .await
     }
 
     async fn list_available_workflows(
@@ -125,8 +134,9 @@ impl WorkflowRepository for PgWorkflowRepository {
         &self,
         run_id: Uuid,
         worker_id: &str,
+        lock_duration_secs: i64,
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        queue::claim_specific_workflow(self, run_id, worker_id).await
+        queue::claim_specific_workflow(self, run_id, worker_id, lock_duration_secs).await
     }
 
     async fn extend_worker_locks(
@@ -149,8 +159,8 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::create_batch(self, params).await
     }
 
-    async fn wake_sleeping(&self) -> Result<u64, StoreError> {
-        queue::wake_sleeping(self).await
+    async fn wake_sleeping(&self, batch_size: i32) -> Result<u64, StoreError> {
+        queue::wake_sleeping(self, batch_size as i64).await
     }
 
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError> {

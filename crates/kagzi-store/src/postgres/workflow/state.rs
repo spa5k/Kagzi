@@ -127,7 +127,15 @@ pub(super) async fn get_retry_policy(
 
     Ok(row
         .and_then(|r| r.retry_policy)
-        .and_then(|v| serde_json::from_value::<RetryPolicy>(v).ok()))
+        .and_then(|v| {
+            serde_json::from_value::<RetryPolicy>(v).map_err(|e| {
+                tracing::warn!(
+                    run_id = %run_id,
+                    error = %e,
+                    "Failed to deserialize retry_policy; defaulting to None"
+                );
+            }).ok()
+        }))
 }
 
 #[instrument(skip(repo))]
@@ -210,35 +218,20 @@ pub(super) async fn check_exists(
     run_id: Uuid,
     namespace_id: &str,
 ) -> Result<WorkflowExistsResult, StoreError> {
-    let row = sqlx::query!(
-        r#"
-        SELECT status, locked_by FROM kagzi.workflow_runs
-        WHERE run_id = $1 AND namespace_id = $2
-        "#,
-        run_id,
-        namespace_id
-    )
-    .fetch_optional(&repo.pool)
-    .await?;
-
-    match row {
-        Some(r) => Ok(WorkflowExistsResult {
-            exists: true,
-            status: Some(r.status.parse().map_err(|_| {
-                StoreError::invalid_state(format!("invalid workflow status: {}", r.status))
-            })?),
-            locked_by: r.locked_by,
-        }),
-        None => Ok(WorkflowExistsResult {
-            exists: false,
-            status: None,
-            locked_by: None,
-        }),
-    }
+    check_workflow_state(repo, run_id, namespace_id).await
 }
 
 #[instrument(skip(repo))]
 pub(super) async fn check_status(
+    repo: &PgWorkflowRepository,
+    run_id: Uuid,
+    namespace_id: &str,
+) -> Result<WorkflowExistsResult, StoreError> {
+    check_workflow_state(repo, run_id, namespace_id).await
+}
+
+#[instrument(skip(repo))]
+async fn check_workflow_state(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
     namespace_id: &str,
@@ -249,7 +242,7 @@ pub(super) async fn check_status(
         WHERE run_id = $1 AND namespace_id = $2
         "#,
         run_id,
-        namespace_id,
+        namespace_id
     )
     .fetch_optional(&repo.pool)
     .await?;

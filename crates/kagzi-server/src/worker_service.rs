@@ -48,6 +48,7 @@ pub struct WorkerServiceImpl {
 }
 
 impl WorkerServiceImpl {
+    const WORKFLOW_LOCK_DURATION_SECS: i64 = 30;
     pub fn new(store: PgStore, worker_settings: WorkerSettings) -> Self {
         let work_distributor = WorkDistributorHandle::new(store.clone());
         Self {
@@ -311,6 +312,7 @@ impl WorkerService for WorkerServiceImpl {
                 &namespace_id,
                 &req.worker_id,
                 &effective_types,
+                Self::WORKFLOW_LOCK_DURATION_SECS,
             )
             .await
             .map_err(map_store_error)?

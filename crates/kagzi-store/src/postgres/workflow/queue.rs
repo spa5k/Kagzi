@@ -19,6 +19,7 @@ async fn claim_with_counters(
     tx: &mut Transaction<'_, Postgres>,
     candidate: &CandidateWithLimits,
     worker_id: &str,
+    lock_duration_secs: i64,
 ) -> Result<Option<ClaimedRow>, StoreError> {
     if !try_increment_counter_tx(
         tx,
@@ -48,7 +49,7 @@ async fn claim_with_counters(
         ClaimedRow,
         r#"
         UPDATE kagzi.workflow_runs
-        SET status = 'RUNNING', locked_by = $1, locked_until = NOW() + INTERVAL '30 seconds',
+        SET status = 'RUNNING', locked_by = $1, locked_until = NOW() + ($3 * INTERVAL '1 second'),
             started_at = COALESCE(started_at, NOW()), attempts = attempts + 1
         WHERE run_id = $2
         RETURNING run_id, workflow_type, 
@@ -56,7 +57,8 @@ async fn claim_with_counters(
                   locked_by
         "#,
         worker_id,
-        candidate.run_id
+        candidate.run_id,
+        lock_duration_secs as f64
     )
     .fetch_one(tx.as_mut())
     .await?;
@@ -71,6 +73,7 @@ pub(super) async fn claim_next_workflow(
     namespace_id: &str,
     worker_id: &str,
     supported_types: &[String],
+    lock_duration_secs: i64,
 ) -> Result<Option<ClaimedWorkflow>, StoreError> {
     let mut tx = repo.pool.begin().await?;
 
@@ -108,7 +111,7 @@ pub(super) async fn claim_next_workflow(
         return Ok(None);
     };
 
-    let claimed = claim_with_counters(&mut tx, &c, worker_id).await?;
+    let claimed = claim_with_counters(&mut tx, &c, worker_id, lock_duration_secs).await?;
     if let Some(r) = claimed {
         tx.commit().await?;
         return Ok(Some(ClaimedWorkflow {
@@ -172,6 +175,7 @@ pub(super) async fn claim_specific_workflow(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
     worker_id: &str,
+    lock_duration_secs: i64,
 ) -> Result<Option<ClaimedWorkflow>, StoreError> {
     let mut tx = repo.pool.begin().await?;
 
@@ -204,7 +208,7 @@ pub(super) async fn claim_specific_workflow(
         return Ok(None);
     };
 
-    let claimed = claim_with_counters(&mut tx, &c, worker_id).await?;
+    let claimed = claim_with_counters(&mut tx, &c, worker_id, lock_duration_secs).await?;
     if let Some(r) = claimed {
         tx.commit().await?;
         return Ok(Some(ClaimedWorkflow {
@@ -266,7 +270,10 @@ pub(super) async fn extend_locks_for_runs(
 }
 
 #[instrument(skip(repo))]
-pub(super) async fn wake_sleeping(repo: &PgWorkflowRepository) -> Result<u64, StoreError> {
+pub(super) async fn wake_sleeping(
+    repo: &PgWorkflowRepository,
+    batch_size: i64,
+) -> Result<u64, StoreError> {
     let result = sqlx::query!(
         r#"
         UPDATE kagzi.workflow_runs
@@ -278,9 +285,11 @@ pub(super) async fn wake_sleeping(repo: &PgWorkflowRepository) -> Result<u64, St
             WHERE status = 'SLEEPING'
               AND wake_up_at <= NOW()
             FOR UPDATE SKIP LOCKED
-            LIMIT 100
+            LIMIT $1
         )
         "#
+        ,
+        batch_size
     )
     .execute(&repo.pool)
     .await?;
@@ -313,7 +322,15 @@ pub(super) async fn find_orphaned(
             attempts: r.attempts,
             retry_policy: r
                 .retry_policy
-                .and_then(|v| serde_json::from_value::<RetryPolicy>(v).ok()),
+                .and_then(|v| {
+                    serde_json::from_value::<RetryPolicy>(v).map_err(|e| {
+                        tracing::warn!(
+                            run_id = %r.run_id,
+                            error = %e,
+                            "Failed to deserialize retry_policy; defaulting to None"
+                        );
+                    }).ok()
+                }),
         })
         .collect())
 }

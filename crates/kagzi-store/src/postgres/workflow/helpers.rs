@@ -56,7 +56,15 @@ impl WorkflowRunRow {
             parent_step_attempt_id: self.parent_step_attempt_id,
             retry_policy: self
                 .retry_policy
-                .and_then(|v| serde_json::from_value(v).ok()),
+                .and_then(|v| {
+                    serde_json::from_value(v).map_err(|e| {
+                        tracing::warn!(
+                            run_id = %self.run_id,
+                            error = %e,
+                            "Failed to deserialize retry_policy; defaulting to None"
+                        );
+                    }).ok()
+                }),
         })
     }
 }

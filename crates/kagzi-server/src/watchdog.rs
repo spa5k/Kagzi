@@ -4,6 +4,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+const WAKE_SLEEPING_BATCH_SIZE: i32 = 100;
+
 pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationToken) {
     let interval = Duration::from_secs(settings.interval_secs.max(1));
     let stale_threshold_secs = settings.worker_stale_threshold_secs.max(1);
@@ -13,7 +15,12 @@ pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationT
         "Watchdog spawning parallel tasks"
     );
 
-    tokio::spawn(run_wake_sleeping(store.clone(), shutdown.clone(), interval));
+    tokio::spawn(run_wake_sleeping(
+        store.clone(),
+        shutdown.clone(),
+        interval,
+        WAKE_SLEEPING_BATCH_SIZE,
+    ));
     tokio::spawn(run_process_retries(
         store.clone(),
         shutdown.clone(),
@@ -33,7 +40,12 @@ pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationT
     ));
 }
 
-async fn run_wake_sleeping(store: PgStore, shutdown: CancellationToken, interval: Duration) {
+async fn run_wake_sleeping(
+    store: PgStore,
+    shutdown: CancellationToken,
+    interval: Duration,
+    batch_size: i32,
+) {
     let mut ticker = tokio::time::interval(interval);
     loop {
         tokio::select! {
@@ -42,7 +54,7 @@ async fn run_wake_sleeping(store: PgStore, shutdown: CancellationToken, interval
                 break;
             }
             _ = ticker.tick() => {
-                match store.workflows().wake_sleeping().await {
+                match store.workflows().wake_sleeping(batch_size).await {
                     Ok(count) => {
                         if count > 0 {
                             info!("Watchdog woke up {} sleeping workflows", count);

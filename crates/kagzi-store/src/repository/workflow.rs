@@ -56,6 +56,7 @@ pub trait WorkflowRepository: Send + Sync {
         namespace_id: &str,
         worker_id: &str,
         supported_types: &[String],
+        lock_duration_secs: i64,
     ) -> Result<Option<ClaimedWorkflow>, StoreError>;
 
     async fn list_available_workflows(
@@ -70,6 +71,7 @@ pub trait WorkflowRepository: Send + Sync {
         &self,
         run_id: Uuid,
         worker_id: &str,
+        lock_duration_secs: i64,
     ) -> Result<Option<ClaimedWorkflow>, StoreError>;
 
     async fn extend_worker_locks(
@@ -86,7 +88,7 @@ pub trait WorkflowRepository: Send + Sync {
 
     async fn create_batch(&self, params: Vec<CreateWorkflow>) -> Result<Vec<Uuid>, StoreError>;
 
-    async fn wake_sleeping(&self) -> Result<u64, StoreError>;
+    async fn wake_sleeping(&self, batch_size: i32) -> Result<u64, StoreError>;
 
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError>;
 

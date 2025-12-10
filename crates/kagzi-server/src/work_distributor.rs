@@ -8,6 +8,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use uuid::Uuid;
 
+const WORKFLOW_LOCK_DURATION_SECS: i64 = 30;
+
 #[derive(Debug, Clone)]
 pub struct WorkItem {
     pub run_id: Uuid,
@@ -89,7 +91,11 @@ impl WorkDistributor {
                 match self
                     .store
                     .workflows()
-                    .claim_specific_workflow(candidate.run_id, &request.worker_id)
+                    .claim_specific_workflow(
+                        candidate.run_id,
+                        &request.worker_id,
+                        WORKFLOW_LOCK_DURATION_SECS,
+                    )
                     .await?
                 {
                     Some(item) => {
