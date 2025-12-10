@@ -17,6 +17,7 @@ pub fn init_tracing() -> Result<()> {
 }
 
 /// Connect a Kagzi client to the given server.
+#[allow(dead_code)]
 pub async fn connect_client(server: &str) -> Result<Client> {
     Client::connect(server).await
 }

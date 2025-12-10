@@ -59,3 +59,7 @@ path = "09_data_pipeline/main.rs"
 name = "10_multi_queue"
 path = "10_multi_queue/main.rs"
 
+[[example]]
+name = "worker_hub"
+path = "worker_hub.rs"
+
