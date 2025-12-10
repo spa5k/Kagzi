@@ -213,7 +213,7 @@ impl WorkDistributor {
 
             let has_pending = {
                 let pending = self.pending_requests.lock().await;
-                pending.get(&key).map_or(false, |v| !v.is_empty())
+                pending.get(&key).is_some_and(|v| !v.is_empty())
             };
 
             if has_pending {
