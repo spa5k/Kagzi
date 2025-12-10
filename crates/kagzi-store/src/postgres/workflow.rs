@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
-    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun, WorkflowStatus,
+    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
 use crate::repository::WorkflowRepository;
 
@@ -24,7 +24,7 @@ struct WorkflowRunRow {
     external_id: String,
     task_queue: String,
     workflow_type: String,
-    status: WorkflowStatus,
+    status: String,
     input: serde_json::Value,
     output: Option<serde_json::Value>,
     context: Option<serde_json::Value>,
@@ -49,7 +49,10 @@ impl WorkflowRunRow {
             external_id: self.external_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
-            status: self.status,
+            status: self
+                .status
+                .parse()
+                .expect("status should be a valid WorkflowStatus"),
             input: self.input,
             output: self.output,
             context: self.context,
@@ -250,7 +253,7 @@ impl WorkflowRepository for PgWorkflowRepository {
                 w.external_id,
                 w.task_queue,
                 w.workflow_type,
-                w.status as "status: WorkflowStatus",
+                w.status,
                 p.input,
                 p.output,
                 p.context,
@@ -378,7 +381,7 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<WorkflowExistsResult, StoreError> {
         let row = sqlx::query!(
             r#"
-            SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
+            SELECT status, locked_by FROM kagzi.workflow_runs
             WHERE run_id = $1 AND namespace_id = $2
             "#,
             run_id,
@@ -390,7 +393,11 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(r.status),
+                status: Some(
+                    r.status
+                        .parse()
+                        .expect("status should be a valid WorkflowStatus"),
+                ),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {
@@ -409,7 +416,7 @@ impl WorkflowRepository for PgWorkflowRepository {
     ) -> Result<WorkflowExistsResult, StoreError> {
         let row = sqlx::query!(
             r#"
-            SELECT status as "status: WorkflowStatus", locked_by FROM kagzi.workflow_runs
+            SELECT status, locked_by FROM kagzi.workflow_runs
             WHERE run_id = $1 AND namespace_id = $2
             "#,
             run_id,
@@ -421,7 +428,11 @@ impl WorkflowRepository for PgWorkflowRepository {
         match row {
             Some(r) => Ok(WorkflowExistsResult {
                 exists: true,
-                status: Some(r.status),
+                status: Some(
+                    r.status
+                        .parse()
+                        .expect("status should be a valid WorkflowStatus"),
+                ),
                 locked_by: r.locked_by,
             }),
             None => Ok(WorkflowExistsResult {

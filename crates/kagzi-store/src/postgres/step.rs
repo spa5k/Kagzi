@@ -8,7 +8,6 @@ use crate::error::StoreError;
 use crate::models::{
     BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
     PaginatedResult, RetryPolicy, RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun,
-    StepStatus,
 };
 use crate::repository::StepRepository;
 
@@ -23,9 +22,9 @@ struct StepRunRow {
     run_id: Uuid,
     step_id: String,
     namespace_id: String,
-    step_kind: StepKind,
+    step_kind: String,
     attempt_number: i32,
-    status: StepStatus,
+    status: String,
     input: Option<serde_json::Value>,
     output: Option<serde_json::Value>,
     error: Option<String>,
@@ -53,9 +52,15 @@ impl StepRunRow {
             run_id: self.run_id,
             step_id: self.step_id,
             namespace_id: self.namespace_id,
-            step_kind: self.step_kind,
+            step_kind: self
+                .step_kind
+                .parse()
+                .expect("step_kind should be a valid StepKind"),
             attempt_number: self.attempt_number,
-            status: self.status,
+            status: self
+                .status
+                .parse()
+                .expect("status should be a valid StepStatus"),
             input: self.input,
             output: self.output,
             error: self.error,
@@ -217,9 +222,9 @@ impl StepRepository for PgStepRepository {
                 run_id as "run_id!",
                 step_id as "step_id!",
                 namespace_id as "namespace_id!",
-                step_kind as "step_kind: StepKind",
+                step_kind,
                 attempt_number,
-                status as "status: StepStatus",
+                status,
                 input,
                 output,
                 error,

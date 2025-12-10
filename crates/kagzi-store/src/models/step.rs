@@ -1,28 +1,25 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::Type;
 use strum::{AsRefStr, Display, EnumString};
 use uuid::Uuid;
 
 use super::RetryPolicy;
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Display, EnumString, AsRefStr,
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, AsRefStr,
 )]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
-#[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StepKind {
     Function,
     Sleep,
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Display, EnumString, AsRefStr,
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, AsRefStr,
 )]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
-#[sqlx(type_name = "text", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StepStatus {
     Pending,
     Running,

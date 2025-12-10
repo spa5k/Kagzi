@@ -22,7 +22,7 @@ struct WorkerRow {
     worker_id: Uuid,
     namespace_id: String,
     task_queue: String,
-    status: WorkerStatus,
+    status: String,
     hostname: Option<String>,
     pid: Option<i32>,
     version: Option<String>,
@@ -47,7 +47,10 @@ impl WorkerRow {
             worker_id: self.worker_id,
             namespace_id: self.namespace_id,
             task_queue: self.task_queue,
-            status: self.status,
+            status: self
+                .status
+                .parse()
+                .expect("status should be a valid WorkerStatus"),
             hostname: self.hostname,
             pid: self.pid,
             version: self.version,
@@ -215,7 +218,7 @@ impl WorkerRepository for PgWorkerRepository {
                 worker_id,
                 namespace_id,
                 task_queue,
-                status as "status: WorkerStatus",
+                status,
                 hostname,
                 pid,
                 version,
