@@ -1,12 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/kagzi",
-    "crates/kagzi-proto",
-    "crates/kagzi-server",
-    "crates/kagzi-store",
-    "crates/examples",
-    "crates/tests",
+  "crates/examples",
+  "crates/kagzi",
+  "crates/kagzi-proto",
+  "crates/kagzi-server",
+  "crates/kagzi-store",
+  "crates/tests",
 ]
 
 [workspace.package]
@@ -57,5 +57,5 @@ chrono = { version = "0.4", features = ["serde"] }
 cron = "0.15.0"
 
 # Utilities
-tokio-util = "0.7"
 backoff = "0.4"
+tokio-util = "0.7"
