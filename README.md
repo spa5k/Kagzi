@@ -297,11 +297,15 @@ Run any example with `cargo run -p kagzi --example <name> -- <variant>`.
 
 ### Environment Variables
 
-| Variable            | Description                  | Default                                                  |
-| ------------------- | ---------------------------- | -------------------------------------------------------- |
-| `DATABASE_URL`      | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/postgres` |
-| `RUST_LOG`          | Log level filter             | `info`                                                   |
-| `KAGZI_SERVER_ADDR` | Server bind address          | `0.0.0.0:50051`                                          |
+| Variable                                 | Description                    | Default                                                  |
+| ---------------------------------------- | ------------------------------ | -------------------------------------------------------- |
+| `KAGZI_DB_URL`                           | PostgreSQL connection string   | `postgresql://postgres:postgres@localhost:5432/postgres` |
+| `KAGZI_SERVER_HOST`                      | Server bind host               | `0.0.0.0`                                                |
+| `KAGZI_SERVER_PORT`                      | Server bind port               | `50051`                                                  |
+| `KAGZI_SCHEDULER_INTERVAL_SECS`          | Scheduler tick interval (secs) | `5`                                                      |
+| `KAGZI_SCHEDULER_BATCH_SIZE`             | Scheduler batch size           | `100`                                                    |
+| `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK` | Max workflows per tick         | `1000`                                                   |
+| `RUST_LOG`                               | Log level filter               | `info`                                                   |
 
 ### Payload Limits
 
@@ -429,7 +433,7 @@ spec:
           ports:
             - containerPort: 50051
           env:
-            - name: DATABASE_URL
+            - name: KAGZI_DB_URL
               valueFrom:
                 secretKeyRef:
                   name: kagzi-secrets

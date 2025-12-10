@@ -28,7 +28,7 @@ jobs:
           --health-retries=5
 
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      KAGZI_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
       RUST_BACKTRACE: 1
 
     steps:
@@ -56,7 +56,7 @@ jobs:
         run: cargo install sqlx-cli --no-default-features --features rustls,postgres
 
       - name: Run migrations
-        run: sqlx migrate run --source migrations --database-url "$DATABASE_URL"
+        run: sqlx migrate run --source migrations --database-url "$KAGZI_DB_URL"
 
       - name: Check formatting
         run: cargo fmt --all -- --check

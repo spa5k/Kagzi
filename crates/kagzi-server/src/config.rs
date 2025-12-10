@@ -59,15 +59,15 @@ pub struct PayloadSettings {
 
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
-        Config::builder()
-            // Unprefixed env (e.g., DATABASE_URL)
-            .add_source(Environment::default())
-            // Legacy single-underscore prefix support: KAGZI_SCHEDULER_INTERVAL_SECS
-            .add_source(Environment::with_prefix("KAGZI").separator("_"))
-            // Preferred double-underscore hierarchical prefix: KAGZI__SCHEDULER__INTERVAL_SECS
-            .add_source(Environment::with_prefix("KAGZI").separator("__"))
-            .build()?
-            .try_deserialize()
+        let mut builder = Config::builder()
+            // Single canonical source: KAGZI_* (flat, single underscore)
+            .add_source(Environment::with_prefix("KAGZI").separator("_"));
+
+        if let Ok(db_url) = std::env::var("KAGZI_DB_URL") {
+            builder = builder.set_override("database_url", db_url)?;
+        }
+
+        builder.build()?.try_deserialize()
     }
 }
 
