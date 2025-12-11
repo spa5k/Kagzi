@@ -41,6 +41,10 @@ name = "e2e_concurrency"
 path = "tests/e2e/concurrency.rs"
 
 [[test]]
+name = "e2e_workers"
+path = "tests/e2e/workers.rs"
+
+[[test]]
 name = "service_workflow_api"
 path = "tests/service/workflow_api.rs"
 

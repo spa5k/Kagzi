@@ -8,25 +8,25 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 1.1 Registration & Deregistration
 
-- [ ] **worker_registration_returns_unique_id** - Each worker gets a unique ID on registration
-- [ ] **worker_reregistration_same_queue_updates_existing** - Re-registering with same params updates rather than creates new
-- [ ] **worker_deregistration_clears_from_pool** - Deregistered workers no longer receive work
-- [ ] **worker_drain_mode_completes_active_before_stopping** - Draining worker finishes in-flight work but accepts no new tasks
-- [ ] **worker_offline_after_missed_heartbeats** - Worker marked offline after missing N heartbeats
+- [x] **worker_registration_returns_unique_id** - Each worker gets a unique ID on registration
+- [x] **worker_reregistration_same_queue_updates_existing** - Re-registering with same params updates rather than creates new
+- [x] **worker_deregistration_clears_from_pool** - Deregistered workers no longer receive work
+- [x] **worker_drain_mode_completes_active_before_stopping** - Draining worker finishes in-flight work but accepts no new tasks
+- [x] **worker_offline_after_missed_heartbeats** - Worker marked offline after missing N heartbeats
 
 ### 1.2 Heartbeat & Health
 
-- [ ] **worker_heartbeat_extends_active_status** - Regular heartbeats keep worker active
-- [ ] **worker_heartbeat_updates_active_count** - Heartbeat correctly reports active workflow count
-- [ ] **stale_worker_detected_by_watchdog** - Watchdog marks workers as stale after threshold
-- [ ] **stale_worker_workflows_rescheduled** - Workflows from stale workers are made claimable again
+- [x] **worker_heartbeat_extends_active_status** - Regular heartbeats keep worker active
+- [x] **worker_heartbeat_updates_active_count** - Heartbeat correctly reports active workflow count
+- [x] **stale_worker_detected_by_watchdog** - Watchdog marks workers as stale after threshold
+- [x] **stale_worker_workflows_rescheduled** - Workflows from stale workers are made claimable again
 
 ### 1.3 Multi-Worker Scenarios
 
 - [x] **multiple_workers_same_queue_fair_distribution** - Work is distributed fairly among workers
-- [ ] **worker_with_different_workflow_types_only_receives_matching** - Type filtering works correctly
-- [ ] **worker_concurrency_limit_respected** - Worker never exceeds max_concurrent setting
-- [ ] **workflow_type_concurrency_limit_per_worker** - Per-type limits are enforced
+- [x] **worker_with_different_workflow_types_only_receives_matching** - Type filtering works correctly
+- [x] **worker_concurrency_limit_respected** - Worker never exceeds max_concurrent setting
+- [x] **workflow_type_concurrency_limit_per_worker** - Per-type limits are enforced
 
 ---
 

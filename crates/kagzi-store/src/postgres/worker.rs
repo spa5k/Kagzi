@@ -87,26 +87,72 @@ impl WorkerRepository for PgWorkerRepository {
     async fn register(&self, params: RegisterWorkerParams) -> Result<Uuid, StoreError> {
         let mut tx = self.pool.begin().await?;
 
-        let row = sqlx::query!(
+        // Reuse existing ONLINE/DRAINING worker with same identity if present; otherwise insert.
+        let existing: Option<Uuid> = sqlx::query_scalar!(
             r#"
-            INSERT INTO kagzi.workers (
-                namespace_id, task_queue, hostname, pid, version,
-                workflow_types, max_concurrent, labels
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING worker_id
+            SELECT worker_id
+            FROM kagzi.workers
+            WHERE namespace_id = $1
+              AND task_queue = $2
+              AND hostname IS NOT DISTINCT FROM $3
+              AND pid IS NOT DISTINCT FROM $4
+              AND status != 'OFFLINE'
+            LIMIT 1
             "#,
             &params.namespace_id,
             &params.task_queue,
-            params.hostname,
-            params.pid,
-            params.version,
-            &params.workflow_types,
-            params.max_concurrent,
-            params.labels
+            params.hostname.as_deref(),
+            params.pid
         )
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
+
+        let worker_id: Uuid = if let Some(id) = existing {
+            sqlx::query_scalar!(
+                r#"
+                UPDATE kagzi.workers
+                SET version = $1,
+                    workflow_types = $2,
+                    max_concurrent = $3,
+                    labels = $4,
+                    status = 'ONLINE',
+                    active_count = 0,
+                    deregistered_at = NULL,
+                    last_heartbeat_at = NOW()
+                WHERE worker_id = $5
+                RETURNING worker_id
+                "#,
+                params.version.as_deref(),
+                &params.workflow_types,
+                params.max_concurrent,
+                &params.labels,
+                id
+            )
+            .fetch_one(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_scalar!(
+                r#"
+                INSERT INTO kagzi.workers (
+                    namespace_id, task_queue, hostname, pid, version,
+                    workflow_types, max_concurrent, labels, status, active_count,
+                    last_heartbeat_at, deregistered_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ONLINE', 0, NOW(), NULL)
+                RETURNING worker_id
+                "#,
+                &params.namespace_id,
+                &params.task_queue,
+                params.hostname.as_deref(),
+                params.pid,
+                params.version.as_deref(),
+                &params.workflow_types,
+                params.max_concurrent,
+                &params.labels
+            )
+            .fetch_one(&mut *tx)
+            .await?
+        };
 
         // Persist queue-level concurrency if provided.
         if let Some(limit) = params.queue_concurrency_limit {
@@ -147,7 +193,7 @@ impl WorkerRepository for PgWorkerRepository {
 
         tx.commit().await?;
 
-        Ok(row.worker_id)
+        Ok(worker_id)
     }
 
     #[instrument(skip(self, params))]
