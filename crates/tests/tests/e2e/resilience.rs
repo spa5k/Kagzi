@@ -345,7 +345,7 @@ async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
         let now = chrono::Utc::now();
         let delta = (wake_up_at - now).num_milliseconds();
         assert!(
-            delta >= -1500 && delta <= 5_000,
+            (-1500..=5_000).contains(&delta),
             "wake_up_at should be near-term (delta_ms={})",
             delta
         );
