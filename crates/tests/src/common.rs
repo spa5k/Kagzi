@@ -365,6 +365,11 @@ pub async fn fetch_workflow(
         .ok_or_else(|| anyhow::anyhow!("workflow not found"))
 }
 
+/// Serialize a payload to bytes for gRPC requests.
+pub fn payload_bytes<T: serde::Serialize>(val: &T) -> Vec<u8> {
+    serde_json::to_vec(val).expect("serialize payload")
+}
+
 /// Wait for a workflow to reach a status, polling with a fixed attempt limit.
 pub async fn wait_for_status(
     server_url: &str,
@@ -372,6 +377,9 @@ pub async fn wait_for_status(
     expected: WorkflowStatus,
     attempts: usize,
 ) -> anyhow::Result<kagzi_proto::kagzi::Workflow> {
+    if attempts == 0 {
+        anyhow::bail!("attempts must be greater than 0");
+    }
     for attempt in 0..attempts {
         let wf = fetch_workflow(server_url, run_id).await?;
         if wf.status == expected as i32 {
@@ -387,7 +395,7 @@ pub async fn wait_for_status(
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
-    unreachable!()
+    unreachable!("wait_for_status should have returned or bailed")
 }
 
 /// Wait for a workflow type to reach a completed count.

@@ -496,7 +496,7 @@ async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
     );
     assert!(
         peak_b.load(Ordering::SeqCst) <= 2,
-        "type_b should respect configured limits, observed {}",
+        "type_b should respect per-type concurrency limit of 2, observed {}",
         peak_b.load(Ordering::SeqCst)
     );
 

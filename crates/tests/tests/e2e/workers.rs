@@ -11,6 +11,9 @@ use tokio::time::sleep;
 use tonic::{Code, Request};
 use uuid::Uuid;
 
+const WORKER_RETRY_COUNT: usize = 20;
+const WORKER_RETRY_DELAY: Duration = Duration::from_millis(100);
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
 struct Empty;
 
@@ -41,7 +44,7 @@ async fn register_worker(
 }
 
 async fn wait_for_worker_row(pool: &sqlx::PgPool, queue: &str) -> anyhow::Result<Uuid> {
-    for _ in 0..20 {
+    for _ in 0..WORKER_RETRY_COUNT {
         if let Some(id) = sqlx::query_scalar::<_, Option<Uuid>>(
             "SELECT worker_id FROM kagzi.workers WHERE task_queue = $1 ORDER BY registered_at DESC LIMIT 1",
         )
@@ -52,7 +55,7 @@ async fn wait_for_worker_row(pool: &sqlx::PgPool, queue: &str) -> anyhow::Result
         {
             return Ok(id);
         }
-        sleep(Duration::from_millis(100)).await;
+        sleep(WORKER_RETRY_DELAY).await;
     }
     anyhow::bail!("worker for queue {} not visible in DB", queue)
 }
@@ -62,7 +65,7 @@ async fn wait_for_worker_count(
     queue: &str,
     expected: i64,
 ) -> anyhow::Result<()> {
-    for _ in 0..20 {
+    for _ in 0..WORKER_RETRY_COUNT {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM kagzi.workers WHERE task_queue = $1 AND status != 'OFFLINE'",
         )
@@ -72,7 +75,7 @@ async fn wait_for_worker_count(
         if count >= expected {
             return Ok(());
         }
-        sleep(Duration::from_millis(100)).await;
+        sleep(WORKER_RETRY_DELAY).await;
     }
     anyhow::bail!("expected {} workers online for queue {}", expected, queue)
 }
@@ -649,7 +652,7 @@ async fn workflow_type_concurrency_limit_per_worker() -> anyhow::Result<()> {
     let observed = peak.load(Ordering::SeqCst);
     assert!(
         observed <= 1,
-        "worker max_concurrent should cap per-type parallelism to 1, saw {}",
+        "workflow_type_concurrency should cap per-type parallelism to 1, saw {}",
         observed
     );
     Ok(())

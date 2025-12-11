@@ -307,6 +307,7 @@ async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
             Ok::<_, anyhow::Error>(())
         },
     );
+    let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
     let retry_policy = RetryPolicy {
@@ -324,23 +325,57 @@ async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
+    let attempts_before = harness.db_workflow_attempts(&run_uuid).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
+    shutdown.cancel();
     handle.abort();
+
+    // Expire lock so watchdog can reclaim promptly.
+    sqlx::query("UPDATE kagzi.workflow_runs SET locked_until = NOW() - INTERVAL '5 seconds' WHERE run_id = $1")
+        .bind(run_uuid)
+        .execute(&harness.pool)
+        .await?;
 
     // Wait for watchdog to schedule retry with backoff.
     sleep(Duration::from_secs(2)).await;
+    for _ in 0..40 {
+        let status = harness.db_workflow_status(&run_uuid).await?;
+        if status == "PENDING" || status == "SLEEPING" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
 
     let attempts = harness.db_workflow_attempts(&run_uuid).await?;
     assert!(
-        attempts >= 1,
-        "attempt counter should be at least initial after reschedule"
+        attempts > attempts_before,
+        "attempt counter should increase after reschedule (before={}, after={})",
+        attempts_before,
+        attempts
     );
 
-    let wake_up_at: Option<chrono::DateTime<chrono::Utc>> =
-        sqlx::query_scalar("SELECT wake_up_at FROM kagzi.workflow_runs WHERE run_id = $1")
+    // Allow some time for wake_up_at to be populated by the scheduler/backoff logic.
+    let wake_up_at: Option<chrono::DateTime<chrono::Utc>> = {
+        let mut attempts_left = 30;
+        loop {
+            if let Some(ts) = sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                "SELECT wake_up_at FROM kagzi.workflow_runs WHERE run_id = $1",
+            )
             .bind(run_uuid)
             .fetch_one(&harness.pool)
-            .await?;
+            .await?
+            {
+                break Some(ts);
+            }
+
+            if attempts_left == 0 {
+                break None;
+            }
+            attempts_left -= 1;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    };
+
     if let Some(wake_up_at) = wake_up_at {
         let now = chrono::Utc::now();
         let delta = (wake_up_at - now).num_milliseconds();
@@ -348,6 +383,12 @@ async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
             (-1500..=5_000).contains(&delta),
             "wake_up_at should be near-term (delta_ms={})",
             delta
+        );
+    } else {
+        let status = harness.db_workflow_status(&run_uuid).await?;
+        assert!(
+            status == "PENDING" || status == "SLEEPING",
+            "workflow should still be pending/sleeping if wake_up_at is missing, got {status}"
         );
     }
 
@@ -381,14 +422,16 @@ async fn orphan_recovery_increments_attempt() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
+    let before = harness.db_workflow_attempts(&run_uuid).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
     handle.abort();
 
     sleep(Duration::from_secs(3)).await;
     let attempts = harness.db_workflow_attempts(&run_uuid).await?;
     assert!(
-        attempts >= 1,
-        "orphan recovery should not reduce attempts (got {})",
+        attempts > before,
+        "orphan recovery should increment attempts (before={}, after={})",
+        before,
         attempts
     );
 

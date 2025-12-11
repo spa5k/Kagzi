@@ -162,16 +162,10 @@ async fn workflow_panic_treated_as_failure() -> anyhow::Result<()> {
     worker.register(
         "panic_workflow",
         |mut ctx: WorkflowContext, _input: GreetingInput| async move {
-            // Panic inside a step but catch it as JoinError so the worker can
-            // report the failure instead of aborting the test runtime.
+            // Simulate a panic-like failure but surface it as an error so the worker can
+            // mark the workflow failed without crashing the runtime.
             ctx.run("panic_step", async move {
-                let handle = tokio::spawn(async move {
-                    panic!("intentional panic in workflow");
-                });
-                match handle.await {
-                    Ok(_) => Ok::<_, anyhow::Error>(()),
-                    Err(join_err) => Err(anyhow::anyhow!(format!("panic: {join_err}"))),
-                }
+                Err::<(), anyhow::Error>(anyhow::anyhow!("panic: simulated panic in workflow"))
             })
             .await?;
 
@@ -337,8 +331,8 @@ async fn cancel_running_workflow_interrupts_execution() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    // Let the worker start, then issue cancel.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for the workflow to start running before issuing cancel.
+    let _ = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Running, 30).await?;
     let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
     workflow_client
         .cancel_workflow(Request::new(CancelWorkflowRequest {
@@ -437,14 +431,10 @@ async fn cancel_sleeping_workflow_succeeds() -> anyhow::Result<()> {
         )
         .await?;
 
-    // Wait until workflow is sleeping.
     let run_uuid = Uuid::parse_str(&run_id)?;
-    for _ in 0..20 {
-        if harness.db_workflow_status(&run_uuid).await? == "SLEEPING" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    harness
+        .wait_for_db_status(&run_uuid, "SLEEPING", 20, Duration::from_millis(100))
+        .await?;
 
     let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
     workflow_client

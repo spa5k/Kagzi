@@ -3,13 +3,9 @@ use std::collections::HashMap;
 use chrono::{Duration, Utc};
 use kagzi_proto::kagzi::workflow_schedule_service_client::WorkflowScheduleServiceClient;
 use kagzi_proto::kagzi::{CreateWorkflowScheduleRequest, Payload, UpdateWorkflowScheduleRequest};
-use tests::common::TestHarness;
+use tests::common::{TestHarness, payload_bytes};
 use tonic::Request;
 use uuid::Uuid;
-
-fn payload_bytes<T: serde::Serialize>(val: &T) -> Vec<u8> {
-    serde_json::to_vec(val).expect("serialize payload")
-}
 
 #[tokio::test]
 async fn create_schedule_computes_next_fire() -> anyhow::Result<()> {

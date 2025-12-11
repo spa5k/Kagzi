@@ -5,13 +5,9 @@ use kagzi_proto::kagzi::{
     GetWorkflowRequest, ListWorkflowsRequest, PageRequest, Payload, StartWorkflowRequest,
     WorkflowStatus,
 };
-use tests::common::TestHarness;
+use tests::common::{TestHarness, payload_bytes};
 use tonic::Request;
 use uuid::Uuid;
-
-fn payload_bytes<T: serde::Serialize>(val: &T) -> Vec<u8> {
-    serde_json::to_vec(val).expect("serialize payload")
-}
 
 #[tokio::test]
 async fn start_workflow_returns_run_id() -> anyhow::Result<()> {
