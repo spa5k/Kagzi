@@ -87,23 +87,34 @@ impl WorkerRepository for PgWorkerRepository {
     async fn register(&self, params: RegisterWorkerParams) -> Result<Uuid, StoreError> {
         let mut tx = self.pool.begin().await?;
 
-        let row = sqlx::query!(
+        let worker_id: Uuid = sqlx::query_scalar!(
             r#"
             INSERT INTO kagzi.workers (
                 namespace_id, task_queue, hostname, pid, version,
-                workflow_types, max_concurrent, labels
+                workflow_types, max_concurrent, labels, status, active_count,
+                last_heartbeat_at, deregistered_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ONLINE', 0, NOW(), NULL)
+            ON CONFLICT (namespace_id, task_queue, hostname, pid) WHERE status != 'OFFLINE'
+            DO UPDATE SET
+                version = EXCLUDED.version,
+                workflow_types = EXCLUDED.workflow_types,
+                max_concurrent = EXCLUDED.max_concurrent,
+                labels = EXCLUDED.labels,
+                status = 'ONLINE',
+                active_count = 0,
+                deregistered_at = NULL,
+                last_heartbeat_at = NOW()
             RETURNING worker_id
             "#,
             &params.namespace_id,
             &params.task_queue,
-            params.hostname,
+            params.hostname.as_deref(),
             params.pid,
-            params.version,
+            params.version.as_deref(),
             &params.workflow_types,
             params.max_concurrent,
-            params.labels
+            &params.labels
         )
         .fetch_one(&mut *tx)
         .await?;
@@ -147,7 +158,7 @@ impl WorkerRepository for PgWorkerRepository {
 
         tx.commit().await?;
 
-        Ok(row.worker_id)
+        Ok(worker_id)
     }
 
     #[instrument(skip(self, params))]

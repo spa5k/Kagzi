@@ -20,5 +20,42 @@ testcontainers = "0.26.0"
 testcontainers-modules = { version = "0.14.0", features = ["postgres"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-stream = { version = "0.1", features = ["net"] }
+tokio-util = { workspace = true }
 tonic = { workspace = true, features = ["transport"] }
 uuid = { workspace = true }
+
+[[test]]
+name = "e2e_workflow"
+path = "tests/e2e/workflow.rs"
+
+[[test]]
+name = "e2e_resilience"
+path = "tests/e2e/resilience.rs"
+
+[[test]]
+name = "e2e_scheduling"
+path = "tests/e2e/scheduling.rs"
+
+[[test]]
+name = "e2e_concurrency"
+path = "tests/e2e/concurrency.rs"
+
+[[test]]
+name = "e2e_workers"
+path = "tests/e2e/workers.rs"
+
+[[test]]
+name = "service_workflow_api"
+path = "tests/service/workflow_api.rs"
+
+[[test]]
+name = "service_worker_api"
+path = "tests/service/worker_api.rs"
+
+[[test]]
+name = "service_schedule_api"
+path = "tests/service/schedule_api.rs"
+
+[[test]]
+name = "service_admin_api"
+path = "tests/service/admin_api.rs"

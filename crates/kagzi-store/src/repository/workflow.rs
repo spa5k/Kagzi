@@ -31,6 +31,12 @@ pub trait WorkflowRepository: Send + Sync {
         params: ListWorkflowsParams,
     ) -> Result<PaginatedResult<WorkflowRun, WorkflowCursor>, StoreError>;
 
+    async fn count(
+        &self,
+        namespace_id: &str,
+        filter_status: Option<&str>,
+    ) -> Result<i64, StoreError>;
+
     async fn check_exists(
         &self,
         run_id: Uuid,

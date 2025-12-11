@@ -131,6 +131,13 @@ impl WorkDistributor {
                 let mut remaining = Vec::new();
 
                 for ((worker_id, supported_types), mut group_requests) in grouped {
+                    // Filter out requests where the receiver has been dropped (poll timed out)
+                    group_requests.retain(|req| !req.response_tx.is_closed());
+
+                    if group_requests.is_empty() {
+                        continue;
+                    }
+
                     let limit = group_requests.len();
                     match self
                         .store
@@ -148,6 +155,10 @@ impl WorkDistributor {
                         Ok(mut claimed) => {
                             // Distribute claimed workflows to compatible waiters
                             for request in group_requests.drain(..) {
+                                // Double-check receiver is still alive before claiming
+                                if request.response_tx.is_closed() {
+                                    continue;
+                                }
                                 if let Some(pos) = claimed.iter().position(|wf| {
                                     supported_types.is_empty()
                                         || supported_types.contains(&wf.workflow_type)
