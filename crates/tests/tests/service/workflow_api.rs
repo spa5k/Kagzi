@@ -37,6 +37,7 @@ async fn start_workflow_returns_run_id() -> anyhow::Result<()> {
         .into_inner();
 
     assert!(!resp.run_id.is_empty(), "run_id should be returned");
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -80,6 +81,7 @@ async fn get_workflow_returns_correct_state() -> anyhow::Result<()> {
         .db_workflow_status(&Uuid::parse_str(&start.run_id)?)
         .await?;
     assert_eq!(db_status, "PENDING");
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -109,6 +111,7 @@ async fn start_workflow_rejects_oversized_input() -> anyhow::Result<()> {
     assert!(result.is_err(), "expected payload rejection");
     let status = result.unwrap_err();
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -141,6 +144,7 @@ async fn start_workflow_accepts_large_but_within_limit_input() -> anyhow::Result
         !resp.run_id.is_empty(),
         "run_id should be returned for acceptable payload size"
     );
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -222,5 +226,6 @@ async fn list_workflows_paginates_results() -> anyhow::Result<()> {
         );
     }
 
+    harness.shutdown().await?;
     Ok(())
 }

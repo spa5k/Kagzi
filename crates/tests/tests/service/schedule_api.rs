@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::{Duration, Utc};
 use kagzi_proto::kagzi::workflow_schedule_service_client::WorkflowScheduleServiceClient;
 use kagzi_proto::kagzi::{CreateWorkflowScheduleRequest, Payload, UpdateWorkflowScheduleRequest};
 use tests::common::TestHarness;
@@ -39,7 +40,12 @@ async fn create_schedule_computes_next_fire() -> anyhow::Result<()> {
     let next = harness
         .db_schedule_next_fire(&Uuid::parse_str(&created.schedule_id)?)
         .await?;
-    assert!(next.timestamp() > 0, "db next_fire_at should exist");
+    let now = Utc::now();
+    assert!(
+        next > now && next < now + Duration::seconds(5),
+        "next_fire_at should be within 5 seconds from now"
+    );
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -88,6 +94,10 @@ async fn update_schedule_recomputes_next_fire() -> anyhow::Result<()> {
         .expect("schedule should exist");
 
     assert!(updated.next_fire_at.is_some());
+    assert!(
+        created.next_fire_at.is_some(),
+        "created schedule should have next_fire_at"
+    );
     assert_ne!(
         updated.next_fire_at.unwrap().seconds,
         created.next_fire_at.unwrap().seconds
@@ -96,6 +106,7 @@ async fn update_schedule_recomputes_next_fire() -> anyhow::Result<()> {
         .db_schedule_next_fire(&Uuid::parse_str(&updated.schedule_id)?)
         .await?;
     assert!(db_next.timestamp() > 0, "db next_fire_at should update");
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -123,5 +134,6 @@ async fn create_schedule_rejects_invalid_cron() -> anyhow::Result<()> {
 
     assert!(err.is_err(), "invalid cron should fail");
     assert_eq!(err.unwrap_err().code(), tonic::Code::InvalidArgument);
+    harness.shutdown().await?;
     Ok(())
 }

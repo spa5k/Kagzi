@@ -5,41 +5,12 @@ use std::time::Duration;
 use kagzi::WorkflowContext;
 use kagzi_proto::kagzi::WorkflowStatus;
 use serde::{Deserialize, Serialize};
-use tests::common::{TestConfig, TestHarness, wait_for_status};
+use tests::common::{TestConfig, TestHarness, wait_for_completed_by_type, wait_for_status};
 use tokio::time::sleep;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
 struct Empty;
-
-async fn wait_completed(
-    pool: &sqlx::PgPool,
-    workflow_type: &str,
-    expected: usize,
-) -> anyhow::Result<()> {
-    let mut attempts = 0;
-    loop {
-        let done: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM kagzi.workflow_runs WHERE workflow_type = $1 AND status = 'COMPLETED'",
-        )
-        .bind(workflow_type)
-        .fetch_one(pool)
-        .await?;
-        if done as usize >= expected {
-            return Ok(());
-        }
-        if attempts > 40 {
-            anyhow::bail!(
-                "timed out waiting for {} completed runs of {} (got {})",
-                expected,
-                workflow_type,
-                done
-            );
-        }
-        attempts += 1;
-        sleep(Duration::from_millis(250)).await;
-    }
-}
 
 #[tokio::test]
 async fn worker_respects_max_concurrent() -> anyhow::Result<()> {
@@ -76,7 +47,14 @@ async fn worker_respects_max_concurrent() -> anyhow::Result<()> {
         client.workflow("slow_wf", queue, Empty).await?;
     }
 
-    wait_completed(&harness.pool, "slow_wf", total).await?;
+    wait_for_completed_by_type(
+        &harness.pool,
+        "slow_wf",
+        total,
+        40,
+        Duration::from_millis(250),
+    )
+    .await?;
     let completed = harness.db_count_workflows_by_status("COMPLETED").await?;
     assert!(
         completed as usize >= total,
@@ -136,7 +114,14 @@ async fn multiple_workers_share_queue() -> anyhow::Result<()> {
         client.workflow("multi_wf", queue, Empty).await?;
     }
 
-    wait_completed(&harness.pool, "multi_wf", total).await?;
+    wait_for_completed_by_type(
+        &harness.pool,
+        "multi_wf",
+        total,
+        40,
+        Duration::from_millis(250),
+    )
+    .await?;
     let completed = harness.db_count_workflows_by_status("COMPLETED").await?;
     assert!(
         completed as usize >= total,
@@ -220,7 +205,14 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
         client.workflow("rapid_poll", queue, Empty).await?;
     }
 
-    wait_completed(&harness.pool, "rapid_poll", total).await?;
+    wait_for_completed_by_type(
+        &harness.pool,
+        "rapid_poll",
+        total,
+        40,
+        Duration::from_millis(250),
+    )
+    .await?;
     let processed =
         w1.load(Ordering::SeqCst) + w2.load(Ordering::SeqCst) + w3.load(Ordering::SeqCst);
     assert_eq!(
@@ -373,8 +365,8 @@ async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<(
         client.workflow("type_b", queue, Empty).await?;
     }
 
-    wait_completed(&harness.pool, "type_a", 5).await?;
-    wait_completed(&harness.pool, "type_b", 5).await?;
+    wait_for_completed_by_type(&harness.pool, "type_a", 5, 40, Duration::from_millis(250)).await?;
+    wait_for_completed_by_type(&harness.pool, "type_b", 5, 40, Duration::from_millis(250)).await?;
 
     let a_total = a_hits.load(Ordering::SeqCst);
     let b_total = b_hits.load(Ordering::SeqCst);
@@ -422,7 +414,14 @@ async fn max_concurrent_enforced_across_burst() -> anyhow::Result<()> {
         client.workflow("queue_limited", queue, Empty).await?;
     }
 
-    wait_completed(&harness.pool, "queue_limited", total).await?;
+    wait_for_completed_by_type(
+        &harness.pool,
+        "queue_limited",
+        total,
+        40,
+        Duration::from_millis(250),
+    )
+    .await?;
     assert!(
         peak.load(Ordering::SeqCst) <= 1,
         "max_concurrent should cap parallelism to 1, observed {}",
@@ -487,8 +486,8 @@ async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
         client.workflow("type_b", queue, Empty).await?;
     }
 
-    wait_completed(&harness.pool, "type_a", 4).await?;
-    wait_completed(&harness.pool, "type_b", 4).await?;
+    wait_for_completed_by_type(&harness.pool, "type_a", 4, 40, Duration::from_millis(250)).await?;
+    wait_for_completed_by_type(&harness.pool, "type_b", 4, 40, Duration::from_millis(250)).await?;
 
     assert!(
         peak_a.load(Ordering::SeqCst) <= 2,
@@ -532,7 +531,14 @@ async fn burst_of_workflows_completes_without_drops() -> anyhow::Result<()> {
         client.workflow("burst_work", queue, Empty).await?;
     }
 
-    wait_completed(&harness.pool, "burst_work", total).await?;
+    wait_for_completed_by_type(
+        &harness.pool,
+        "burst_work",
+        total,
+        40,
+        Duration::from_millis(250),
+    )
+    .await?;
     let observed = completed.load(Ordering::SeqCst);
     assert_eq!(
         observed, total,

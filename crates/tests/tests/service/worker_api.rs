@@ -39,6 +39,7 @@ async fn register_returns_worker_id() -> anyhow::Result<()> {
         .db_worker_status(&Uuid::parse_str(&resp.worker_id)?)
         .await?;
     assert_eq!(db_status, "ONLINE");
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -58,6 +59,7 @@ async fn poll_requires_registered_worker() -> anyhow::Result<()> {
 
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -186,5 +188,6 @@ async fn poll_filters_by_workflow_types() -> anyhow::Result<()> {
             }),
         }))
         .await?;
+    harness.shutdown().await?;
     Ok(())
 }

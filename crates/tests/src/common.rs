@@ -2,9 +2,10 @@
 //! running inside testcontainers.
 
 use std::net::SocketAddr;
+use std::path::Path;
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use kagzi::{Client, Worker};
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
@@ -61,6 +62,7 @@ pub struct TestHarness {
     pub server_url: String,
     pub server_addr: SocketAddr,
     _container: ContainerAsync<Postgres>,
+    server_handle: Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>>,
     shutdown: CancellationToken,
 }
 
@@ -94,10 +96,13 @@ impl TestHarness {
             .await
             .expect("Failed to connect to test database");
 
-        sqlx::migrate!("../../migrations")
-            .run(&pool)
+        let migrations_dir = std::env::var("MIGRATIONS_DIR")
+            .unwrap_or_else(|_| format!("{}/../../migrations", env!("CARGO_MANIFEST_DIR")));
+        let migrator = sqlx::migrate::Migrator::new(Path::new(&migrations_dir))
             .await
-            .expect("Failed to run migrations");
+            .expect("Failed to load migrations");
+
+        migrator.run(&pool).await.expect("Failed to run migrations");
 
         let store = PgStore::new(pool.clone(), StoreConfig::default());
 
@@ -146,7 +151,7 @@ impl TestHarness {
         let worker_service = WorkerServiceImpl::new(store.clone(), worker_settings);
 
         let server_shutdown = shutdown.child_token();
-        tokio::spawn(async move {
+        let server_handle = tokio::spawn(async move {
             Server::builder()
                 .add_service(kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer::new(
                     workflow_service,
@@ -164,7 +169,6 @@ impl TestHarness {
                 ))
                 .serve_with_incoming_shutdown(incoming, server_shutdown.cancelled())
                 .await
-                .expect("Server failed");
         });
 
         TestHarness {
@@ -172,6 +176,7 @@ impl TestHarness {
             server_url: format!("http://{}", addr),
             server_addr: addr,
             _container: container,
+            server_handle: Some(server_handle),
             shutdown,
         }
     }
@@ -329,6 +334,18 @@ impl TestHarness {
             self.db_step_status(run_id, step_id).await?
         );
     }
+
+    /// Shutdown the harness and surface server failures.
+    pub async fn shutdown(mut self) -> anyhow::Result<()> {
+        self.shutdown.cancel();
+        if let Some(handle) = self.server_handle.take() {
+            handle
+                .await
+                .map_err(|err| anyhow!("server task panicked: {err}"))?
+                .map_err(|err| anyhow!("server failed: {err}"))?;
+        }
+        Ok(())
+    }
 }
 
 /// Fetch workflow via gRPC by run_id (string).
@@ -373,8 +390,46 @@ pub async fn wait_for_status(
     unreachable!()
 }
 
+/// Wait for a workflow type to reach a completed count.
+pub async fn wait_for_completed_by_type(
+    pool: &PgPool,
+    workflow_type: &str,
+    expected: usize,
+    attempts: usize,
+    delay: Duration,
+) -> anyhow::Result<()> {
+    for attempt in 0..attempts {
+        let done: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM kagzi.workflow_runs WHERE workflow_type = $1 AND status = 'COMPLETED'",
+        )
+        .bind(workflow_type)
+        .fetch_one(pool)
+        .await?;
+
+        if done as usize >= expected {
+            return Ok(());
+        }
+
+        if attempt == attempts - 1 {
+            anyhow::bail!(
+                "timed out waiting for {} completed runs of {} (got {})",
+                expected,
+                workflow_type,
+                done
+            );
+        }
+
+        tokio::time::sleep(delay).await;
+    }
+
+    unreachable!()
+}
+
 impl Drop for TestHarness {
     fn drop(&mut self) {
         self.shutdown.cancel();
+        if let Some(handle) = self.server_handle.take() {
+            handle.abort();
+        }
     }
 }

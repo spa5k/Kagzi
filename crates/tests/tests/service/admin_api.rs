@@ -48,5 +48,6 @@ async fn list_workers_returns_registered() -> anyhow::Result<()> {
         "expected at least two workers, got {}",
         resp.workers.len()
     );
+    harness.shutdown().await?;
     Ok(())
 }

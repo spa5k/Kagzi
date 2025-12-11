@@ -42,13 +42,9 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
     let run_uuid = Uuid::parse_str(&run_id)?;
 
     // Wait for workflow to enter SLEEPING state
-    for _ in 0..20 {
-        let status = harness.db_workflow_status(&run_uuid).await?;
-        if status == "SLEEPING" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+    harness
+        .wait_for_db_status(&run_uuid, "SLEEPING", 20, Duration::from_millis(250))
+        .await?;
 
     let pre_kill_status = harness.db_workflow_status(&run_uuid).await?;
     assert_eq!(
@@ -58,12 +54,15 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
 
     // Wait for the sleep step to be marked COMPLETED. There's a window between workflow
     // entering SLEEPING and the step being marked COMPLETED.
-    for _ in 0..20 {
-        if harness.db_step_status(&run_uuid, "__sleep_0").await? == Some("COMPLETED".to_string()) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    harness
+        .wait_for_step_status(
+            &run_uuid,
+            "__sleep_0",
+            "COMPLETED",
+            20,
+            Duration::from_millis(100),
+        )
+        .await?;
 
     let step_status = harness.db_step_status(&run_uuid, "__sleep_0").await?;
     assert_eq!(

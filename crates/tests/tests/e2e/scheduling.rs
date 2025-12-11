@@ -40,7 +40,12 @@ async fn scheduler_fires_workflow_on_cron() -> anyhow::Result<()> {
         "expected at least one workflow fired by scheduler, got {}",
         count
     );
-    let completed = harness.db_count_workflows_by_status("COMPLETED").await?;
+    let completed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM kagzi.workflow_runs WHERE workflow_type = $1 AND status = 'COMPLETED'",
+    )
+    .bind("cron_wf")
+    .fetch_one(&harness.pool)
+    .await?;
     assert!(
         completed >= 1,
         "db helper should also see completed workflows, got {}",
@@ -49,6 +54,7 @@ async fn scheduler_fires_workflow_on_cron() -> anyhow::Result<()> {
 
     shutdown.cancel();
     let _ = handle.await;
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -92,7 +98,12 @@ async fn scheduler_catchup_fires_missed_runs() -> anyhow::Result<()> {
         "expected catchup to fire multiple runs, got {}",
         fired
     );
-    let completed = harness.db_count_workflows_by_status("COMPLETED").await?;
+    let completed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id = $1 AND status = 'COMPLETED'",
+    )
+    .bind(schedule.schedule_id.clone())
+    .fetch_one(&harness.pool)
+    .await?;
     assert!(
         completed + 1 >= fired,
         "completed should be close to fired (allow 1 in-flight); completed={}, fired={}",
@@ -102,6 +113,7 @@ async fn scheduler_catchup_fires_missed_runs() -> anyhow::Result<()> {
 
     shutdown.cancel();
     let _ = handle.await;
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -124,6 +136,11 @@ async fn disabled_schedule_does_not_fire() -> anyhow::Result<()> {
         .enabled(false)
         .await?;
     let schedule_id = Uuid::parse_str(&schedule.schedule_id)?;
+    let initial_next = schedule
+        .next_fire_at
+        .as_ref()
+        .and_then(|ts| chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32))
+        .expect("next_fire_at should be set");
 
     // Wait longer than one cron interval; nothing should fire.
     sleep(Duration::from_secs(3)).await;
@@ -141,11 +158,18 @@ async fn disabled_schedule_does_not_fire() -> anyhow::Result<()> {
     // Ensure next_fire_at remains in the future and schedule stays disabled.
     let next_fire = harness.db_schedule_next_fire(&schedule_id).await?;
     assert!(
-        next_fire.timestamp() > 0,
-        "next_fire_at should still be set even when disabled"
+        next_fire >= initial_next,
+        "next_fire_at should not regress when schedule is disabled"
     );
+    let enabled: bool =
+        sqlx::query_scalar("SELECT enabled FROM kagzi.schedules WHERE schedule_id = $1")
+            .bind(schedule_id)
+            .fetch_one(&harness.pool)
+            .await?;
+    assert!(!enabled, "schedule should remain disabled in the database");
 
     shutdown.cancel();
     let _ = handle.await;
+    harness.shutdown().await?;
     Ok(())
 }
