@@ -238,6 +238,41 @@ pub(super) async fn list(
     })
 }
 
+#[instrument(skip(repo, filter_status))]
+pub(super) async fn count(
+    repo: &PgWorkflowRepository,
+    namespace_id: &str,
+    filter_status: Option<&str>,
+) -> Result<i64, StoreError> {
+    let count = if let Some(status) = filter_status {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*) as count
+            FROM kagzi.workflow_runs
+            WHERE namespace_id = $1
+              AND status = $2
+            "#,
+        )
+        .bind(namespace_id)
+        .bind(status)
+        .fetch_one(&repo.pool)
+        .await?
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*) as count
+            FROM kagzi.workflow_runs
+            WHERE namespace_id = $1
+            "#,
+        )
+        .bind(namespace_id)
+        .fetch_one(&repo.pool)
+        .await?
+    };
+
+    Ok(count)
+}
+
 #[instrument(skip(repo))]
 pub(super) async fn check_exists(
     repo: &PgWorkflowRepository,

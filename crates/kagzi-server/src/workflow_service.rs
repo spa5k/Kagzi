@@ -281,17 +281,31 @@ impl WorkflowService for WorkflowServiceImpl {
             .map_err(|_| invalid_argument("Invalid status_filter"))?
             .map(workflow_status_to_string);
 
+        let filter_status_for_list = filter_status.clone();
+
+        let namespace_for_list = namespace_id.clone();
+
         let result = self
             .store
             .workflows()
             .list(ListWorkflowsParams {
-                namespace_id,
-                filter_status,
+                namespace_id: namespace_for_list,
+                filter_status: filter_status_for_list,
                 page_size,
                 cursor,
             })
             .await
             .map_err(map_store_error)?;
+
+        let total_count = if page.include_total_count {
+            self.store
+                .workflows()
+                .count(&namespace_id, filter_status.as_deref())
+                .await
+                .map_err(map_store_error)?
+        } else {
+            0
+        };
 
         let next_page_token = result
             .next_cursor
@@ -310,7 +324,7 @@ impl WorkflowService for WorkflowServiceImpl {
             page: Some(PageInfo {
                 next_page_token,
                 has_more: result.has_more,
-                total_count: 0, // not available in current store implementation
+                total_count,
             }),
         });
 

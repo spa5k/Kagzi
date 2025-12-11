@@ -23,7 +23,7 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 1.3 Multi-Worker Scenarios
 
-- [ ] **multiple_workers_same_queue_fair_distribution** - Work is distributed fairly among workers
+- [x] **multiple_workers_same_queue_fair_distribution** - Work is distributed fairly among workers
 - [ ] **worker_with_different_workflow_types_only_receives_matching** - Type filtering works correctly
 - [ ] **worker_concurrency_limit_respected** - Worker never exceeds max_concurrent setting
 - [ ] **workflow_type_concurrency_limit_per_worker** - Per-type limits are enforced
@@ -49,7 +49,7 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 ### 2.3 Cancellation
 
 - [ ] **cancel_pending_workflow_succeeds** - Can cancel before execution starts
-- [ ] **cancel_running_workflow_interrupts_execution** - Running workflows can be stopped
+- [x] **cancel_running_workflow_interrupts_execution** - Running workflows can be stopped
 - [ ] **cancel_sleeping_workflow_succeeds** - Sleeping workflows can be cancelled
 - [ ] **cancel_completed_workflow_fails** - Cannot cancel already-completed workflows
 - [ ] **cancel_idempotent_on_same_workflow** - Multiple cancel calls are safe
@@ -74,7 +74,7 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 3.3 Step Retry
 
-- [ ] **step_retry_respects_max_attempts** - Stops after max retries
+- [x] **step_retry_respects_max_attempts** - Stops after max retries
 - [ ] **step_retry_respects_backoff_policy** - Exponential backoff works correctly
 - [ ] **step_retry_non_retryable_error_stops_immediately** - Non-retryable errors bypass retry
 - [ ] **step_retry_at_honored_before_reexecution** - Cannot retry before scheduled time
@@ -101,7 +101,7 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 ### 4.3 Sleep Edge Cases
 
 - [ ] **multiple_sleeps_in_sequence** - Workflow with multiple sleeps works correctly
-- [ ] **sleep_with_worker_death_mid_sleep** - New worker picks up after original dies
+- [x] **sleep_with_worker_death_mid_sleep** - New worker picks up after original dies
 - [ ] **sleep_during_worker_shutdown_completes_step** - Graceful shutdown finishes sleep step
 
 ---
@@ -110,7 +110,7 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 5.1 Claim Races
 
-- [ ] **concurrent_poll_same_workflow_only_one_claims** - FOR UPDATE SKIP LOCKED works
+- [x] **concurrent_poll_same_workflow_only_one_claims** - FOR UPDATE SKIP LOCKED works
 - [ ] **rapid_poll_burst_no_duplicate_claims** - High poll rate doesn't cause issues
 - [ ] **claim_during_status_transition_handled** - Race between claim and status change
 
@@ -125,6 +125,10 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 - [ ] **complete_and_fail_race_one_wins** - Only one terminal state is recorded
 - [ ] **cancel_during_completion_race** - Cancel vs complete race is handled
 - [ ] **step_complete_during_workflow_cancel** - In-flight steps during cancel
+
+### 5.4 Stress & Throughput
+
+- [x] **workflow_burst_completes_without_loss** - Stress burst finishes all workflows
 
 ---
 
@@ -156,22 +160,24 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 7.1 Basic Scheduling
 
-- [ ] **schedule_fires_at_next_cron_time** - Workflow created at scheduled time
+- [x] **schedule_fires_at_next_cron_time** - Workflow created at scheduled time
 - [ ] **schedule_advances_after_fire** - next_fire_at updated after execution
-- [ ] **schedule_invalid_cron_rejected** - Bad cron expressions fail validation
-- [ ] **schedule_pause_stops_firing** - Paused schedules don't create workflows
+- [x] **schedule_invalid_cron_rejected** - Bad cron expressions fail validation
+- [x] **schedule_pause_stops_firing** - Paused schedules don't create workflows
 
 ### 7.2 Catchup & Missed Fires
 
-- [ ] **schedule_catchup_fires_missed_runs** - Missed runs are caught up
+- [x] **schedule_catchup_fires_missed_runs** - Missed runs are caught up
 - [ ] **schedule_max_catchup_limits_burst** - Catchup respects max_catchup setting
 - [ ] **schedule_idempotency_prevents_duplicates** - Same fire time doesn't create duplicates
 
 ### 7.3 Schedule Management
 
-- [ ] **schedule_update_recomputes_next_fire** - Changing cron recalculates timing
+- [x] **schedule_update_recomputes_next_fire** - Changing cron recalculates timing
 - [ ] **schedule_delete_stops_all_firing** - Deleted schedules stop immediately
 - [ ] **schedule_list_returns_all_for_namespace** - Listing works with filters
+- [x] **workflow_list_paginates_results** - ListWorkflows respects page size/token
+- [x] **workflow_list_paginates_results** - ListWorkflows respects page size/token
 
 ---
 
@@ -179,8 +185,8 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 8.1 Size Limits
 
-- [ ] **workflow_input_at_limit_accepted** - Max size input works
-- [ ] **workflow_input_over_limit_rejected** - Oversized input fails with clear error
+- [x] **workflow_input_at_limit_accepted** - Max size input works
+- [x] **workflow_input_over_limit_rejected** - Oversized input fails with clear error
 - [ ] **step_output_over_limit_rejected** - Large step outputs are rejected
 - [ ] **workflow_output_over_limit_rejected** - Large final outputs are rejected
 

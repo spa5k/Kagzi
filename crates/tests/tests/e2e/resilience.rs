@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use kagzi::WorkflowContext;
@@ -151,6 +153,80 @@ async fn orphaned_workflow_recovered_after_worker_death() -> anyhow::Result<()> 
     );
 
     shutdown2.cancel();
+    let _ = handle2.await;
+    Ok(())
+}
+
+/// Ensure only one worker can claim a workflow under a poll race.
+#[tokio::test]
+async fn single_worker_claims_workflow_under_race() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        poll_timeout_secs: 1,
+        watchdog_interval_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-resilience-claim-race";
+
+    let w1_hits = Arc::new(AtomicUsize::new(0));
+    let w2_hits = Arc::new(AtomicUsize::new(0));
+
+    let mut worker1 = harness.worker(queue).await;
+    let c1 = w1_hits.clone();
+    worker1.register("racey", move |_ctx: WorkflowContext, _input: SleepInput| {
+        let c1 = c1.clone();
+        async move {
+            c1.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            Ok::<_, anyhow::Error>(())
+        }
+    });
+    let shutdown1 = worker1.shutdown_token();
+    let handle1 = tokio::spawn(async move { worker1.run().await });
+
+    let mut worker2 = harness.worker(queue).await;
+    let c2 = w2_hits.clone();
+    worker2.register("racey", move |_ctx: WorkflowContext, _input: SleepInput| {
+        let c2 = c2.clone();
+        async move {
+            c2.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            Ok::<_, anyhow::Error>(())
+        }
+    });
+    let shutdown2 = worker2.shutdown_token();
+    let handle2 = tokio::spawn(async move { worker2.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow("racey", queue, SleepInput { seconds: 0 })
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    // Complete should happen exactly once despite two workers polling.
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 30).await?;
+    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+
+    // Only one worker should have executed the workflow.
+    let total_hits = w1_hits.load(Ordering::SeqCst) + w2_hits.load(Ordering::SeqCst);
+    assert_eq!(
+        total_hits,
+        1,
+        "exactly one worker should execute the workflow (w1={}, w2={})",
+        w1_hits.load(Ordering::SeqCst),
+        w2_hits.load(Ordering::SeqCst)
+    );
+
+    // DB attempts should reflect a single claim.
+    let attempts = harness.db_workflow_attempts(&run_uuid).await?;
+    assert_eq!(
+        attempts, 1,
+        "workflow should only have one attempt recorded"
+    );
+
+    shutdown1.cancel();
+    shutdown2.cancel();
+    let _ = handle1.await;
     let _ = handle2.await;
     Ok(())
 }

@@ -106,10 +106,17 @@ impl WorkflowContext {
                     error: Some(kagzi_err.to_detail()),
                 }));
 
-                self.client
+                let fail_resp = self
+                    .client
                     .fail_step(fail_request)
                     .await
-                    .map_err(map_grpc_error)?;
+                    .map_err(map_grpc_error)?
+                    .into_inner();
+
+                if fail_resp.scheduled_retry {
+                    return Err(WorkflowPaused.into());
+                }
+
                 Err(anyhow::Error::new(kagzi_err))
             }
         }
@@ -218,10 +225,17 @@ impl WorkflowContext {
                     error: Some(kagzi_err.to_detail()),
                 }));
 
-                self.client
+                let fail_resp = self
+                    .client
                     .fail_step(fail_request)
                     .await
-                    .map_err(map_grpc_error)?;
+                    .map_err(map_grpc_error)?
+                    .into_inner();
+
+                if fail_resp.scheduled_retry {
+                    return Err(WorkflowPaused.into());
+                }
+
                 Err(anyhow::Error::new(kagzi_err))
             }
         }

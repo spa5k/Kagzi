@@ -104,3 +104,48 @@ async fn scheduler_catchup_fires_missed_runs() -> anyhow::Result<()> {
     let _ = handle.await;
     Ok(())
 }
+
+#[tokio::test]
+async fn disabled_schedule_does_not_fire() -> anyhow::Result<()> {
+    let harness = TestHarness::new().await;
+    let queue = "e2e-scheduling-disabled";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "disabled_wf",
+        |_ctx: WorkflowContext, _input: Empty| async move { Ok::<_, anyhow::Error>(()) },
+    );
+    let shutdown = worker.shutdown_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let schedule = client
+        .workflow_schedule("disabled_wf", queue, "*/1 * * * * *", Empty)
+        .enabled(false)
+        .await?;
+    let schedule_id = Uuid::parse_str(&schedule.schedule_id)?;
+
+    // Wait longer than one cron interval; nothing should fire.
+    sleep(Duration::from_secs(3)).await;
+
+    let fired: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id = $1")
+            .bind(schedule.schedule_id.clone())
+            .fetch_one(&harness.pool)
+            .await?;
+    assert_eq!(
+        fired, 0,
+        "disabled schedule should not fire any workflow runs"
+    );
+
+    // Ensure next_fire_at remains in the future and schedule stays disabled.
+    let next_fire = harness.db_schedule_next_fire(&schedule_id).await?;
+    assert!(
+        next_fire.timestamp() > 0,
+        "next_fire_at should still be set even when disabled"
+    );
+
+    shutdown.cancel();
+    let _ = handle.await;
+    Ok(())
+}

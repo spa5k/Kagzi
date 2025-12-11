@@ -159,3 +159,42 @@ async fn multiple_workers_share_queue() -> anyhow::Result<()> {
     let _ = handle2.await;
     Ok(())
 }
+
+#[tokio::test]
+async fn burst_of_workflows_completes_without_drops() -> anyhow::Result<()> {
+    let harness = TestHarness::new().await;
+    let queue = "e2e-concurrency-burst";
+    let total = 20;
+
+    let completed = Arc::new(AtomicUsize::new(0));
+
+    let mut worker = harness.worker(queue).await;
+    let counter = completed.clone();
+    worker.register("burst_work", move |_ctx: WorkflowContext, _: Empty| {
+        let counter = counter.clone();
+        async move {
+            sleep(Duration::from_millis(50)).await;
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, anyhow::Error>(())
+        }
+    });
+    let shutdown = worker.shutdown_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    for _ in 0..total {
+        client.workflow("burst_work", queue, Empty).await?;
+    }
+
+    wait_completed(&harness.pool, "burst_work", total).await?;
+    let observed = completed.load(Ordering::SeqCst);
+    assert_eq!(
+        observed, total,
+        "all workflows in burst should complete (observed={})",
+        observed
+    );
+
+    shutdown.cancel();
+    let _ = handle.await;
+    Ok(())
+}

@@ -59,6 +59,14 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::list(self, params).await
     }
 
+    async fn count(
+        &self,
+        namespace_id: &str,
+        filter_status: Option<&str>,
+    ) -> Result<i64, StoreError> {
+        state::count(self, namespace_id, filter_status).await
+    }
+
     async fn check_exists(
         &self,
         run_id: Uuid,

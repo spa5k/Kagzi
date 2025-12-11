@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::time::Duration;
 
+use chrono::Utc;
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
@@ -129,7 +130,7 @@ impl WorkerService for WorkerServiceImpl {
 
         Ok(Response::new(RegisterResponse {
             worker_id: worker_id.to_string(),
-            heartbeat_interval_secs: 10,
+            heartbeat_interval_secs: 1,
         }))
     }
 
@@ -637,10 +638,23 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?;
 
-        let retry_at = result.retry_at.map(|dt| prost_types::Timestamp {
+        let retry_at_dt = result.retry_at;
+        let retry_at = retry_at_dt.map(|dt| prost_types::Timestamp {
             seconds: dt.timestamp(),
             nanos: dt.timestamp_subsec_nanos() as i32,
         });
+
+        if result.scheduled_retry {
+            let delay_ms = retry_at_dt
+                .map(|dt| (dt - Utc::now()).num_milliseconds().max(0) as u64)
+                .unwrap_or(0);
+
+            self.store
+                .workflows()
+                .schedule_retry(run_id, delay_ms)
+                .await
+                .map_err(map_store_error)?;
+        }
 
         log_grpc_response(
             "FailStep",
