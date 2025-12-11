@@ -314,7 +314,7 @@ async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn worker_with_different_workflow_types_only_receives_matching() -> anyhow::Result<()> {
+async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-concurrency-type-filter";
 
@@ -389,7 +389,7 @@ async fn worker_with_different_workflow_types_only_receives_matching() -> anyhow
 }
 
 #[tokio::test]
-async fn worker_concurrency_limit_respected() -> anyhow::Result<()> {
+async fn max_concurrent_enforced_across_burst() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-concurrency-queue-limit";
     let total = 6;
@@ -435,7 +435,7 @@ async fn worker_concurrency_limit_respected() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn workflow_type_concurrency_limit_per_worker() -> anyhow::Result<()> {
+async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-concurrency-type-limit";
 

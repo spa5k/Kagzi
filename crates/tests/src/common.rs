@@ -114,6 +114,7 @@ impl TestHarness {
         };
         let worker_settings = WorkerSettings {
             poll_timeout_secs: config.poll_timeout_secs,
+            heartbeat_interval_secs: 1, // Fast heartbeat for tests
         };
 
         let shutdown = CancellationToken::new();

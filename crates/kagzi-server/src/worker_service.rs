@@ -130,7 +130,7 @@ impl WorkerService for WorkerServiceImpl {
 
         Ok(Response::new(RegisterResponse {
             worker_id: worker_id.to_string(),
-            heartbeat_interval_secs: 1,
+            heartbeat_interval_secs: self.worker_settings.heartbeat_interval_secs as i32,
         }))
     }
 

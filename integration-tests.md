@@ -34,25 +34,25 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 2.1 Happy Path
 
-- [ ] **simple_workflow_completes_successfully** - Basic workflow runs and completes
-- [ ] **workflow_with_input_receives_correct_data** - Input is correctly deserialized
-- [ ] **workflow_output_stored_and_retrievable** - Output is persisted and can be fetched
-- [ ] **workflow_context_preserved_across_steps** - Context is maintained throughout execution
+- [x] **simple_workflow_completes_successfully** - Basic workflow runs and completes (`happy_path_workflow_execution`)
+- [x] **workflow_with_input_receives_correct_data** - Input is correctly deserialized
+- [x] **workflow_output_stored_and_retrievable** - Output is persisted and can be fetched
+- [x] **workflow_context_preserved_across_steps** - Context is maintained throughout execution (`workflow_with_multiple_steps`)
 
 ### 2.2 Failure Handling
 
-- [ ] **workflow_failure_records_error_message** - Error details are captured
+- [x] **workflow_failure_records_error_message** - Error details are captured (`workflow_failure_propagates_error`)
 - [ ] **workflow_panic_treated_as_failure** - Panics are caught and recorded
 - [ ] **workflow_timeout_triggers_failure** - Deadline exceeded causes failure
-- [ ] **non_retryable_error_fails_immediately** - Non-retryable errors skip retry logic
+- [x] **non_retryable_error_fails_immediately** - Non-retryable errors skip retry logic (`step_retry_non_retryable_error_stops_immediately`)
 
 ### 2.3 Cancellation
 
-- [ ] **cancel_pending_workflow_succeeds** - Can cancel before execution starts
+- [x] **cancel_pending_workflow_succeeds** - Can cancel before execution starts
 - [x] **cancel_running_workflow_interrupts_execution** - Running workflows can be stopped
-- [ ] **cancel_sleeping_workflow_succeeds** - Sleeping workflows can be cancelled
-- [ ] **cancel_completed_workflow_fails** - Cannot cancel already-completed workflows
-- [ ] **cancel_idempotent_on_same_workflow** - Multiple cancel calls are safe
+- [x] **cancel_sleeping_workflow_succeeds** - Sleeping workflows can be cancelled
+- [x] **cancel_completed_workflow_fails** - Cannot cancel already-completed workflows
+- [x] **cancel_idempotent_on_same_workflow** - Multiple cancel calls are safe
 
 ---
 

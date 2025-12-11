@@ -47,6 +47,8 @@ pub struct WatchdogSettings {
 pub struct WorkerSettings {
     #[serde(default = "default_poll_timeout_secs")]
     pub poll_timeout_secs: u64,
+    #[serde(default = "default_heartbeat_interval_secs")]
+    pub heartbeat_interval_secs: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,6 +102,10 @@ impl Settings {
                 default_poll_timeout_secs() as i64,
             )?
             .set_default(
+                "worker.heartbeat_interval_secs",
+                default_heartbeat_interval_secs() as i64,
+            )?
+            .set_default(
                 "payload.warn_threshold_bytes",
                 default_payload_warn_threshold_bytes() as i64,
             )?
@@ -122,6 +128,7 @@ impl Default for WorkerSettings {
     fn default() -> Self {
         Self {
             poll_timeout_secs: default_poll_timeout_secs(),
+            heartbeat_interval_secs: default_heartbeat_interval_secs(),
         }
     }
 }
@@ -173,6 +180,10 @@ fn default_counter_reconcile_interval_secs() -> u64 {
 
 fn default_poll_timeout_secs() -> u64 {
     60
+}
+
+fn default_heartbeat_interval_secs() -> u32 {
+    10
 }
 
 fn default_wake_sleeping_batch_size() -> i32 {
