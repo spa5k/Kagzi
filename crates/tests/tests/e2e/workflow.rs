@@ -164,17 +164,16 @@ async fn workflow_panic_treated_as_failure() -> anyhow::Result<()> {
         |mut ctx: WorkflowContext, _input: GreetingInput| async move {
             // Panic inside a step but catch it as JoinError so the worker can
             // report the failure instead of aborting the test runtime.
-            ctx
-                .run("panic_step", async move {
-                    let handle = tokio::spawn(async move {
-                        panic!("intentional panic in workflow");
-                    });
-                    match handle.await {
-                        Ok(_) => Ok::<_, anyhow::Error>(()),
-                        Err(join_err) => Err(anyhow::anyhow!(format!("panic: {join_err}"))),
-                    }
-                })
-                .await?;
+            ctx.run("panic_step", async move {
+                let handle = tokio::spawn(async move {
+                    panic!("intentional panic in workflow");
+                });
+                match handle.await {
+                    Ok(_) => Ok::<_, anyhow::Error>(()),
+                    Err(join_err) => Err(anyhow::anyhow!(format!("panic: {join_err}"))),
+                }
+            })
+            .await?;
 
             Ok::<_, anyhow::Error>(GreetingOutput {
                 greeting: "unreachable".into(),
