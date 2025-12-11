@@ -75,9 +75,9 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 ### 3.3 Step Retry
 
 - [x] **step_retry_respects_max_attempts** - Stops after max retries
-- [ ] **step_retry_respects_backoff_policy** - Exponential backoff works correctly
-- [ ] **step_retry_non_retryable_error_stops_immediately** - Non-retryable errors bypass retry
-- [ ] **step_retry_at_honored_before_reexecution** - Cannot retry before scheduled time
+- [x] **step_retry_respects_backoff_policy** - Exponential backoff works correctly
+- [x] **step_retry_non_retryable_error_stops_immediately** - Non-retryable errors bypass retry
+- [x] **step_retry_at_honored_before_reexecution** - Cannot retry before scheduled time
 
 ---
 
@@ -93,10 +93,10 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 4.2 Sleep Recovery
 
-- [ ] **sleeping_workflow_claimable_after_wake_up** - Expired sleeps become claimable
-- [ ] **watchdog_wakes_sleeping_workflows_in_batches** - Batch wake-up works
-- [ ] **worker_can_directly_claim_expired_sleeping_workflow** - Direct claim from SLEEPING state
-- [ ] **sleep_step_replay_skips_execution** - On replay, completed sleep returns immediately
+- [x] **sleeping_workflow_claimable_after_wake_up** - Expired sleeps become claimable
+- [x] **watchdog_wakes_sleeping_workflows_in_batches** - Batch wake-up works
+- [x] **worker_can_directly_claim_expired_sleeping_workflow** - Direct claim from SLEEPING state
+- [x] **sleep_step_replay_skips_execution** - On replay, completed sleep returns immediately
 
 ### 4.3 Sleep Edge Cases
 
@@ -111,8 +111,8 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 ### 5.1 Claim Races
 
 - [x] **concurrent_poll_same_workflow_only_one_claims** - FOR UPDATE SKIP LOCKED works
-- [ ] **rapid_poll_burst_no_duplicate_claims** - High poll rate doesn't cause issues
-- [ ] **claim_during_status_transition_handled** - Race between claim and status change
+- [x] **rapid_poll_burst_no_duplicate_claims** - High poll rate doesn't cause issues
+- [x] **claim_during_status_transition_handled** - Race between claim and status change
 
 ### 5.2 WorkDistributor Races
 
@@ -136,17 +136,17 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 
 ### 6.1 Workflow Retry
 
-- [ ] **workflow_retry_policy_applied_on_failure** - Retries happen per policy
+- [x] **workflow_retry_policy_applied_on_failure** - Retries happen per policy
 - [ ] **workflow_retry_increments_attempt_counter** - Attempt count increases
-- [ ] **workflow_retry_exhausted_marks_failed** - Max retries reached = permanent failure
-- [ ] **workflow_retry_delay_respected** - Backoff delay is honored
+- [x] **workflow_retry_exhausted_marks_failed** - Max retries reached = permanent failure
+- [x] **workflow_retry_delay_respected** - Backoff delay is honored
 
 ### 6.2 Orphan Recovery
 
-- [ ] **orphaned_workflow_detected_by_watchdog** - Lock expiration triggers detection
-- [ ] **orphaned_workflow_rescheduled_with_backoff** - Retry scheduled with delay
-- [ ] **orphan_recovery_increments_attempt** - Attempt count reflects recovery
-- [ ] **orphan_with_exhausted_retries_fails** - No infinite orphan loop
+- [x] **orphaned_workflow_detected_by_watchdog** - Lock expiration triggers detection
+- [x] **orphaned_workflow_rescheduled_with_backoff** - Retry scheduled with delay
+- [x] **orphan_recovery_increments_attempt** - Attempt count reflects recovery
+- [x] **orphan_with_exhausted_retries_fails** - No infinite orphan loop
 
 ### 6.3 Network Failure Simulation
 

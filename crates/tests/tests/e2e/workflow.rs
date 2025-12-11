@@ -301,3 +301,620 @@ async fn cancel_running_workflow_interrupts_execution() -> anyhow::Result<()> {
     let _ = worker_handle.await;
     Ok(())
 }
+
+#[tokio::test]
+async fn cancel_pending_workflow_succeeds() -> anyhow::Result<()> {
+    use kagzi_proto::kagzi::CancelWorkflowRequest;
+    use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
+
+    let harness = TestHarness::with_config(TestConfig {
+        poll_timeout_secs: 2,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-workflow-cancel-pending";
+
+    // Do not start worker so workflow stays pending.
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow(
+            "cancellable_pending",
+            queue,
+            GreetingInput {
+                name: "pending".into(),
+            },
+        )
+        .await?;
+
+    let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
+    workflow_client
+        .cancel_workflow(Request::new(CancelWorkflowRequest {
+            run_id: run_id.clone(),
+            namespace_id: "default".into(),
+        }))
+        .await?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Cancelled, 20).await?;
+    assert_eq!(wf.status, WorkflowStatus::Cancelled as i32);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_sleeping_workflow_succeeds() -> anyhow::Result<()> {
+    use kagzi_proto::kagzi::CancelWorkflowRequest;
+    use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
+
+    let harness = TestHarness::with_config(TestConfig {
+        poll_timeout_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-workflow-cancel-sleeping";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "sleep_then_cancel",
+        |mut ctx: WorkflowContext, _input: GreetingInput| async move {
+            ctx.sleep(Duration::from_secs(5)).await?;
+            Ok::<_, anyhow::Error>(GreetingOutput {
+                greeting: "never".into(),
+            })
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow(
+            "sleep_then_cancel",
+            queue,
+            GreetingInput {
+                name: "sleep".into(),
+            },
+        )
+        .await?;
+
+    // Wait until workflow is sleeping.
+    let run_uuid = Uuid::parse_str(&run_id)?;
+    for _ in 0..20 {
+        if harness.db_workflow_status(&run_uuid).await? == "SLEEPING" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
+    workflow_client
+        .cancel_workflow(Request::new(CancelWorkflowRequest {
+            run_id: run_id.clone(),
+            namespace_id: "default".into(),
+        }))
+        .await?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Cancelled, 30).await?;
+    assert_eq!(wf.status, WorkflowStatus::Cancelled as i32);
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_completed_workflow_fails() -> anyhow::Result<()> {
+    use kagzi_proto::kagzi::CancelWorkflowRequest;
+    use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
+
+    let harness = TestHarness::new().await;
+    let queue = "e2e-workflow-cancel-completed";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "already_done",
+        |_ctx: WorkflowContext, _input: GreetingInput| async move {
+            Ok::<_, anyhow::Error>(GreetingOutput {
+                greeting: "done".into(),
+            })
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow(
+            "already_done",
+            queue,
+            GreetingInput {
+                name: "complete".into(),
+            },
+        )
+        .await?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 20).await?;
+    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+
+    let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
+    let cancel_result = workflow_client
+        .cancel_workflow(Request::new(CancelWorkflowRequest {
+            run_id: run_id.clone(),
+            namespace_id: "default".into(),
+        }))
+        .await;
+    assert!(
+        cancel_result.is_err(),
+        "cancel on completed workflow should fail"
+    );
+
+    let wf_after =
+        wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 20).await?;
+    assert_eq!(wf_after.status, WorkflowStatus::Completed as i32);
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_idempotent_on_same_workflow() -> anyhow::Result<()> {
+    use kagzi_proto::kagzi::CancelWorkflowRequest;
+    use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
+
+    let harness = TestHarness::with_config(TestConfig {
+        poll_timeout_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-workflow-cancel-idempotent";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "cancel_twice",
+        |_ctx: WorkflowContext, _input: GreetingInput| async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok::<_, anyhow::Error>(GreetingOutput {
+                greeting: "never".into(),
+            })
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow(
+            "cancel_twice",
+            queue,
+            GreetingInput {
+                name: "cancel".into(),
+            },
+        )
+        .await?;
+
+    let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
+    for _ in 0..2 {
+        let _ = workflow_client
+            .cancel_workflow(Request::new(CancelWorkflowRequest {
+                run_id: run_id.clone(),
+                namespace_id: "default".into(),
+            }))
+            .await;
+    }
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Cancelled, 20).await?;
+    assert_eq!(wf.status, WorkflowStatus::Cancelled as i32);
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn workflow_retry_policy_applied_on_failure() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        watchdog_interval_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-workflow-retry-policy";
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let mut worker = harness.worker(queue).await;
+    let counter = attempts.clone();
+    worker.register(
+        "policy_retry",
+        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+            let counter = counter.clone();
+            async move {
+                let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                ctx.run("policy_step", async move {
+                    if attempt < 3 {
+                        anyhow::bail!("attempt {attempt} failed");
+                    }
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await?;
+                Ok(GreetingOutput {
+                    greeting: format!("ok-{attempt}"),
+                })
+            }
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let retry_policy = RetryPolicy {
+        maximum_attempts: Some(3),
+        initial_interval: Some(Duration::from_millis(200)),
+        backoff_coefficient: Some(1.0),
+        maximum_interval: Some(Duration::from_millis(400)),
+        non_retryable_errors: vec![],
+    };
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow(
+            "policy_retry",
+            queue,
+            GreetingInput {
+                name: "workflow-retry".into(),
+            },
+        )
+        .retry_policy(retry_policy)
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 50).await?;
+    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        3,
+        "workflow-level retry policy should drive step retries"
+    );
+    let step_attempts = harness
+        .db_step_attempt_count(&run_uuid, "policy_step")
+        .await?;
+    assert_eq!(step_attempts, 3, "step should be attempted three times");
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn workflow_retry_exhausted_marks_failed() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        watchdog_interval_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-workflow-retry-exhausted";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "retry_exhaust",
+        |_ctx: WorkflowContext, _input: GreetingInput| async move {
+            Err::<GreetingOutput, _>(anyhow::anyhow!("permanent failure"))
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let retry_policy = RetryPolicy {
+        maximum_attempts: Some(2),
+        initial_interval: Some(Duration::from_millis(200)),
+        backoff_coefficient: Some(1.0),
+        maximum_interval: Some(Duration::from_millis(400)),
+        non_retryable_errors: vec![],
+    };
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow("retry_exhaust", queue, GreetingInput { name: "x".into() })
+        .retry_policy(retry_policy)
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 40).await?;
+    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+
+    let step_attempts = harness
+        .db_step_attempt_count(&run_uuid, "retry_exhaust")
+        .await?;
+    assert!(
+        step_attempts <= 2,
+        "retries should stop after exhausting maximum attempts"
+    );
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn workflow_retry_delay_respected() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        watchdog_interval_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-workflow-retry-delay";
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let mut worker = harness.worker(queue).await;
+    let counter = attempts.clone();
+    worker.register(
+        "retry_delay",
+        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+            let counter = counter.clone();
+            async move {
+                let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                ctx.run("delay_step", async move {
+                    if attempt == 1 {
+                        anyhow::bail!("first attempt fails");
+                    }
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await?;
+                Ok(GreetingOutput {
+                    greeting: format!("attempt-{attempt}"),
+                })
+            }
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let policy = RetryPolicy {
+        maximum_attempts: Some(2),
+        initial_interval: Some(Duration::from_millis(700)),
+        backoff_coefficient: Some(1.0),
+        maximum_interval: Some(Duration::from_millis(800)),
+        non_retryable_errors: vec![],
+    };
+
+    let mut client = harness.client().await;
+    let start = std::time::Instant::now();
+    let run_id = client
+        .workflow(
+            "retry_delay",
+            queue,
+            GreetingInput {
+                name: "delay".into(),
+            },
+        )
+        .retry_policy(policy)
+        .await?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
+    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(300),
+        "retry should wait before next attempt (elapsed {:?})",
+        elapsed
+    );
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        2,
+        "exactly two attempts expected"
+    );
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn step_retry_respects_backoff_policy() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        watchdog_interval_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-step-retry-backoff";
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let mut worker = kagzi::Worker::builder(&harness.server_url, queue)
+        .default_step_retry(RetryPolicy {
+            maximum_attempts: Some(3),
+            initial_interval: Some(Duration::from_millis(200)),
+            backoff_coefficient: Some(2.0),
+            maximum_interval: Some(Duration::from_millis(400)),
+            non_retryable_errors: vec![],
+        })
+        .build()
+        .await?;
+    let counter = attempts.clone();
+    worker.register(
+        "step_backoff",
+        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+            let counter = counter.clone();
+            async move {
+                let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                ctx.run("backoff_step", async move {
+                    if attempt < 3 {
+                        anyhow::bail!("step attempt {attempt} failed");
+                    }
+                    Ok::<_, anyhow::Error>(attempt)
+                })
+                .await?;
+                Ok(GreetingOutput {
+                    greeting: format!("done-{attempt}"),
+                })
+            }
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let start = std::time::Instant::now();
+    let run_id = client
+        .workflow(
+            "step_backoff",
+            queue,
+            GreetingInput {
+                name: "step".into(),
+            },
+        )
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 50).await?;
+    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(300),
+        "backoff should introduce visible delay (elapsed {:?})",
+        elapsed
+    );
+    let step_attempts = harness
+        .db_step_attempt_count(&run_uuid, "backoff_step")
+        .await?;
+    assert_eq!(step_attempts, 3, "step should retry until third attempt");
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn step_retry_non_retryable_error_stops_immediately() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        watchdog_interval_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-step-retry-nonretryable";
+
+    let mut worker = kagzi::Worker::builder(&harness.server_url, queue)
+        .default_step_retry(RetryPolicy {
+            maximum_attempts: Some(5),
+            initial_interval: Some(Duration::from_millis(200)),
+            backoff_coefficient: Some(1.0),
+            maximum_interval: Some(Duration::from_millis(400)),
+            non_retryable_errors: vec!["fatal".into()],
+        })
+        .build()
+        .await?;
+    worker.register(
+        "non_retryable",
+        |mut ctx: WorkflowContext, _input: GreetingInput| async move {
+            ctx.run("non_retryable_step", async move {
+                Err::<(), anyhow::Error>(anyhow::anyhow!("fatal: do not retry"))
+            })
+            .await?;
+            Ok(GreetingOutput {
+                greeting: "should-not-complete".into(),
+            })
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow(
+            "non_retryable",
+            queue,
+            GreetingInput {
+                name: "fatal".into(),
+            },
+        )
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 30).await?;
+    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+
+    let step_attempts = harness
+        .db_step_attempt_count(&run_uuid, "non_retryable_step")
+        .await?;
+    assert_eq!(
+        step_attempts, 1,
+        "non-retryable error should stop after first attempt"
+    );
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn step_retry_at_honored_before_reexecution() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        watchdog_interval_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-step-retry-at";
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let mut worker = kagzi::Worker::builder(&harness.server_url, queue)
+        .default_step_retry(RetryPolicy {
+            maximum_attempts: Some(2),
+            initial_interval: Some(Duration::from_millis(800)),
+            backoff_coefficient: Some(1.0),
+            maximum_interval: Some(Duration::from_millis(800)),
+            non_retryable_errors: vec![],
+        })
+        .build()
+        .await?;
+    let counter = attempts.clone();
+    worker.register(
+        "retry_at",
+        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+            let counter = counter.clone();
+            async move {
+                let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                ctx.run("retry_at_step", async move {
+                    if attempt == 1 {
+                        anyhow::bail!("wait for retry_at")
+                    }
+                    Ok::<_, anyhow::Error>(attempt)
+                })
+                .await?;
+                Ok(GreetingOutput {
+                    greeting: format!("attempt-{attempt}"),
+                })
+            }
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let start = std::time::Instant::now();
+    let run_id = client
+        .workflow(
+            "retry_at",
+            queue,
+            GreetingInput {
+                name: "retry-at".into(),
+            },
+        )
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
+    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(400),
+        "retry_at should delay re-execution (elapsed {:?})",
+        elapsed
+    );
+    let step_attempts = harness
+        .db_step_attempt_count(&run_uuid, "retry_at_step")
+        .await?;
+    assert_eq!(step_attempts, 2, "should retry exactly once");
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}

@@ -2,6 +2,7 @@
 //! running inside testcontainers.
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -279,6 +280,53 @@ impl TestHarness {
             .fetch_one(&self.pool)
             .await
             .context("count workflows by status")
+    }
+
+    /// Wait for a workflow to reach a specific DB status with retries.
+    pub async fn wait_for_db_status(
+        &self,
+        run_id: &Uuid,
+        expected: &str,
+        attempts: usize,
+        delay: Duration,
+    ) -> anyhow::Result<()> {
+        for _ in 0..attempts {
+            let status = self.db_workflow_status(run_id).await?;
+            if status == expected {
+                return Ok(());
+            }
+            tokio::time::sleep(delay).await;
+        }
+        anyhow::bail!(
+            "workflow {} did not reach status {}, last={}",
+            run_id,
+            expected,
+            self.db_workflow_status(run_id).await?
+        );
+    }
+
+    /// Wait for a step to reach a specific DB status with retries.
+    pub async fn wait_for_step_status(
+        &self,
+        run_id: &Uuid,
+        step_id: &str,
+        expected: &str,
+        attempts: usize,
+        delay: Duration,
+    ) -> anyhow::Result<()> {
+        for _ in 0..attempts {
+            if self.db_step_status(run_id, step_id).await? == Some(expected.to_string()) {
+                return Ok(());
+            }
+            tokio::time::sleep(delay).await;
+        }
+        anyhow::bail!(
+            "step {} for {} did not reach status {}, last={:?}",
+            step_id,
+            run_id,
+            expected,
+            self.db_step_status(run_id, step_id).await?
+        );
     }
 }
 

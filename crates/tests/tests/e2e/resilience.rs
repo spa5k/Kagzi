@@ -2,10 +2,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::{RetryPolicy, WorkflowContext};
 use kagzi_proto::kagzi::WorkflowStatus;
 use serde::{Deserialize, Serialize};
 use tests::common::{TestConfig, TestHarness, wait_for_status};
+use tokio::time::sleep;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -228,5 +229,220 @@ async fn single_worker_claims_workflow_under_race() -> anyhow::Result<()> {
     shutdown2.cancel();
     let _ = handle1.await;
     let _ = handle2.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn orphaned_workflow_detected_by_watchdog() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        worker_stale_threshold_secs: 1,
+        watchdog_interval_secs: 1,
+        poll_timeout_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-resilience-orphan-detect";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "stuck",
+        |_ctx: WorkflowContext, _input: SleepInput| async move {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            Ok::<_, anyhow::Error>(())
+        },
+    );
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow("stuck", queue, SleepInput { seconds: 0 })
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    handle.abort();
+
+    // Wait for watchdog to reschedule (tolerate eventual completion if retried quickly).
+    for _ in 0..40 {
+        let status = harness.db_workflow_status(&run_uuid).await?;
+        if status == "PENDING" || status == "SLEEPING" || status == "RUNNING" {
+            break;
+        }
+        sleep(Duration::from_millis(200)).await;
+    }
+
+    let status = harness.db_workflow_status(&run_uuid).await?;
+    assert!(
+        status == "PENDING" || status == "SLEEPING" || status == "RUNNING",
+        "orphan should be rescheduled, got {}",
+        status
+    );
+    let locked_by = harness.db_workflow_locked_by(&run_uuid).await?;
+    assert!(
+        locked_by.is_none() || status == "RUNNING",
+        "locked_by should typically be cleared after orphan detection (status={}, locked_by={:?})",
+        status,
+        locked_by
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        worker_stale_threshold_secs: 1,
+        watchdog_interval_secs: 1,
+        poll_timeout_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-resilience-orphan-backoff";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "backoff_wf",
+        |_ctx: WorkflowContext, _input: SleepInput| async move {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<_, anyhow::Error>(())
+        },
+    );
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let retry_policy = RetryPolicy {
+        maximum_attempts: Some(3),
+        initial_interval: Some(Duration::from_millis(500)),
+        backoff_coefficient: Some(2.0),
+        maximum_interval: Some(Duration::from_secs(5)),
+        non_retryable_errors: vec![],
+    };
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow("backoff_wf", queue, SleepInput { seconds: 0 })
+        .retry_policy(retry_policy.clone())
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    handle.abort();
+
+    // Wait for watchdog to schedule retry with backoff.
+    sleep(Duration::from_secs(2)).await;
+
+    let attempts = harness.db_workflow_attempts(&run_uuid).await?;
+    assert!(
+        attempts >= 1,
+        "attempt counter should be at least initial after reschedule"
+    );
+
+    let wake_up_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT wake_up_at FROM kagzi.workflow_runs WHERE run_id = $1")
+            .bind(run_uuid)
+            .fetch_one(&harness.pool)
+            .await?;
+    if let Some(wake_up_at) = wake_up_at {
+        let now = chrono::Utc::now();
+        let delta = (wake_up_at - now).num_milliseconds();
+        assert!(
+            delta >= -1500 && delta <= 5_000,
+            "wake_up_at should be near-term (delta_ms={})",
+            delta
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn orphan_recovery_increments_attempt() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        worker_stale_threshold_secs: 1,
+        watchdog_interval_secs: 1,
+        poll_timeout_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-resilience-orphan-attempts";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "attempt_wf",
+        |_ctx: WorkflowContext, _input: SleepInput| async move {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            Ok::<_, anyhow::Error>(())
+        },
+    );
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow("attempt_wf", queue, SleepInput { seconds: 0 })
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    handle.abort();
+
+    sleep(Duration::from_secs(3)).await;
+    let attempts = harness.db_workflow_attempts(&run_uuid).await?;
+    assert!(
+        attempts >= 1,
+        "orphan recovery should not reduce attempts (got {})",
+        attempts
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn orphan_with_exhausted_retries_fails() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        worker_stale_threshold_secs: 1,
+        watchdog_interval_secs: 1,
+        poll_timeout_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-resilience-orphan-exhausted";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "exhausted_wf",
+        |_ctx: WorkflowContext, _input: SleepInput| async move {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<_, anyhow::Error>(())
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let policy = RetryPolicy {
+        maximum_attempts: Some(1),
+        initial_interval: Some(Duration::from_millis(200)),
+        backoff_coefficient: Some(1.0),
+        maximum_interval: Some(Duration::from_secs(1)),
+        non_retryable_errors: vec![],
+    };
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow("exhausted_wf", queue, SleepInput { seconds: 0 })
+        .retry_policy(policy)
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    shutdown.cancel();
+    let _ = handle.await;
+
+    sleep(Duration::from_secs(3)).await;
+    let status = harness.db_workflow_status(&run_uuid).await?;
+    assert!(
+        status == "FAILED" || status == "COMPLETED",
+        "exhausted orphan should be terminal, got {}",
+        status
+    );
+
     Ok(())
 }

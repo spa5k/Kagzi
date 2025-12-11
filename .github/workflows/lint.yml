@@ -29,6 +29,7 @@ jobs:
 
     env:
       KAGZI_DB_URL: postgres://postgres:postgres@localhost:5432/postgres
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       RUST_BACKTRACE: 1
 
     steps:
