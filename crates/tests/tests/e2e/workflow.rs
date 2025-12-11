@@ -154,6 +154,69 @@ async fn workflow_failure_propagates_error() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn workflow_panic_treated_as_failure() -> anyhow::Result<()> {
+    let harness = TestHarness::new().await;
+    let queue = "e2e-workflow-panic";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "panic_workflow",
+        |mut ctx: WorkflowContext, _input: GreetingInput| async move {
+            // Panic inside a step but catch it as JoinError so the worker can
+            // report the failure instead of aborting the test runtime.
+            ctx
+                .run("panic_step", async move {
+                    let handle = tokio::spawn(async move {
+                        panic!("intentional panic in workflow");
+                    });
+                    match handle.await {
+                        Ok(_) => Ok::<_, anyhow::Error>(()),
+                        Err(join_err) => Err(anyhow::anyhow!(format!("panic: {join_err}"))),
+                    }
+                })
+                .await?;
+
+            Ok::<_, anyhow::Error>(GreetingOutput {
+                greeting: "unreachable".into(),
+            })
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let worker_handle = tokio::spawn(async move { worker.run().await });
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow(
+            "panic_workflow",
+            queue,
+            GreetingInput {
+                name: "panic".into(),
+            },
+        )
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    // Allow time for watchdog/scheduler to observe the panic and mark failure.
+    harness
+        .wait_for_db_status(&run_uuid, "FAILED", 80, Duration::from_millis(250))
+        .await?;
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 160).await?;
+    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+    let error = wf.error.unwrap_or_default();
+    let message = error.message;
+    assert!(
+        message.contains("panic"),
+        "panic message should be recorded, got {}",
+        message
+    );
+
+    shutdown.cancel();
+    let _ = worker_handle.await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn workflow_retries_until_success() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-workflow-retry";

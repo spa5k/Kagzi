@@ -42,8 +42,8 @@ Comprehensive integration tests to cover edge cases and ensure system robustness
 ### 2.2 Failure Handling
 
 - [x] **workflow_failure_records_error_message** - Error details are captured (`workflow_failure_propagates_error`)
-- [ ] **workflow_panic_treated_as_failure** - Panics are caught and recorded
-- [ ] **workflow_timeout_triggers_failure** - Deadline exceeded causes failure
+- [x] **workflow_panic_treated_as_failure** - Panics are caught and recorded
+- [x] **workflow_timeout_triggers_failure** - Deadline exceeded causes failure
 - [x] **non_retryable_error_fails_immediately** - Non-retryable errors skip retry logic (`step_retry_non_retryable_error_stops_immediately`)
 
 ### 2.3 Cancellation

@@ -459,7 +459,23 @@ async fn execute_workflow(
         default_step_retry,
     };
 
-    let result = handler(ctx, input).await;
+    // Execute workflow in a separate task so panics are captured as JoinError
+    // instead of crashing the runtime. JoinError is converted into a failure.
+    let task = tokio::spawn(async move { handler(ctx, input).await });
+
+    let result = match task.await {
+        Ok(r) => r,
+        Err(join_err) => {
+            error!(
+                correlation_id = correlation_id,
+                trace_id = trace_id,
+                run_id = %run_id,
+                error = %join_err,
+                "Workflow panicked"
+            );
+            Err(anyhow::anyhow!(format!("workflow panicked: {join_err}")))
+        }
+    };
 
     match result {
         Ok(output) => {

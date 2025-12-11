@@ -1,3 +1,4 @@
+use std::future::pending;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -443,6 +444,65 @@ async fn orphan_with_exhausted_retries_fails() -> anyhow::Result<()> {
         "exhausted orphan should be terminal, got {}",
         status
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn workflow_timeout_triggers_failure() -> anyhow::Result<()> {
+    let harness = TestHarness::with_config(TestConfig {
+        worker_stale_threshold_secs: 1,
+        watchdog_interval_secs: 1,
+        poll_timeout_secs: 1,
+        ..Default::default()
+    })
+    .await;
+    let queue = "e2e-resilience-timeout";
+
+    let mut worker = harness.worker(queue).await;
+    worker.register(
+        "timeout_wf",
+        |_ctx: WorkflowContext, _input: SleepInput| async move {
+            // Block forever so the workflow stays RUNNING while the worker is killed.
+            pending::<()>().await;
+            #[allow(unreachable_code)]
+            Ok::<_, anyhow::Error>(())
+        },
+    );
+    let shutdown = worker.shutdown_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let retry_policy = RetryPolicy {
+        maximum_attempts: Some(1),
+        initial_interval: Some(Duration::from_millis(100)),
+        backoff_coefficient: Some(1.0),
+        maximum_interval: Some(Duration::from_secs(1)),
+        non_retryable_errors: vec![],
+    };
+
+    let mut client = harness.client().await;
+    let run_id = client
+        .workflow("timeout_wf", queue, SleepInput { seconds: 0 })
+        .retry_policy(retry_policy)
+        .await?;
+    let run_uuid = Uuid::parse_str(&run_id)?;
+
+    // Let the worker start the workflow, then abort it so watchdog marks it stale.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    shutdown.cancel();
+    handle.abort();
+
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 160).await?;
+    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+    let error = wf.error.unwrap_or_default();
+    assert!(
+        error.message.contains("exhausted") || error.message.contains("stale"),
+        "timeout/stale should be recorded, got {}",
+        error.message
+    );
+
+    let db_status = harness.db_workflow_status(&run_uuid).await?;
+    assert_eq!(db_status, "FAILED");
 
     Ok(())
 }
