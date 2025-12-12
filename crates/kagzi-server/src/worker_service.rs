@@ -326,6 +326,16 @@ impl WorkerService for WorkerServiceImpl {
                 .map_err(map_store_error)?;
 
             if let Some(work_item) = work_item {
+                // If this workflow was sleeping (poll_workflow can wake up SLEEPING workflows),
+                // complete any pending sleep steps
+                if let Err(e) = self.complete_pending_sleep_steps(work_item.run_id).await {
+                    warn!(
+                        run_id = %work_item.run_id,
+                        error = ?e,
+                        "Failed to complete pending sleep steps"
+                    );
+                }
+
                 tracing::info!(
                     worker_id = %worker_id,
                     run_id = %work_item.run_id,
@@ -924,5 +934,43 @@ impl WorkerService for WorkerServiceImpl {
         );
 
         Ok(Response::new(()))
+    }
+}
+
+impl WorkerServiceImpl {
+    /// Complete any sleep steps that are still in RUNNING status when a workflow resumes
+    async fn complete_pending_sleep_steps(&self, run_id: Uuid) -> Result<(), Status> {
+        let steps = self
+            .store
+            .steps()
+            .list(kagzi_store::ListStepsParams {
+                run_id,
+                namespace_id: "default".to_string(),
+                step_id: None,
+                page_size: 100,
+                cursor: None,
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        for step in steps.items {
+            // Check if this is a sleep step that's still RUNNING
+            if step.step_kind == kagzi_store::StepKind::Sleep
+                && step.status == kagzi_store::StepStatus::Running
+            {
+                tracing::info!(
+                    run_id = %run_id,
+                    step_id = %step.step_id,
+                    "Completing pending sleep step"
+                );
+                self.store
+                    .steps()
+                    .complete(run_id, &step.step_id, vec![])
+                    .await
+                    .map_err(map_store_error)?;
+            }
+        }
+
+        Ok(())
     }
 }

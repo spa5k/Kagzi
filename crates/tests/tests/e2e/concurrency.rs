@@ -243,7 +243,8 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
 async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
     let harness = TestHarness::with_config(TestConfig {
         watchdog_interval_secs: 1,
-        poll_timeout_secs: 5, // Longer than sleep duration
+        scheduler_interval_secs: 1, // Check for sleeping workflows every second
+        poll_timeout_secs: 10, // Poll longer than sleep duration
         ..Default::default()
     })
     .await;
@@ -252,7 +253,11 @@ async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
     let w1_hits = Arc::new(AtomicUsize::new(0));
     let w2_hits = Arc::new(AtomicUsize::new(0));
 
-    let mut worker1 = harness.worker(queue).await;
+    // Create workers with long poll timeout to ensure they keep running
+    let mut worker1 = kagzi::Worker::builder(&harness.server_url, queue)
+        .max_concurrent(100) // High limit for this test
+        .build()
+        .await?;
     let c1 = w1_hits.clone();
     worker1.register(
         "transition_sleep",
@@ -268,7 +273,10 @@ async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
     let shutdown1 = worker1.shutdown_token();
     let handle1 = tokio::spawn(async move { worker1.run().await });
 
-    let mut worker2 = harness.worker(queue).await;
+    let mut worker2 = kagzi::Worker::builder(&harness.server_url, queue)
+        .max_concurrent(100) // High limit for this test
+        .build()
+        .await?;
     let c2 = w2_hits.clone();
     worker2.register(
         "transition_sleep",
