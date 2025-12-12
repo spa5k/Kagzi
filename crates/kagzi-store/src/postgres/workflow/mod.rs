@@ -1,9 +1,6 @@
 mod helpers;
-mod notify;
 mod queue;
 mod state;
-
-use std::time::Duration;
 
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -13,7 +10,7 @@ use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
-    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
+    RetryPolicy, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
 use crate::repository::WorkflowRepository;
 
@@ -107,49 +104,48 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::mark_exhausted(self, run_id, error).await
     }
 
+    async fn mark_exhausted_with_increment(
+        &self,
+        run_id: Uuid,
+        error: &str,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET status = 'FAILED',
+                error = $2,
+                finished_at = NOW(),
+                locked_by = NULL,
+                locked_until = NULL,
+                attempts = attempts + 1
+            WHERE run_id = $1 AND status = 'RUNNING'
+            "#,
+            run_id,
+            error
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(())
+    }
+
     async fn get_retry_policy(&self, run_id: Uuid) -> Result<Option<RetryPolicy>, StoreError> {
         state::get_retry_policy(self, run_id).await
     }
 
-    async fn claim_workflow_batch(
+    async fn poll_workflow(
         &self,
-        task_queue: &str,
         namespace_id: &str,
-        worker_id: &str,
-        supported_types: &[String],
-        limit: usize,
-        lock_duration_secs: i64,
-    ) -> Result<Vec<ClaimedWorkflow>, StoreError> {
-        queue::claim_workflow_batch(
-            self,
-            task_queue,
-            namespace_id,
-            worker_id,
-            supported_types,
-            limit,
-            lock_duration_secs,
-        )
-        .await
-    }
-
-    async fn list_available_workflows(
-        &self,
         task_queue: &str,
-        namespace_id: &str,
-        supported_types: &[String],
-        limit: i32,
-    ) -> Result<Vec<WorkCandidate>, StoreError> {
-        queue::list_available_workflows(self, task_queue, namespace_id, supported_types, limit)
-            .await
-    }
-
-    async fn claim_specific_workflow(
-        &self,
-        run_id: Uuid,
         worker_id: &str,
-        lock_duration_secs: i64,
+        types: &[String],
+        lock_secs: i64,
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        queue::claim_specific_workflow(self, run_id, worker_id, lock_duration_secs).await
+        queue::poll_workflow(self, namespace_id, task_queue, worker_id, types, lock_secs).await
     }
 
     async fn extend_worker_locks(
@@ -180,35 +176,121 @@ impl WorkflowRepository for PgWorkflowRepository {
         queue::find_orphaned(self).await
     }
 
-    async fn increment_queue_counter(
-        &self,
-        namespace_id: &str,
-        task_queue: &str,
-        workflow_type: &str,
-        max: i32,
-    ) -> Result<bool, StoreError> {
-        queue::increment_queue_counter(self, namespace_id, task_queue, workflow_type, max).await
-    }
+    async fn find_and_recover_offline_worker_workflows(&self) -> Result<u64, StoreError> {
+        let mut tx = self.pool.begin().await?;
 
-    async fn decrement_queue_counter(
-        &self,
-        namespace_id: &str,
-        task_queue: &str,
-        workflow_type: &str,
-    ) -> Result<(), StoreError> {
-        queue::decrement_queue_counter(self, namespace_id, task_queue, workflow_type).await
-    }
+        // Find workflows locked by offline workers
+        let rows = sqlx::query!(
+            r#"
+            SELECT w.run_id, w.attempts, w.retry_policy
+            FROM kagzi.workflow_runs w
+            JOIN kagzi.workers wk ON w.locked_by = wk.worker_id::text
+            WHERE w.status = 'RUNNING'
+              AND wk.status = 'OFFLINE'
+            FOR UPDATE SKIP LOCKED
+            "#
+        )
+        .fetch_all(&mut *tx)
+        .await?;
 
-    async fn reconcile_queue_counters(&self) -> Result<u64, StoreError> {
-        queue::reconcile_queue_counters(self).await
-    }
+        let mut recovered = 0;
+        for row in rows {
+            let policy = row
+                .retry_policy
+                .and_then(|v| {
+                    serde_json::from_value::<RetryPolicy>(v)
+                        .map_err(|e| {
+                            tracing::warn!(
+                                run_id = %row.run_id,
+                                error = %e,
+                                "Failed to deserialize retry policy"
+                            );
+                            e
+                        })
+                        .ok()
+                })
+                .unwrap_or_default();
 
-    async fn wait_for_new_work(
-        &self,
-        task_queue: &str,
-        namespace_id: &str,
-        timeout: Duration,
-    ) -> Result<bool, StoreError> {
-        notify::wait_for_new_work(&self.pool, task_queue, namespace_id, timeout).await
+            if policy.should_retry(row.attempts) {
+                let delay_ms = policy.calculate_delay_ms(row.attempts) as u64;
+                let next_attempt = row.attempts + 1;
+
+                // Check if the next attempt would exhaust retries
+                if policy.should_retry(next_attempt) {
+                    // Schedule retry with attempts increment
+                    sqlx::query!(
+                        r#"
+                    UPDATE kagzi.workflow_runs
+                    SET status = 'PENDING',
+                        locked_by = NULL,
+                        locked_until = NULL,
+                        wake_up_at = NOW() + ($2 * INTERVAL '1 millisecond'),
+                        attempts = attempts + 1
+                    WHERE run_id = $1
+                    "#,
+                        row.run_id,
+                        delay_ms as f64
+                    )
+                    .execute(&mut *tx)
+                    .await?;
+
+                    recovered += 1;
+
+                    tracing::warn!(
+                        run_id = %row.run_id,
+                        attempts = next_attempt,
+                        delay_ms = delay_ms,
+                        "Recovered workflow from offline worker - scheduling retry"
+                    );
+                } else {
+                    // Next attempt would exhaust retries, mark as failed immediately
+                    sqlx::query!(
+                        r#"
+                    UPDATE kagzi.workflow_runs
+                    SET status = 'FAILED',
+                        locked_by = NULL,
+                        locked_until = NULL,
+                        wake_up_at = NULL,
+                        attempts = attempts + 1,
+                        error = 'Workflow crashed and exhausted all retry attempts (worker offline)'
+                    WHERE run_id = $1
+                    "#,
+                        row.run_id
+                    )
+                    .execute(&mut *tx)
+                    .await?;
+
+                    recovered += 1;
+
+                    tracing::error!(
+                        run_id = %row.run_id,
+                        attempts = next_attempt,
+                        "Workflow from offline worker exhausted retries - marked as failed"
+                    );
+                }
+            } else {
+                // Mark as exhausted
+                sqlx::query!(
+                    r#"
+                    UPDATE kagzi.workflow_runs
+                    SET status = 'FAILED',
+                        error = 'Workflow crashed and exhausted all retry attempts (worker offline)'
+                    WHERE run_id = $1
+                    "#,
+                    row.run_id
+                )
+                .execute(&mut *tx)
+                .await?;
+
+                tracing::error!(
+                    run_id = %row.run_id,
+                    attempts = row.attempts,
+                    "Workflow from offline worker exhausted retries - marked as failed"
+                );
+            }
+        }
+
+        tx.commit().await?;
+        Ok(recovered)
     }
 }

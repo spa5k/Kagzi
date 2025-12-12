@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::super::StoreConfig;
 use super::PgWorkflowRepository;
-use super::helpers::{WorkflowRunRow, decrement_counters_tx, set_failed_tx};
+use super::helpers::{WorkflowRunRow, set_failed_tx};
 use crate::error::StoreError;
 use crate::models::{
     CreateWorkflow, ListWorkflowsParams, PaginatedResult, RetryPolicy, WorkflowCursor,
@@ -350,14 +350,7 @@ pub(super) async fn cancel(
     .fetch_optional(&mut *tx)
     .await?;
 
-    if let Some(row) = running {
-        decrement_counters_tx(
-            &mut tx,
-            &row.namespace_id,
-            &row.task_queue,
-            &row.workflow_type,
-        )
-        .await?;
+    if running.is_some() {
         tx.commit().await?;
         return Ok(true);
     }
@@ -422,15 +415,7 @@ pub(super) async fn complete(
     .execute(&mut *tx)
     .await?;
 
-    if let Some(row) = counters {
-        decrement_counters_tx(
-            &mut tx,
-            &row.namespace_id,
-            &row.task_queue,
-            &row.workflow_type,
-        )
-        .await?;
-    }
+    let _ = counters;
 
     tx.commit().await?;
 
@@ -445,11 +430,7 @@ pub(super) async fn fail(
 ) -> Result<(), StoreError> {
     let mut tx = repo.pool.begin().await?;
 
-    if let Some((namespace_id, task_queue, workflow_type)) =
-        set_failed_tx(&mut tx, run_id, error).await?
-    {
-        decrement_counters_tx(&mut tx, &namespace_id, &task_queue, &workflow_type).await?;
-    }
+    let _ = set_failed_tx(&mut tx, run_id, error).await?;
 
     tx.commit().await?;
 
@@ -480,15 +461,7 @@ pub(super) async fn schedule_sleep(
     .fetch_optional(&mut *tx)
     .await?;
 
-    if let Some(row) = row {
-        decrement_counters_tx(
-            &mut tx,
-            &row.namespace_id,
-            &row.task_queue,
-            &row.workflow_type,
-        )
-        .await?;
-    }
+    let _ = row;
 
     tx.commit().await?;
 
@@ -519,15 +492,7 @@ pub(super) async fn schedule_retry(
     .fetch_optional(&mut *tx)
     .await?;
 
-    if let Some(row) = row {
-        decrement_counters_tx(
-            &mut tx,
-            &row.namespace_id,
-            &row.task_queue,
-            &row.workflow_type,
-        )
-        .await?;
-    }
+    let _ = row;
 
     tx.commit().await?;
 
@@ -542,11 +507,7 @@ pub(super) async fn mark_exhausted(
 ) -> Result<(), StoreError> {
     let mut tx = repo.pool.begin().await?;
 
-    if let Some((namespace_id, task_queue, workflow_type)) =
-        set_failed_tx(&mut tx, run_id, error).await?
-    {
-        decrement_counters_tx(&mut tx, &namespace_id, &task_queue, &workflow_type).await?;
-    }
+    let _ = set_failed_tx(&mut tx, run_id, error).await?;
 
     tx.commit().await?;
 

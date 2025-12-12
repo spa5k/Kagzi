@@ -7,67 +7,24 @@ use tracing::{error, info, warn};
 use crate::config::WatchdogSettings;
 
 pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationToken) {
-    let interval = Duration::from_secs(settings.interval_secs.max(1));
-    let stale_threshold_secs = settings.worker_stale_threshold_secs.max(1);
-    let reconcile_interval = Duration::from_secs(settings.counter_reconcile_interval_secs.max(1));
-    let wake_sleeping_batch_size = settings.wake_sleeping_batch_size.max(1);
-    info!(
-        interval_secs = interval.as_secs(),
-        "Watchdog spawning parallel tasks"
-    );
+    info!("Starting watchdog tasks");
 
-    tokio::spawn(run_wake_sleeping(
-        store.clone(),
-        shutdown.clone(),
-        interval,
-        wake_sleeping_batch_size,
-    ));
+    let interval = Duration::from_secs(settings.interval_secs);
+
     tokio::spawn(run_process_retries(
         store.clone(),
         shutdown.clone(),
         interval,
     ));
+
     tokio::spawn(run_find_orphaned(store.clone(), shutdown.clone(), interval));
-    tokio::spawn(run_reconcile_counters(
-        store.clone(),
-        shutdown.clone(),
-        reconcile_interval,
-    ));
+
     tokio::spawn(run_mark_stale(
         store,
         shutdown,
         interval,
-        stale_threshold_secs,
+        settings.worker_stale_threshold_secs,
     ));
-}
-
-async fn run_wake_sleeping(
-    store: PgStore,
-    shutdown: CancellationToken,
-    interval: Duration,
-    batch_size: i32,
-) {
-    let mut ticker = tokio::time::interval(interval);
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                info!("Watchdog wake_sleeping exiting");
-                break;
-            }
-            _ = ticker.tick() => {
-                match store.workflows().wake_sleeping(batch_size).await {
-                    Ok(count) => {
-                        if count > 0 {
-                            info!("Watchdog woke up {} sleeping workflows", count);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Watchdog failed to wake sleeping workflows: {:?}", e);
-                    }
-                }
-            }
-        }
-    }
 }
 
 async fn run_process_retries(store: PgStore, shutdown: CancellationToken, interval: Duration) {
@@ -112,28 +69,56 @@ async fn run_find_orphaned(store: PgStore, shutdown: CancellationToken, interval
                     Ok(orphans) => {
                         for orphan in orphans {
                             let policy = orphan.retry_policy.unwrap_or_default();
+                            let next_attempt = orphan.attempts + 1;
 
                             if policy.should_retry(orphan.attempts) {
-                                let delay_ms = policy.calculate_delay_ms(orphan.attempts) as u64;
+                                // Check if the next attempt would exhaust retries
+                                if policy.should_retry(next_attempt) {
+                                    let delay_ms = policy.calculate_delay_ms(orphan.attempts) as u64;
 
-                                match store
-                                    .workflows()
-                                    .schedule_retry(orphan.run_id, delay_ms)
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        warn!(
-                                            run_id = %orphan.run_id,
-                                            previous_worker = ?orphan.locked_by,
-                                            delay_ms = delay_ms,
-                                            "Recovered orphaned workflow - scheduling retry with backoff"
-                                        );
+                                    match store
+                                        .workflows()
+                                        .schedule_retry(orphan.run_id, delay_ms)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            warn!(
+                                                run_id = %orphan.run_id,
+                                                previous_worker = ?orphan.locked_by,
+                                                delay_ms = delay_ms,
+                                                "Recovered orphaned workflow - scheduling retry with backoff"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Failed to schedule retry for orphaned workflow {}: {:?}",
+                                                orphan.run_id, e
+                                            );
+                                        }
                                     }
-                                    Err(e) => {
-                                        error!(
-                                            "Failed to schedule retry for orphaned workflow {}: {:?}",
-                                            orphan.run_id, e
-                                        );
+                                } else {
+                                    // Next attempt would exhaust retries, mark as failed immediately
+                                    match store
+                                        .workflows()
+                                        .mark_exhausted_with_increment(
+                                            orphan.run_id,
+                                            "Workflow crashed and exhausted all retry attempts",
+                                        )
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            error!(
+                                                run_id = %orphan.run_id,
+                                                attempts = next_attempt,
+                                                "Orphaned workflow exhausted retries - marked as failed"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Failed to mark orphaned workflow {} as failed: {:?}",
+                                                orphan.run_id, e
+                                            );
+                                        }
                                     }
                                 }
                             } else {
@@ -171,30 +156,6 @@ async fn run_find_orphaned(store: PgStore, shutdown: CancellationToken, interval
     }
 }
 
-async fn run_reconcile_counters(store: PgStore, shutdown: CancellationToken, interval: Duration) {
-    let mut ticker = tokio::time::interval(interval);
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                info!("Watchdog reconcile_counters exiting");
-                break;
-            }
-            _ = ticker.tick() => {
-                match store.workflows().reconcile_queue_counters().await {
-                    Ok(updated) => {
-                        if updated > 0 {
-                            info!(updated, "Reconciled queue counters");
-                        }
-                    }
-                    Err(e) => {
-                        error!("Watchdog failed to reconcile counters: {:?}", e);
-                    }
-                }
-            }
-        }
-    }
-}
-
 async fn run_mark_stale(
     store: PgStore,
     shutdown: CancellationToken,
@@ -209,11 +170,24 @@ async fn run_mark_stale(
                 break;
             }
             _ = ticker.tick() => {
+                // First mark stale workers as offline
                 match store.workers().mark_stale_offline(stale_threshold_secs).await {
                     Ok(count) if count > 0 => {
                         warn!("Marked {} stale workers as offline", count);
                     }
                     Err(e) => error!("Failed to mark stale workers: {:?}", e),
+                    _ => {}
+                }
+
+                // Then recover workflows from offline workers (treat as orphans)
+                match store.workflows().find_and_recover_offline_worker_workflows().await {
+                    Ok(recovered) if recovered > 0 => {
+                        warn!(
+                            recovered,
+                            "Recovered workflows from offline workers"
+                        );
+                    }
+                    Err(e) => error!("Failed to recover workflows from offline workers: {:?}", e),
                     _ => {}
                 }
             }

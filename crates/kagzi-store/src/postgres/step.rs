@@ -429,6 +429,26 @@ impl StepRepository for PgStepRepository {
         .await?;
 
         if result.rows_affected() == 0 {
+            // Check if step is already completed (idempotent success)
+            let existing = sqlx::query!(
+                r#"
+                SELECT status
+                FROM kagzi.step_runs
+                WHERE run_id = $1 AND step_id = $2 AND is_latest = true
+                "#,
+                run_id,
+                step_id
+            )
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            if existing.is_some_and(|step| step.status == "COMPLETED") {
+                // Already completed, this is idempotent success
+                tx.commit().await?;
+                return Ok(());
+            }
+
+            // Not completed, insert new result
             sqlx::query!(
                 "UPDATE kagzi.step_runs SET is_latest = false WHERE run_id = $1 AND step_id = $2 AND is_latest = true",
                 run_id,

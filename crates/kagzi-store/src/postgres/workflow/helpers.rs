@@ -77,38 +77,6 @@ pub(super) struct ClaimedRow {
     pub locked_by: Option<String>,
 }
 
-pub(super) async fn decrement_counter_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    namespace_id: &str,
-    task_queue: &str,
-    workflow_type: &str,
-) -> Result<(), StoreError> {
-    sqlx::query!(
-        r#"
-        UPDATE kagzi.queue_counters
-        SET active_count = GREATEST(active_count - 1, 0)
-        WHERE namespace_id = $1 AND task_queue = $2 AND workflow_type = $3
-        "#,
-        namespace_id,
-        task_queue,
-        workflow_type
-    )
-    .execute(tx.as_mut())
-    .await?;
-
-    Ok(())
-}
-
-pub(super) async fn decrement_counters_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    namespace_id: &str,
-    task_queue: &str,
-    workflow_type: &str,
-) -> Result<(), StoreError> {
-    decrement_counter_tx(tx, namespace_id, task_queue, "").await?;
-    decrement_counter_tx(tx, namespace_id, task_queue, workflow_type).await
-}
-
 pub(super) async fn set_failed_tx(
     tx: &mut Transaction<'_, Postgres>,
     run_id: Uuid,

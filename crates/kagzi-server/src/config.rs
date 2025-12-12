@@ -37,10 +37,6 @@ pub struct WatchdogSettings {
     pub interval_secs: u64,
     #[serde(default = "default_worker_stale_threshold_secs")]
     pub worker_stale_threshold_secs: i64,
-    #[serde(default = "default_counter_reconcile_interval_secs")]
-    pub counter_reconcile_interval_secs: u64,
-    #[serde(default = "default_wake_sleeping_batch_size")]
-    pub wake_sleeping_batch_size: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -88,14 +84,6 @@ impl Settings {
             .set_default(
                 "watchdog.worker_stale_threshold_secs",
                 default_worker_stale_threshold_secs(),
-            )?
-            .set_default(
-                "watchdog.counter_reconcile_interval_secs",
-                default_counter_reconcile_interval_secs() as i64,
-            )?
-            .set_default(
-                "watchdog.wake_sleeping_batch_size",
-                default_wake_sleeping_batch_size() as i64,
             )?
             .set_default(
                 "worker.poll_timeout_secs",
@@ -174,20 +162,12 @@ fn default_worker_stale_threshold_secs() -> i64 {
     30
 }
 
-fn default_counter_reconcile_interval_secs() -> u64 {
-    300
-}
-
 fn default_poll_timeout_secs() -> u64 {
     60
 }
 
 fn default_heartbeat_interval_secs() -> u32 {
     10
-}
-
-fn default_wake_sleeping_batch_size() -> i32 {
-    100
 }
 
 fn default_payload_warn_threshold_bytes() -> usize {

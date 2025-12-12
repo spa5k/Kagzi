@@ -23,13 +23,10 @@ async fn main() -> anyhow::Result<()> {
     let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "concurrency".into());
 
     match variant {
-        "local" => local_cap(server, queue).await?,
-        "queue" => queue_cap(server, queue).await?,
-        "workflow" => workflow_type_cap(server, queue).await?,
+        "local" => local_concurrency(server, queue).await?,
+        "multi" => multi_worker_demo(server, queue).await?,
         _ => {
-            eprintln!(
-                "Usage: cargo run -p examples --example 04_concurrency -- [local|queue|workflow]"
-            );
+            eprintln!("Usage: cargo run -p examples --example 04_concurrency -- [local|multi]");
             std::process::exit(1);
         }
     }
@@ -37,17 +34,18 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn local_cap(server: String, queue: String) -> anyhow::Result<()> {
+async fn local_concurrency(server: String, queue: String) -> anyhow::Result<()> {
     let mut worker = Worker::builder(&server, &queue)
-        .queue_concurrency_limit(2) // only 2 running at a time
+        .max_concurrent(2) // Only 2 workflows run at a time on THIS worker
         .default_step_retry(common::default_retry())
         .build()
         .await?;
+
     worker.register(
         "short_task",
         |_: WorkflowContext, input: Input| async move {
             tracing::info!(id = input.id, "Starting short task");
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_secs(2)).await;
             tracing::info!(id = input.id, "Finished short task");
             Ok(serde_json::json!({"id": input.id}))
         },
@@ -59,63 +57,46 @@ async fn local_cap(server: String, queue: String) -> anyhow::Result<()> {
         tracing::info!(%run, id, "queued short task");
     }
 
-    tracing::info!("Only 2 tasks should run concurrently on this worker");
+    tracing::info!("Watch the logs: only 2 tasks run at a time (2s each, 10 tasks = ~10s total)");
     worker.run().await
 }
 
-async fn queue_cap(server: String, queue: String) -> anyhow::Result<()> {
-    // Demonstrates shared queue limit across multiple workers (start this in two processes)
+async fn multi_worker_demo(server: String, queue: String) -> anyhow::Result<()> {
+    let worker_id = std::process::id();
+
     let mut worker = Worker::builder(&server, &queue)
-        .queue_concurrency_limit(5)
+        .max_concurrent(3) // Each worker handles up to 3 workflows
         .default_step_retry(common::default_retry())
         .build()
         .await?;
+
     worker.register(
-        "shared_task",
-        |_: WorkflowContext, input: Input| async move {
-            tracing::info!(id = input.id, "running shared task");
-            sleep(Duration::from_secs(2)).await;
-            Ok(serde_json::json!({"id": input.id}))
+        "parallel_task",
+        move |_: WorkflowContext, input: Input| async move {
+            tracing::info!(worker = worker_id, id = input.id, "Processing task");
+            sleep(Duration::from_secs(3)).await;
+            tracing::info!(worker = worker_id, id = input.id, "Task complete");
+            Ok(serde_json::json!({"worker": worker_id, "id": input.id}))
         },
     );
+
+    // Only create tasks from the first worker (by convention, use arg)
+    if std::env::args().any(|a| a == "--create") {
+        let mut client = common::connect_client(&server).await?;
+        tracing::info!("Creating 20 tasks...");
+        for id in 0..20 {
+            client
+                .workflow("parallel_task", &queue, Input { id })
+                .await?;
+        }
+        tracing::info!(
+            "Tasks created. Start additional workers with: cargo run -p examples --example 04_concurrency -- multi"
+        );
+    }
 
     tracing::info!(
-        "Start multiple workers with this binary; total active tasks across them stays <=5"
+        worker = worker_id,
+        "Worker started with max_concurrent=3. Run multiple instances to scale throughput."
     );
-    worker.run().await
-}
-
-async fn workflow_type_cap(server: String, queue: String) -> anyhow::Result<()> {
-    let mut worker = Worker::builder(&server, &queue)
-        .workflow_type_concurrency("VideoEncode", 1)
-        .workflow_type_concurrency("SendEmail", 8)
-        .build()
-        .await?;
-
-    worker.register(
-        "VideoEncode",
-        |_: WorkflowContext, input: Input| async move {
-            tracing::info!(id = input.id, "encoding video");
-            sleep(Duration::from_secs(5)).await;
-            tracing::info!(id = input.id, "finished encode");
-            Ok(serde_json::json!({"status": "encoded", "id": input.id}))
-        },
-    );
-
-    worker.register("SendEmail", |_: WorkflowContext, input: Input| async move {
-        tracing::info!(id = input.id, "sending email");
-        sleep(Duration::from_millis(500)).await;
-        Ok(serde_json::json!({"status": "sent", "id": input.id}))
-    });
-
-    let mut client = common::connect_client(&server).await?;
-    for id in 0..4 {
-        client.workflow("VideoEncode", &queue, Input { id }).await?;
-    }
-    for id in 100..110 {
-        client.workflow("SendEmail", &queue, Input { id }).await?;
-    }
-
-    tracing::info!("Only one VideoEncode runs at once; emails can fan out");
     worker.run().await
 }
