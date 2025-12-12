@@ -14,7 +14,7 @@ use kagzi_store::{
 };
 use tonic::Status;
 
-use crate::helpers::{bytes_to_payload, invalid_argument, json_to_payload, string_error_detail};
+use crate::helpers::{bytes_to_payload, invalid_argument, string_error_detail};
 
 /// Convert chrono DateTime to proto Timestamp.
 pub fn timestamp_from(dt: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
@@ -101,7 +101,6 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
         status: map_workflow_status(w.status) as i32,
         input: Some(bytes_to_payload(Some(w.input))),
         output: Some(bytes_to_payload(w.output)),
-        context: Some(json_to_payload(w.context)?),
         error,
         attempts: w.attempts,
         created_at: w.created_at.map(timestamp_from),

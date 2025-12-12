@@ -75,7 +75,6 @@ async fn fire_workflow(
             input: schedule.input.clone(),
             namespace_id: schedule.namespace_id.clone(),
             idempotency_suffix: Some(idempotency_suffix),
-            context: schedule.context.clone(),
             deadline_at: None,
             version: schedule.version.clone().unwrap_or_else(|| "1".to_string()),
             retry_policy: None,

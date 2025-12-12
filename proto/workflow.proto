@@ -40,17 +40,16 @@ message Workflow {
   WorkflowStatus status = 6;
   Payload input = 7;
   Payload output = 8;
-  Payload context = 9;
-  ErrorDetail error = 10;
-  int32 attempts = 11;
-  google.protobuf.Timestamp created_at = 12;
-  google.protobuf.Timestamp started_at = 13;
-  google.protobuf.Timestamp finished_at = 14;
-  google.protobuf.Timestamp wake_up_at = 15;
-  google.protobuf.Timestamp deadline_at = 16;
-  string worker_id = 17;
-  string version = 18;
-  string parent_step_id = 19;
+  ErrorDetail error = 9;
+  int32 attempts = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp started_at = 12;
+  google.protobuf.Timestamp finished_at = 13;
+  google.protobuf.Timestamp wake_up_at = 14;
+  google.protobuf.Timestamp deadline_at = 15;
+  string worker_id = 16;
+  string version = 17;
+  string parent_step_id = 18;
 }
 
 // --- Requests/Responses ---
@@ -60,10 +59,9 @@ message StartWorkflowRequest {
   string task_queue = 3;
   string workflow_type = 4;
   Payload input = 5;
-  Payload context = 6;
-  google.protobuf.Timestamp deadline_at = 7;
-  string version = 8;
-  RetryPolicy retry_policy = 9;
+  google.protobuf.Timestamp deadline_at = 6;
+  string version = 7;
+  RetryPolicy retry_policy = 8;
 }
 
 message StartWorkflowResponse {

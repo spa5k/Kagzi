@@ -127,7 +127,6 @@ pub struct WorkflowBuilder<'a, I> {
     input: I,
     namespace_id: String,
     external_id: Option<String>,
-    context: Option<serde_json::Value>,
     deadline_at: Option<chrono::DateTime<chrono::Utc>>,
     version: Option<String>,
     retry_policy: Option<RetryPolicy>,
@@ -142,7 +141,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             input,
             namespace_id: "default".to_string(),
             external_id: None,
-            context: None,
             deadline_at: None,
             version: None,
             retry_policy: None,
@@ -156,11 +154,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
 
     pub fn namespace(mut self, ns: impl Into<String>) -> Self {
         self.namespace_id = ns.into();
-        self
-    }
-
-    pub fn context(mut self, ctx: serde_json::Value) -> Self {
-        self.context = Some(ctx);
         self
     }
 
@@ -188,7 +181,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
 
     async fn execute(self) -> anyhow::Result<String> {
         let input_bytes = serde_json::to_vec(&self.input)?;
-        let context_bytes = self.context.map(|c| serde_json::to_vec(&c)).transpose()?;
 
         let resp = self
             .client
@@ -204,10 +196,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
                     metadata: HashMap::new(),
                 }),
                 namespace_id: self.namespace_id,
-                context: context_bytes.map(|data| ProtoPayload {
-                    data,
-                    metadata: HashMap::new(),
-                }),
                 deadline_at: self.deadline_at.map(|dt| Timestamp {
                     seconds: dt.timestamp(),
                     nanos: dt.timestamp_subsec_nanos() as i32,
@@ -238,7 +226,6 @@ pub struct WorkflowScheduleBuilder<'a, I> {
     cron_expr: String,
     input: I,
     namespace_id: String,
-    context: Option<serde_json::Value>,
     enabled: Option<bool>,
     max_catchup: Option<i32>,
     version: Option<String>,
@@ -259,7 +246,6 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
             cron_expr: cron_expr.to_string(),
             input,
             namespace_id: "default".to_string(),
-            context: None,
             enabled: None,
             max_catchup: None,
             version: None,
@@ -268,11 +254,6 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
 
     pub fn namespace(mut self, ns: impl Into<String>) -> Self {
         self.namespace_id = ns.into();
-        self
-    }
-
-    pub fn context(mut self, ctx: serde_json::Value) -> Self {
-        self.context = Some(ctx);
         self
     }
 
@@ -293,7 +274,6 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
 
     async fn create(self) -> anyhow::Result<WorkflowSchedule> {
         let input_bytes = serde_json::to_vec(&self.input)?;
-        let context_bytes = self.context.map(|c| serde_json::to_vec(&c)).transpose()?;
 
         let request = CreateWorkflowScheduleRequest {
             namespace_id: self.namespace_id,
@@ -302,10 +282,6 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
             cron_expr: self.cron_expr,
             input: Some(ProtoPayload {
                 data: input_bytes,
-                metadata: HashMap::new(),
-            }),
-            context: context_bytes.map(|data| ProtoPayload {
-                data,
                 metadata: HashMap::new(),
             }),
             enabled: self.enabled,

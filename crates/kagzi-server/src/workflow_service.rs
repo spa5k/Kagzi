@@ -11,7 +11,7 @@ use tracing::{info, instrument};
 
 use crate::helpers::{
     invalid_argument, map_store_error, merge_proto_policy, not_found, payload_to_bytes,
-    payload_to_optional_json, precondition_failed,
+    precondition_failed,
 };
 use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
 use crate::tracing_utils::{
@@ -60,7 +60,7 @@ impl WorkflowService for WorkflowServiceImpl {
         }
 
         let input_bytes = payload_to_bytes(req.input);
-        let context_json = payload_to_optional_json(req.context)?;
+        // Context is not used - user payloads treated as opaque bytes
 
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
@@ -84,7 +84,6 @@ impl WorkflowService for WorkflowServiceImpl {
                 input: input_bytes,
                 namespace_id: namespace_id.clone(),
                 idempotency_suffix: None,
-                context: context_json,
                 deadline_at: req
                     .deadline_at
                     .map(|ts| {

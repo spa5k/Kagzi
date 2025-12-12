@@ -13,7 +13,7 @@ use crate::models::{
 
 const WORKFLOW_COLUMNS_WITH_PAYLOAD: &str = "\
     w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
-    w.status, p.input, p.output, p.context, w.locked_by, w.attempts, w.error, \
+    w.status, p.input, p.output, w.locked_by, w.attempts, w.error, \
     w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at, \
     w.version, w.parent_step_attempt_id, w.retry_policy";
 
@@ -77,12 +77,11 @@ pub(super) async fn create(
 
     sqlx::query!(
         r#"
-        INSERT INTO kagzi.workflow_payloads (run_id, input, context)
-        VALUES ($1, $2, $3)
+        INSERT INTO kagzi.workflow_payloads (run_id, input)
+        VALUES ($1, $2)
         "#,
         row.run_id,
-        params.input,
-        params.context
+        params.input
     )
     .execute(&mut *tx)
     .await?;
@@ -110,7 +109,6 @@ pub(super) async fn find_by_id(
             w.status,
             p.input,
             p.output,
-            p.context,
             w.locked_by,
             w.attempts,
             w.error,
@@ -555,12 +553,11 @@ pub(super) async fn create_batch(
 
         sqlx::query!(
             r#"
-            INSERT INTO kagzi.workflow_payloads (run_id, input, context)
-            VALUES ($1, $2, $3)
+            INSERT INTO kagzi.workflow_payloads (run_id, input)
+            VALUES ($1, $2)
             "#,
             row.run_id,
-            p.input,
-            p.context
+            p.input
         )
         .execute(&mut *tx)
         .await?;

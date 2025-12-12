@@ -113,18 +113,6 @@ pub fn bytes_to_payload(data: Option<Vec<u8>>) -> Payload {
     }
 }
 
-pub fn payload_to_optional_json(
-    payload: Option<Payload>,
-) -> Result<Option<serde_json::Value>, Status> {
-    match payload {
-        None => Ok(None),
-        Some(p) if p.data.is_empty() => Ok(None),
-        Some(p) => Ok(Some(serde_json::from_slice(&p.data).map_err(|e| {
-            invalid_argument(format!("Payload must be valid JSON: {}", e))
-        })?)),
-    }
-}
-
 pub fn json_to_payload(value: Option<serde_json::Value>) -> Result<Payload, Status> {
     match value {
         None => Ok(Payload {

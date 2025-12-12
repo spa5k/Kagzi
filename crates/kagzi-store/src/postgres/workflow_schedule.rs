@@ -14,7 +14,7 @@ use crate::repository::WorkflowScheduleRepository;
 
 const SCHEDULE_COLUMNS: &str = "\
     schedule_id, namespace_id, task_queue, workflow_type, cron_expr, \
-    input, context, enabled, max_catchup, next_fire_at, last_fired_at, \
+    input, enabled, max_catchup, next_fire_at, last_fired_at, \
     version, created_at, updated_at";
 
 #[derive(Clone)]
@@ -62,10 +62,10 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
         let schedule_id: Uuid = sqlx::query_scalar!(
             r#"
             INSERT INTO kagzi.schedules (
-                schedule_id, namespace_id, task_queue, workflow_type, cron_expr, input, context,
+                schedule_id, namespace_id, task_queue, workflow_type, cron_expr, input,
                 enabled, max_catchup, next_fire_at, last_fired_at, version
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10)
             RETURNING schedule_id
             "#,
             schedule_id,
@@ -74,7 +74,6 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
             params.workflow_type,
             params.cron_expr,
             params.input,
-            params.context,
             params.enabled,
             max_catchup,
             params.next_fire_at,
@@ -96,7 +95,7 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
             Schedule,
             r#"
             SELECT schedule_id, namespace_id, task_queue, workflow_type, cron_expr,
-                   input, context, enabled, max_catchup, next_fire_at, last_fired_at,
+                   input, enabled, max_catchup, next_fire_at, last_fired_at,
                    version, created_at, updated_at
             FROM kagzi.schedules
             WHERE schedule_id = $1 AND namespace_id = $2
@@ -177,11 +176,10 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
                 workflow_type = COALESCE($4, workflow_type),
                 cron_expr = COALESCE($5, cron_expr),
                 input = COALESCE($6, input),
-                context = COALESCE($7, context),
-                enabled = COALESCE($8, enabled),
-                max_catchup = COALESCE($9, max_catchup),
-                next_fire_at = COALESCE($10, next_fire_at),
-                version = COALESCE($11, version),
+                enabled = COALESCE($7, enabled),
+                max_catchup = COALESCE($8, max_catchup),
+                next_fire_at = COALESCE($9, next_fire_at),
+                version = COALESCE($10, version),
                 updated_at = NOW()
             WHERE schedule_id = $1 AND namespace_id = $2
             "#,
@@ -191,7 +189,6 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
             params.workflow_type,
             params.cron_expr,
             params.input,
-            params.context,
             params.enabled,
             max_catchup,
             params.next_fire_at,
@@ -230,7 +227,7 @@ impl WorkflowScheduleRepository for PgScheduleRepository {
             r#"
             WITH due AS (
                 SELECT schedule_id, namespace_id, task_queue, workflow_type, cron_expr,
-                       input, context, enabled, max_catchup, next_fire_at, last_fired_at,
+                       input, enabled, max_catchup, next_fire_at, last_fired_at,
                        version, created_at, updated_at
                 FROM kagzi.schedules
                 WHERE enabled = TRUE

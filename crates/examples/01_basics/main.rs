@@ -164,7 +164,6 @@ async fn run_context(server: &str, queue: &str) -> anyhow::Result<()> {
                 name: "context".into(),
             },
         )
-        .context(serde_json::json!({ "env": "production" }))
         .await?;
 
     tracing::info!(%run_id, "Started context workflow");

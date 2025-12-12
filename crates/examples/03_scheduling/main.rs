@@ -51,7 +51,6 @@ async fn cron_demo(server: &str, queue: &str) -> anyhow::Result<()> {
             },
         )
         .version("v1")
-        .context(serde_json::json!({ "source": "cron-demo" }))
         .max_catchup(3)
         .await?;
 

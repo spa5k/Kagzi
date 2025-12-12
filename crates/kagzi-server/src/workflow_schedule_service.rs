@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use base64::Engine;
@@ -7,7 +6,7 @@ use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServic
 use kagzi_proto::kagzi::{
     CreateWorkflowScheduleRequest, CreateWorkflowScheduleResponse, DeleteWorkflowScheduleRequest,
     DeleteWorkflowScheduleResponse, GetWorkflowScheduleRequest, GetWorkflowScheduleResponse,
-    ListWorkflowSchedulesRequest, ListWorkflowSchedulesResponse, PageInfo, Payload,
+    ListWorkflowSchedulesRequest, ListWorkflowSchedulesResponse, PageInfo,
     UpdateWorkflowScheduleRequest, UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
 use kagzi_store::{
@@ -17,23 +16,12 @@ use kagzi_store::{
 use tonic::{Request, Response, Status};
 
 use crate::helpers::{
-    bytes_to_payload, invalid_argument, json_to_payload, map_store_error, not_found,
-    payload_to_optional_bytes, payload_to_optional_json,
+    bytes_to_payload, invalid_argument, map_store_error, not_found, payload_to_optional_bytes,
 };
 use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
     log_grpc_response,
 };
-
-fn option_json_to_payload(value: Option<serde_json::Value>) -> Result<Payload, Status> {
-    match value {
-        Some(v) => json_to_payload(Some(v)),
-        None => Ok(Payload {
-            data: Vec::new(),
-            metadata: HashMap::new(),
-        }),
-    }
-}
 
 fn parse_cron_expr(expr: &str) -> Result<cron::Schedule, Status> {
     if expr.trim().is_empty() {
@@ -63,7 +51,6 @@ fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timesta
 
 fn workflow_schedule_to_proto(s: kagzi_store::Schedule) -> Result<WorkflowSchedule, Status> {
     let input = bytes_to_payload(Some(s.input));
-    let context = option_json_to_payload(s.context)?;
 
     Ok(WorkflowSchedule {
         schedule_id: s.schedule_id.to_string(),
@@ -72,7 +59,6 @@ fn workflow_schedule_to_proto(s: kagzi_store::Schedule) -> Result<WorkflowSchedu
         workflow_type: s.workflow_type,
         cron_expr: s.cron_expr,
         input: Some(input),
-        context: Some(context),
         enabled: s.enabled,
         max_catchup: s.max_catchup,
         next_fire_at: Some(to_proto_timestamp(s.next_fire_at)),
@@ -123,7 +109,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         };
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
-        let context_json = payload_to_optional_json(req.context)?;
+        // Context is not used - user payloads treated as opaque bytes
 
         let enabled = req.enabled.unwrap_or(true);
         let max_catchup = if let Some(m) = req.max_catchup {
@@ -143,7 +129,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 workflow_type: req.workflow_type,
                 cron_expr: req.cron_expr,
                 input,
-                context: context_json,
                 enabled,
                 max_catchup,
                 next_fire_at,
@@ -382,7 +367,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         };
 
         let input = payload_to_optional_bytes(req.input);
-        let context_json = payload_to_optional_json(req.context)?;
+        // Context is not used - user payloads treated as opaque bytes
         let max_catchup = req.max_catchup.map(clamp_max_catchup);
 
         self.store
@@ -395,7 +380,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                     workflow_type: req.workflow_type,
                     cron_expr,
                     input,
-                    context: context_json,
                     enabled: req.enabled,
                     max_catchup,
                     next_fire_at,
