@@ -326,6 +326,14 @@ impl WorkerService for WorkerServiceImpl {
                 .map_err(map_store_error)?;
 
             if let Some(work_item) = work_item {
+                tracing::info!(
+                    worker_id = %worker_id,
+                    run_id = %work_item.run_id,
+                    workflow_type = %work_item.workflow_type,
+                    task_queue = %req.task_queue,
+                    "Worker claimed workflow"
+                );
+
                 // Update active count
                 if let Err(e) = self
                     .store
@@ -497,6 +505,11 @@ impl WorkerService for WorkerServiceImpl {
         // Lazy sleep completion: if this is a SLEEP step and should_execute is false,
         // it means the workflow is RUNNING (sleep timer passed), so complete the step now
         if step_kind == kagzi_store::StepKind::Sleep && !result.should_execute {
+            tracing::info!(
+                run_id = %run_id,
+                step_name = %req.step_name,
+                "Completing sleep step lazily"
+            );
             self.store
                 .steps()
                 .complete(run_id, &req.step_name, vec![])

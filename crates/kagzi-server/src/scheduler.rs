@@ -8,7 +8,7 @@ use kagzi_store::{
     WorkflowScheduleRepository,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::SchedulerSettings;
 
@@ -107,8 +107,17 @@ pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: Cancella
         }
 
         // Wake up any sleeping workflows whose time has passed
-        if let Err(e) = store.workflows().wake_sleeping(batch_size).await {
-            error!("Failed to wake sleeping workflows: {:?}", e);
+        debug!("Scheduler checking for sleeping workflows to wake");
+        match store.workflows().wake_sleeping(batch_size).await {
+            Ok(0) => {
+                debug!("No sleeping workflows to wake");
+            }
+            Ok(count) => {
+                info!(count, "Scheduler woke up sleeping workflows");
+            }
+            Err(e) => {
+                error!("Failed to wake sleeping workflows: {:?}", e);
+            }
         }
 
         let now = Utc::now();

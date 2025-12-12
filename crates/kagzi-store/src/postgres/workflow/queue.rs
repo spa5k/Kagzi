@@ -135,7 +135,12 @@ pub(super) async fn wake_sleeping(
     .execute(&repo.pool)
     .await?;
 
-    Ok(result.rows_affected())
+    let rows_affected = result.rows_affected();
+    if rows_affected > 0 {
+        tracing::info!(rows_affected, "Woke up sleeping workflows");
+    }
+
+    Ok(rows_affected)
 }
 
 #[instrument(skip(repo))]
