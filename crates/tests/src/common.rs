@@ -36,8 +36,6 @@ pub struct TestConfig {
     pub scheduler_max_per_tick: i32,
     pub watchdog_interval_secs: u64,
     pub worker_stale_threshold_secs: i64,
-    pub counter_reconcile_interval_secs: u64,
-    pub wake_sleeping_batch_size: i32,
     pub poll_timeout_secs: u64,
 }
 
@@ -49,8 +47,6 @@ impl Default for TestConfig {
             scheduler_max_per_tick: 100,
             watchdog_interval_secs: 1,
             worker_stale_threshold_secs: 2,
-            counter_reconcile_interval_secs: 5,
-            wake_sleeping_batch_size: 50,
             poll_timeout_secs: 2,
         }
     }
@@ -114,8 +110,6 @@ impl TestHarness {
         let watchdog_settings = WatchdogSettings {
             interval_secs: config.watchdog_interval_secs,
             worker_stale_threshold_secs: config.worker_stale_threshold_secs,
-            counter_reconcile_interval_secs: config.counter_reconcile_interval_secs,
-            wake_sleeping_batch_size: config.wake_sleeping_batch_size,
         };
         let worker_settings = WorkerSettings {
             poll_timeout_secs: config.poll_timeout_secs,
