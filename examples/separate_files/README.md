@@ -4,7 +4,7 @@ This example demonstrates how to separate workflow logic from your application c
 
 ## Project Structure
 
-```
+```text
 separate_files/
 ├── src/
 │   ├── main.rs       # Application code that triggers workflows
@@ -19,6 +19,7 @@ separate_files/
 ## How to Run
 
 1. **Start the Kagzi server:**
+
    ```bash
    # Terminal 1
    cd /path/to/kagzi
@@ -27,6 +28,7 @@ separate_files/
    ```
 
 2. **Start the worker:**
+
    ```bash
    # Terminal 2
    cd /path/to/kagzi/examples/separate_files
@@ -36,6 +38,7 @@ separate_files/
 3. **Trigger workflows:**
 
    Option A - Run the main app:
+
    ```bash
    # Terminal 3
    cd /path/to/kagzi/examples/separate_files
@@ -43,6 +46,7 @@ separate_files/
    ```
 
    Option B - Or trigger manually:
+
    ```bash
    # Terminal 3
    cd /path/to/kagzi/examples/separate_files
