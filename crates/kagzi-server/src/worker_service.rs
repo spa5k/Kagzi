@@ -16,6 +16,8 @@ use kagzi_store::{
     WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus, WorkflowRepository,
     WorkflowTypeConcurrency,
 };
+use rand::Rng;
+use sqlx::postgres::PgListener;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -30,7 +32,6 @@ use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
     log_grpc_response,
 };
-use crate::work_distributor::WorkDistributorHandle;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
@@ -46,7 +47,6 @@ fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
 #[derive(Clone)]
 pub struct WorkerServiceImpl {
     pub store: PgStore,
-    pub work_distributor: WorkDistributorHandle,
     pub worker_settings: WorkerSettings,
 }
 
@@ -54,10 +54,8 @@ impl WorkerServiceImpl {
     const WORKFLOW_LOCK_DURATION_SECS: i64 = 30;
 
     pub fn new(store: PgStore, worker_settings: WorkerSettings) -> Self {
-        let work_distributor = WorkDistributorHandle::new(store.clone());
         Self {
             store,
-            work_distributor,
             worker_settings,
         }
     }
@@ -308,84 +306,37 @@ impl WorkerService for WorkerServiceImpl {
             ));
         }
 
-        let claimed = self
-            .store
-            .workflows()
-            .claim_workflow_batch(
-                &req.task_queue,
-                &namespace_id,
-                &req.worker_id,
-                &effective_types,
-                1,
-                Self::WORKFLOW_LOCK_DURATION_SECS,
-            )
-            .await
-            .map_err(map_store_error)?;
-
-        if let Some(work_item) = claimed.into_iter().next() {
-            if let Err(e) = self
-                .store
-                .workers()
-                .update_active_count(worker_id, &worker.namespace_id, 1)
-                .await
-            {
-                tracing::warn!(worker_id = %worker_id, error = ?e, "Failed to update active count");
-            }
-
-            let payload = bytes_to_payload(Some(work_item.input));
-
-            log_grpc_response(
-                "PollTask",
-                &correlation_id,
-                &trace_id,
-                Status::code(&Status::ok("")),
-                None,
-            );
-
-            return Ok(Response::new(PollTaskResponse {
-                run_id: work_item.run_id.to_string(),
-                workflow_type: work_item.workflow_type,
-                input: Some(payload),
-            }));
-        }
-
         let timeout = Duration::from_secs(self.worker_settings.poll_timeout_secs);
+        let deadline = tokio::time::Instant::now() + timeout;
 
-        match self
-            .work_distributor
-            .wait_for_work(
-                &req.task_queue,
-                &namespace_id,
-                &req.worker_id,
-                &effective_types,
-                timeout,
-            )
-            .await
-        {
-            Some(work_item) => {
+        // Long-polling loop
+        loop {
+            // Try to poll for work
+            let work_item = self
+                .store
+                .workflows()
+                .poll_workflow(
+                    &namespace_id,
+                    &req.task_queue,
+                    &req.worker_id,
+                    &effective_types,
+                    Self::WORKFLOW_LOCK_DURATION_SECS,
+                )
+                .await
+                .map_err(map_store_error)?;
+
+            if let Some(work_item) = work_item {
+                // Update active count
                 if let Err(e) = self
                     .store
                     .workers()
                     .update_active_count(worker_id, &worker.namespace_id, 1)
                     .await
                 {
-                    tracing::warn!(
-                        worker_id = %worker_id,
-                        error = ?e,
-                        "Failed to update active count"
-                    );
+                    warn!(worker_id = %worker_id, error = ?e, "Failed to update active count");
                 }
 
                 let payload = bytes_to_payload(Some(work_item.input));
-
-                info!(
-                    correlation_id = correlation_id,
-                    trace_id = trace_id,
-                    run_id = %work_item.run_id,
-                    workflow_type = %work_item.workflow_type,
-                    worker_id = %req.worker_id,
-                    "Worker claimed workflow via distributor"
-                );
 
                 log_grpc_response(
                     "PollTask",
@@ -395,13 +346,16 @@ impl WorkerService for WorkerServiceImpl {
                     None,
                 );
 
-                Ok(Response::new(PollTaskResponse {
+                return Ok(Response::new(PollTaskResponse {
                     run_id: work_item.run_id.to_string(),
                     workflow_type: work_item.workflow_type,
                     input: Some(payload),
-                }))
+                }));
             }
-            None => {
+
+            // Check if timeout reached
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
                 log_grpc_response(
                     "PollTask",
                     &correlation_id,
@@ -410,11 +364,52 @@ impl WorkerService for WorkerServiceImpl {
                     Some("No work available - timeout"),
                 );
 
-                Ok(Response::new(PollTaskResponse {
+                return Ok(Response::new(PollTaskResponse {
                     run_id: String::new(),
                     workflow_type: String::new(),
                     input: Some(empty_payload()),
-                }))
+                }));
+            }
+
+            // Listen for Postgres NOTIFY
+            let channel_name = format!(
+                "kagzi_work_{:x}",
+                md5::compute(format!("{}_{}", namespace_id, req.task_queue).as_bytes())
+            );
+
+            // Create listener (this is lightweight, connection pooled)
+            let mut listener = PgListener::connect_with(self.store.pool())
+                .await
+                .map_err(|e| {
+                    warn!(error = ?e, "Failed to create PgListener");
+                    Status::internal("Failed to listen for work notifications")
+                })?;
+
+            listener.listen(&channel_name).await.map_err(|e| {
+                warn!(error = ?e, channel = %channel_name, "Failed to listen on channel");
+                Status::internal("Failed to listen for work notifications")
+            })?;
+
+            // Wait for notification or timeout
+            let notification_result = tokio::time::timeout(remaining, listener.recv()).await;
+
+            // Always unlisten to clean up
+            let _ = listener.unlisten(&channel_name).await;
+
+            match notification_result {
+                Ok(Ok(_notification)) => {
+                    // Got notification, add jitter to prevent thundering herd
+                    let jitter_ms = rand::thread_rng().gen_range(0..500);
+                    tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
+                    // Loop back to poll again
+                }
+                Ok(Err(e)) => {
+                    warn!(error = ?e, "Error receiving notification");
+                    // Continue polling anyway
+                }
+                Err(_) => {
+                    // Timeout on notification, loop will check deadline
+                }
             }
         }
     }
@@ -498,6 +493,16 @@ impl WorkerService for WorkerServiceImpl {
             })
             .await
             .map_err(map_store_error)?;
+
+        // Lazy sleep completion: if this is a SLEEP step and should_execute is false,
+        // it means the workflow is RUNNING (sleep timer passed), so complete the step now
+        if step_kind == kagzi_store::StepKind::Sleep && !result.should_execute {
+            self.store
+                .steps()
+                .complete(run_id, &req.step_name, vec![])
+                .await
+                .map_err(map_store_error)?;
+        }
 
         let cached_output = bytes_to_payload(result.cached_output);
 

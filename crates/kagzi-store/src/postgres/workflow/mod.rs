@@ -1,9 +1,6 @@
 mod helpers;
-mod notify;
 mod queue;
 mod state;
-
-use std::time::Duration;
 
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -13,7 +10,7 @@ use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
-    RetryPolicy, WorkCandidate, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
+    RetryPolicy, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
 use crate::repository::WorkflowRepository;
 
@@ -111,45 +108,15 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::get_retry_policy(self, run_id).await
     }
 
-    async fn claim_workflow_batch(
+    async fn poll_workflow(
         &self,
-        task_queue: &str,
         namespace_id: &str,
-        worker_id: &str,
-        supported_types: &[String],
-        limit: usize,
-        lock_duration_secs: i64,
-    ) -> Result<Vec<ClaimedWorkflow>, StoreError> {
-        queue::claim_workflow_batch(
-            self,
-            task_queue,
-            namespace_id,
-            worker_id,
-            supported_types,
-            limit,
-            lock_duration_secs,
-        )
-        .await
-    }
-
-    async fn list_available_workflows(
-        &self,
         task_queue: &str,
-        namespace_id: &str,
-        supported_types: &[String],
-        limit: i32,
-    ) -> Result<Vec<WorkCandidate>, StoreError> {
-        queue::list_available_workflows(self, task_queue, namespace_id, supported_types, limit)
-            .await
-    }
-
-    async fn claim_specific_workflow(
-        &self,
-        run_id: Uuid,
         worker_id: &str,
-        lock_duration_secs: i64,
+        types: &[String],
+        lock_secs: i64,
     ) -> Result<Option<ClaimedWorkflow>, StoreError> {
-        queue::claim_specific_workflow(self, run_id, worker_id, lock_duration_secs).await
+        queue::poll_workflow(self, namespace_id, task_queue, worker_id, types, lock_secs).await
     }
 
     async fn extend_worker_locks(
@@ -178,37 +145,5 @@ impl WorkflowRepository for PgWorkflowRepository {
 
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError> {
         queue::find_orphaned(self).await
-    }
-
-    async fn increment_queue_counter(
-        &self,
-        namespace_id: &str,
-        task_queue: &str,
-        workflow_type: &str,
-        max: i32,
-    ) -> Result<bool, StoreError> {
-        queue::increment_queue_counter(self, namespace_id, task_queue, workflow_type, max).await
-    }
-
-    async fn decrement_queue_counter(
-        &self,
-        namespace_id: &str,
-        task_queue: &str,
-        workflow_type: &str,
-    ) -> Result<(), StoreError> {
-        queue::decrement_queue_counter(self, namespace_id, task_queue, workflow_type).await
-    }
-
-    async fn reconcile_queue_counters(&self) -> Result<u64, StoreError> {
-        queue::reconcile_queue_counters(self).await
-    }
-
-    async fn wait_for_new_work(
-        &self,
-        task_queue: &str,
-        namespace_id: &str,
-        timeout: Duration,
-    ) -> Result<bool, StoreError> {
-        notify::wait_for_new_work(&self.pool, task_queue, namespace_id, timeout).await
     }
 }

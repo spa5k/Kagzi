@@ -7,67 +7,24 @@ use tracing::{error, info, warn};
 use crate::config::WatchdogSettings;
 
 pub fn spawn(store: PgStore, settings: WatchdogSettings, shutdown: CancellationToken) {
-    let interval = Duration::from_secs(settings.interval_secs.max(1));
-    let stale_threshold_secs = settings.worker_stale_threshold_secs.max(1);
-    let reconcile_interval = Duration::from_secs(settings.counter_reconcile_interval_secs.max(1));
-    let wake_sleeping_batch_size = settings.wake_sleeping_batch_size.max(1);
-    info!(
-        interval_secs = interval.as_secs(),
-        "Watchdog spawning parallel tasks"
-    );
+    info!("Starting watchdog tasks");
 
-    tokio::spawn(run_wake_sleeping(
-        store.clone(),
-        shutdown.clone(),
-        interval,
-        wake_sleeping_batch_size,
-    ));
+    let interval = Duration::from_secs(settings.interval_secs);
+
     tokio::spawn(run_process_retries(
         store.clone(),
         shutdown.clone(),
         interval,
     ));
+
     tokio::spawn(run_find_orphaned(store.clone(), shutdown.clone(), interval));
-    tokio::spawn(run_reconcile_counters(
-        store.clone(),
-        shutdown.clone(),
-        reconcile_interval,
-    ));
+
     tokio::spawn(run_mark_stale(
         store,
         shutdown,
         interval,
-        stale_threshold_secs,
+        settings.worker_stale_threshold_secs,
     ));
-}
-
-async fn run_wake_sleeping(
-    store: PgStore,
-    shutdown: CancellationToken,
-    interval: Duration,
-    batch_size: i32,
-) {
-    let mut ticker = tokio::time::interval(interval);
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                info!("Watchdog wake_sleeping exiting");
-                break;
-            }
-            _ = ticker.tick() => {
-                match store.workflows().wake_sleeping(batch_size).await {
-                    Ok(count) => {
-                        if count > 0 {
-                            info!("Watchdog woke up {} sleeping workflows", count);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Watchdog failed to wake sleeping workflows: {:?}", e);
-                    }
-                }
-            }
-        }
-    }
 }
 
 async fn run_process_retries(store: PgStore, shutdown: CancellationToken, interval: Duration) {
@@ -164,30 +121,6 @@ async fn run_find_orphaned(store: PgStore, shutdown: CancellationToken, interval
                     }
                     Err(e) => {
                         error!("Watchdog failed to recover orphaned workflows: {:?}", e);
-                    }
-                }
-            }
-        }
-    }
-}
-
-async fn run_reconcile_counters(store: PgStore, shutdown: CancellationToken, interval: Duration) {
-    let mut ticker = tokio::time::interval(interval);
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                info!("Watchdog reconcile_counters exiting");
-                break;
-            }
-            _ = ticker.tick() => {
-                match store.workflows().reconcile_queue_counters().await {
-                    Ok(updated) => {
-                        if updated > 0 {
-                            info!(updated, "Reconciled queue counters");
-                        }
-                    }
-                    Err(e) => {
-                        error!("Watchdog failed to reconcile counters: {:?}", e);
                     }
                 }
             }

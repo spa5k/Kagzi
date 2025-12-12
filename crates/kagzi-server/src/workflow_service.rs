@@ -68,27 +68,15 @@ impl WorkflowService for WorkflowServiceImpl {
             req.namespace_id
         };
 
-        let workflows = self.store.workflows();
-
-        // Fast path: check if workflow already exists
-        if let Some(existing_id) = workflows
-            .find_active_by_external_id(&namespace_id, &req.external_id, None)
-            .await
-            .map_err(map_store_error)?
-        {
-            return Ok(Response::new(StartWorkflowResponse {
-                run_id: existing_id.to_string(),
-                already_exists: true,
-            }));
-        }
-
         let version = if req.version.is_empty() {
             "1".to_string()
         } else {
             req.version
         };
 
-        // Create workflow - handle race condition where concurrent request created it
+        let workflows = self.store.workflows();
+
+        // Create workflow - handle unique constraint for idempotency
         let create_result = workflows
             .create(CreateWorkflow {
                 external_id: req.external_id.clone(),
@@ -110,23 +98,17 @@ impl WorkflowService for WorkflowServiceImpl {
             })
             .await;
 
-        // Handle unique constraint violation (concurrent idempotent request)
-        let run_id = match create_result {
-            Ok(id) => id,
+        // Handle result
+        let (run_id, already_exists) = match create_result {
+            Ok(id) => (id, false),
             Err(ref e) if e.is_unique_violation() => {
-                // Race condition: another request created the workflow between our check and insert
-                if let Some(existing_id) = workflows
+                // Idempotent request - workflow already exists
+                let existing_id = workflows
                     .find_active_by_external_id(&namespace_id, &req.external_id, None)
                     .await
                     .map_err(map_store_error)?
-                {
-                    return Ok(Response::new(StartWorkflowResponse {
-                        run_id: existing_id.to_string(),
-                        already_exists: true,
-                    }));
-                }
-                // Should not happen, but fall through to error
-                return Err(map_store_error(create_result.unwrap_err()));
+                    .ok_or_else(|| map_store_error(create_result.unwrap_err()))?;
+                (existing_id, true)
             }
             Err(e) => return Err(map_store_error(e)),
         };
@@ -141,7 +123,7 @@ impl WorkflowService for WorkflowServiceImpl {
 
         Ok(Response::new(StartWorkflowResponse {
             run_id: run_id.to_string(),
-            already_exists: false,
+            already_exists,
         }))
     }
 

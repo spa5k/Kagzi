@@ -96,7 +96,10 @@ impl StoreError {
     }
 
     pub fn is_unique_violation(&self) -> bool {
-        matches!(self, Self::Database(sqlx::Error::Database(db_err)) if db_err.code().is_some_and(|c| c == "23505"))
+        // Note: The From<sqlx::Error> impl converts 23505 to StoreError::Conflict,
+        // so we check for that first. The Database variant check is kept as a fallback.
+        matches!(self, Self::Conflict { .. })
+            || matches!(self, Self::Database(sqlx::Error::Database(db_err)) if db_err.code().is_some_and(|c| c == "23505"))
     }
 }
 

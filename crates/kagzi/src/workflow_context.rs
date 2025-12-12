@@ -196,19 +196,39 @@ impl WorkflowContext {
         match result {
             Ok(val) => {
                 let output_bytes = serde_json::to_vec(&val)?;
-                let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
-                    run_id: self.run_id.clone(),
-                    step_id: step_id_resp.clone(),
-                    output: Some(ProtoPayload {
-                        data: output_bytes,
-                        metadata: HashMap::new(),
-                    }),
-                }));
 
-                self.client
-                    .complete_step(complete_request)
-                    .await
-                    .map_err(map_grpc_error)?;
+                // Infinite retry for complete_step to prevent "zombie success" bug
+                // If the user function succeeded, we MUST persist that success to the DB
+                let mut backoff = Duration::from_secs(1);
+                loop {
+                    let complete_request =
+                        add_tracing_metadata(Request::new(CompleteStepRequest {
+                            run_id: self.run_id.clone(),
+                            step_id: step_id_resp.clone(),
+                            output: Some(ProtoPayload {
+                                data: output_bytes.clone(),
+                                metadata: HashMap::new(),
+                            }),
+                        }));
+
+                    match self.client.complete_step(complete_request).await {
+                        Ok(_) => break, // Success!
+
+                        Err(e) if e.code() == tonic::Code::NotFound => {
+                            // Workflow was deleted - unrecoverable
+                            error!("Workflow deleted during execution: {}", e);
+                            return Err(map_grpc_error(e));
+                        }
+
+                        Err(e) => {
+                            // Transient error - retry with exponential backoff
+                            tracing::warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
+                            tokio::time::sleep(backoff).await;
+                            backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
+                        }
+                    }
+                }
+
                 Ok(val)
             }
             Err(e) => {
@@ -293,19 +313,8 @@ impl WorkflowContext {
             .await
             .map_err(map_grpc_error)?;
 
-        let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
-            run_id: self.run_id.clone(),
-            step_id: step_id_resp,
-            output: Some(ProtoPayload {
-                data: serde_json::to_vec(&())?,
-                metadata: HashMap::new(),
-            }),
-        }));
-        self.client
-            .complete_step(complete_request)
-            .await
-            .map_err(map_grpc_error)?;
-
+        // Step will be completed lazily when workflow resumes
+        // (see server's begin_step implementation for lazy sleep completion)
         Err(WorkflowPaused.into())
     }
 }
