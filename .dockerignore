@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs/
+
+# Tests
+tests/
+**/*_test.rs
+**/tests/
+
+# CI/CD
+.github/
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# Development
+justfile
+docker-compose.yml
+.env*
+*.log
+
+# Database data
+*.db
+*.sqlite
+
+# Local builds
+target/debug/
+
+# Documentation generation
+book/
+
+# Rust analyzer
+target/debug/deps/
+target/release/deps/
+target/release/build/
+target/release/incremental/
