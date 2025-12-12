@@ -33,6 +33,10 @@ name = "e2e_resilience"
 path = "tests/e2e/resilience.rs"
 
 [[test]]
+name = "e2e_sleep"
+path = "tests/e2e/sleep.rs"
+
+[[test]]
 name = "e2e_scheduling"
 path = "tests/e2e/scheduling.rs"
 

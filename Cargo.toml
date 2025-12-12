@@ -1,16 +1,17 @@
 [workspace]
 resolver = "3"
 members = [
-  "crates/examples",
   "crates/kagzi",
   "crates/kagzi-proto",
   "crates/kagzi-server",
   "crates/kagzi-store",
   "crates/tests",
+  "examples",
+  "examples/separate_files",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 authors = ["Kagzi Contributors"]
 edition = "2024"
 license = "Apache-2.0"

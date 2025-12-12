@@ -15,7 +15,6 @@ async fn sleeping_workflow_claimable_after_wake_up() -> anyhow::Result<()> {
     let harness = TestHarness::with_config(TestConfig {
         watchdog_interval_secs: 1,
         poll_timeout_secs: 1,
-        wake_sleeping_batch_size: 10,
         ..Default::default()
     })
     .await;
@@ -60,8 +59,7 @@ async fn sleeping_workflow_claimable_after_wake_up() -> anyhow::Result<()> {
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    let wf =
-        wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 30).await?;
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 30).await?;
     assert_eq!(wf.status, WorkflowStatus::Completed as i32);
 
     shutdown2.cancel();
@@ -73,7 +71,6 @@ async fn sleeping_workflow_claimable_after_wake_up() -> anyhow::Result<()> {
 async fn watchdog_wakes_sleeping_workflows_in_batches() -> anyhow::Result<()> {
     let harness = TestHarness::with_config(TestConfig {
         watchdog_interval_secs: 1,
-        wake_sleeping_batch_size: 1,
         poll_timeout_secs: 1,
         ..Default::default()
     })
@@ -118,7 +115,7 @@ async fn watchdog_wakes_sleeping_workflows_in_batches() -> anyhow::Result<()> {
     .await?;
     assert_eq!(
         pending, 3,
-        "watchdog should wake all sleeping workflows across batches"
+        "scheduler should wake all sleeping workflows after sleep expires"
     );
 
     let sleeping: i64 = sqlx::query_scalar(
@@ -157,8 +154,7 @@ async fn worker_can_directly_claim_expired_sleeping_workflow() -> anyhow::Result
     let mut client = harness.client().await;
     let run_id = client.workflow("direct_sleep", queue, Empty).await?;
 
-    let wf =
-        wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
     assert_eq!(wf.status, WorkflowStatus::Completed as i32);
 
     shutdown.cancel();
@@ -190,17 +186,12 @@ async fn sleep_step_replay_skips_execution() -> anyhow::Result<()> {
         .wait_for_db_status(&run_uuid, "SLEEPING", 20, Duration::from_millis(150))
         .await?;
 
-    // ensure sleep step is completed before killing worker
-    for _ in 0..20 {
-        if harness
-            .db_step_status(&run_uuid, "__sleep_0")
-            .await?
-            == Some("COMPLETED".to_string())
-        {
-            break;
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
+    // Note: With lazy sleep completion (Simplify_plan.md section 2.3), the sleep step
+    // stays in RUNNING status until the workflow resumes. The step will be completed
+    // lazily by `complete_pending_sleep_steps()` when a new worker claims the workflow.
+    // We only verify the step exists, not that it's completed yet.
+    let step_status = harness.db_step_status(&run_uuid, "__sleep_0").await?;
+    assert!(step_status.is_some(), "sleep step should exist");
 
     shutdown1.cancel();
     let _ = handle1.await;
@@ -218,17 +209,13 @@ async fn sleep_step_replay_skips_execution() -> anyhow::Result<()> {
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    let wf =
-        wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
+    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
     assert_eq!(wf.status, WorkflowStatus::Completed as i32);
 
     let attempts = harness
         .db_step_attempt_count(&run_uuid, "__sleep_0")
         .await?;
-    assert_eq!(
-        attempts, 1,
-        "sleep step should not re-execute on replay"
-    );
+    assert_eq!(attempts, 1, "sleep step should not re-execute on replay");
 
     shutdown2.cancel();
     let _ = handle2.await;

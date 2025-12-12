@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "kagzi"
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "kagzi-proto"
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 dependencies = [
  "prost",
  "prost-types",
@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "kagzi-server"
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "kagzi-store"
-version = "0.1.0"
+version = "0.0.1-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2341,6 +2341,20 @@ checksum = "cc1f0cbffaac4852523ce30d8bd3c5cdc873501d96ff467ca09b6767bb8cd5c0"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "separate_files_example"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "kagzi",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

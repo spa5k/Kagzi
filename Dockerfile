@@ -1,5 +1,5 @@
 # Multi-stage build for Kagzi
-FROM rust:1.75-alpine as builder
+FROM rust:1.92-alpine as builder
 
 # Install build dependencies
 RUN apk add --no-cache \
@@ -7,13 +7,19 @@ RUN apk add --no-cache \
     libpq-dev \
     pkgconfig \
     openssl-dev \
-    openssl-libs-static
+    openssl-libs-static \
+    protobuf \
+    protoc \
+    protobuf-dev
 
 WORKDIR /app
 
-# Copy cargo files for caching
+# Copy source code
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
+COPY examples/ ./examples/
+COPY proto/ ./proto/
+COPY migrations/ ./migrations/
 
 # Build all binaries
 RUN cargo build --release
