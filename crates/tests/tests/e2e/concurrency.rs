@@ -243,7 +243,7 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
 async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
     let harness = TestHarness::with_config(TestConfig {
         watchdog_interval_secs: 1,
-        poll_timeout_secs: 1,
+        poll_timeout_secs: 5, // Longer than sleep duration
         ..Default::default()
     })
     .await;

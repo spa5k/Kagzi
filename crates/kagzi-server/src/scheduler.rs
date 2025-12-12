@@ -105,6 +105,12 @@ pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: Cancella
             }
             _ = ticker.tick() => {}
         }
+
+        // Wake up any sleeping workflows whose time has passed
+        if let Err(e) = store.workflows().wake_sleeping(batch_size).await {
+            error!("Failed to wake sleeping workflows: {:?}", e);
+        }
+
         let now = Utc::now();
 
         let due: Vec<WorkflowSchedule> = match store
