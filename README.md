@@ -3,534 +3,328 @@
 <div align="center">
 
 ![Kagzi Logo](https://img.shields.io/badge/Kagzi-Workflow%20Engine-blue?style=for-the-badge)
-![Rust](https://img.shields.io/badge/rust-1.70+-orange?style=for-the-badge&logo=rust)
+![Rust](https://img.shields.io/badge/rust-1.75+-orange?style=for-the-badge&logo=rust)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=for-the-badge)
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge)
+![Status](https://img.shields.io/badge/status-Alpha-orange?style=for-the-badge)
 
 _A modern, distributed workflow engine built in Rust with gRPC_
 
-[Documentation](#documentation) • [Quick Start](#quick-start) • [Examples](#examples) • [API Reference](#api-reference)
-
 </div>
 
-## Overview
+> [!WARNING]
+> Kagzi is currently in alpha stage and not recommended for production use.
 
-Kagzi is a high-performance, distributed workflow engine designed for building reliable, scalable asynchronous systems. Built with Rust and gRPC, it provides a robust foundation for orchestrating complex business processes with built-in fault tolerance, observability, and enterprise-grade features.
+Kagzi is a durable workflow engine for Rust. Think Temporal or Inngest, but simpler.
 
-### Key Features
+## Why Kagzi?
 
-- 🚀 **High Performance**: Built with Rust and Tokio for maximum throughput
-- 🔄 **Distributed Architecture**: Scale horizontally across multiple workers
-- 🛡️ **Fault Tolerant**: Automatic retries, error handling, and recovery mechanisms
-- 📊 **Observability**: Comprehensive tracing, logging, and monitoring support
-- 🎯 **Type Safe**: Full Rust type safety with compile-time guarantees
-- ⚡ **Async First**: Native async/await support throughout
-- 🔍 **gRPC Protocol**: High-performance, language-agnostic communication
-- 💾 **PostgreSQL Backend**: Reliable, ACID-compliant persistence
-- 🧩 **Composable**: Build complex workflows from simple, reusable steps
+- **Reliable execution**: Workflows survive server crashes and restarts
+- **Built for Rust**: Native async/await with full type safety
+- **Simple API**: Focus on your business logic, not infrastructure
+- **Durable**: State persisted in PostgreSQL
+- **Scheduled workflows**: Built-in cron support
+- **Horizontally scalable**: Add more workers as you grow
+- **Multi-language support**: Will support multiple languages in the future through gRPC
 
 ## Architecture
 
-```
-┌─────────────────┐    gRPC     ┌─────────────────┐    SQL     ┌─────────────────┐
-│   Client       │ ◄──────────► │   Kagzi Server  │ ◄──────────► │  PostgreSQL    │
-└─────────────────┘             │                 │             │                 │
-                               └─────────────────┘             └─────────────────┘
-                                        ▲
-                                        │ gRPC
-                                        ▼
-                               ┌─────────────────┐
-                               │   Workers       │
-                               │ (Multiple)      │
-                               └─────────────────┘
+```text
+┌─────────────────┐      gRPC      ┌─────────────────┐      SQL      ┌─────────────────┐
+│   Clients       │ ◄─────────────► │  Kagzi Server   │ ◄─────────────► │  PostgreSQL     │
+│                 │                │                 │                │                 │
+│ • Web Services  │                │ • Scheduler     │                │ • Workflows     │
+│ • CLI Tools     │                │ • Queue Manager │                │ • Steps         │
+│ • External APIs │                │ • Workflow      │                │ • Queue         │
+│                 │                │   Engine        │                │ • Schedules     │
+└─────────────────┘                │ • Watchdog      │                │ • Workers       │
+                                   └─────────────────┘                └─────────────────┘
+                                             ▲
+                                             │ gRPC
+                                             ▼
+                                   ┌─────────────────┐
+                                   │  Worker Nodes   │
+                                   │                 │
+                                   │ • Execute Steps │
+                                   │ • Heartbeats    │
+                                   │ • Retry Logic   │
+                                   │                 │
+                                   │ (Multiple)      │
+                                   └─────────────────┘
 ```
 
 ## Quick Start
 
-### Prerequisites
+```bash
+# 1. Start PostgreSQL
+docker-compose up -d
 
-- Rust 1.70+ with Cargo
-- PostgreSQL 14+ (or Docker)
-- Just (task runner) - optional but recommended
+# 2. Start the Kagzi server
+cargo run -p kagzi-server
 
-### Installation
+# 3. Run a workflow
+cargo run -p kagzi --example simple
+```
 
-1. **Clone the repository**
-
-   ```bash
-   git clone https://github.com/spa5k/kagzi.git
-   cd kagzi
-   ```
-
-2. **Set up the development environment**
-
-   ```bash
-   # Using Just (recommended)
-   just setup
-
-   # Or manually:
-   docker-compose up -d
-   cargo run -p kagzi-server
-   ```
-
-3. **Run your first workflow**
-   ```bash
-   cargo run -p kagzi --example simple
-   ```
-
-### Basic Usage
-
-Here's a simple workflow to get you started:
+### Quick Example
 
 ```rust
 use kagzi::{Client, Worker, WorkflowContext};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-struct Input {
-    name: String,
+struct SendWelcomeEmailInput {
+    user_id: String,
+    user_email: String,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Output {
-    message: String,
-}
-
-// Define step functions as separate async functions
-async fn greet(name: String) -> anyhow::Result<String> {
-    Ok(format!("Hello, {}!", name))
-}
-
-// Workflow orchestrates steps
-async fn greet_workflow(mut ctx: WorkflowContext, input: Input) -> anyhow::Result<Output> {
-    // Run step - if replayed, returns cached result
-    let greeting = ctx.run("greet", greet(input.name)).await?;
-
-    Ok(Output { message: greeting })
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Start worker
-    let mut worker = Worker::builder("http://localhost:50051", "default")
-        .build()
+async fn send_welcome_email_workflow(
+    mut ctx: WorkflowContext,
+    input: SendWelcomeEmailInput,
+) -> anyhow::Result<()> {
+    // Step 1: Fetch user (memoized - runs once)
+    let user = ctx
+        .run("fetch-user", async {
+            fetch_user_from_db(&input.user_id).await
+        })
         .await?;
-    worker.register("greet", greet_workflow);
-    tokio::spawn(async move { worker.run().await });
 
-    // Start workflow
-    let mut client = Client::connect("http://localhost:50051").await?;
-    let run_id = client.workflow("greet", "default", Input {
-        name: "World".to_string(),
-    }).await?;
+    // Step 2: Send email (runs only if first step succeeded)
+    ctx.run("send-email", async {
+        send_welcome_email(&user.email).await
+    })
+        .await?;
 
-    println!("Started workflow: {}", run_id);
+    // Step 3: Update user record
+    ctx.run("mark-welcome-sent", async {
+        mark_welcome_email_sent(&input.user_id).await
+    })
+        .await?;
+
     Ok(())
 }
 ```
 
-## Documentation
+**Separate your workflow logic from your application:**
 
-### Core Concepts
+```rust
+// worker.rs - Run this in the background
+let mut worker = Worker::builder("http://localhost:50051", "email")
+    .build()
+    .await?;
+worker.register("send-welcome-email", send_welcome_email_workflow);
+worker.run().await?;
 
-#### Workflows
+// main.rs - Trigger from your API
+let mut client = Client::connect("http://localhost:50051").await?;
+client.workflow(
+    "send-welcome-email",
+    "email",
+    SendWelcomeEmailInput {
+        user_id: "123",
+        user_email: "alice@example.com",
+    },
+)
+.retries(3)
+.await?;
+```
 
-Workflows are the main unit of execution in Kagzi. They consist of multiple steps that can be executed sequentially, in parallel, or with complex dependencies.
+**Run the complete example:**
 
-#### Steps
+```bash
+# Terminal 1: Start Kagzi server
+cargo run -p kagzi-server
 
-Steps are individual units of work within a workflow. Each step can:
+# Terminal 2: Start the worker
+cargo run -p kagzi --example separate_files_example worker
 
-- Execute async functions
-- Call other workflows (sub-workflows)
-- Sleep for specified durations
-- Handle failures and retries
+# Terminal 3: Trigger a workflow
+cargo run -p kagzi --example separate_files_example trigger
+```
 
-#### Workers
+## API
 
-Workers are processes that execute workflow steps. They poll the server for available work and execute steps using registered workflow functions.
-
-#### Context
-
-The `WorkflowContext` provides access to workflow operations like:
-
-- Running sub-steps
-- Sleeping
-- Accessing workflow metadata
-- Error handling
-
-### API Reference
-
-#### Client API
+### Client
 
 ```rust
 let mut client = Client::connect("http://localhost:50051").await?;
 
-// Start a simple workflow
-let run_id = client.workflow("workflow_name", "task_queue", input).await?;
-
-// Start with options
+// Start a workflow
 let run_id = client
-    .workflow("workflow_name", "task_queue", input)
-    .id("unique-external-id")
-    .version("1.0.0")
-    .context(serde_json::json!({"key": "value"}))
-    .deadline(chrono::Utc::now() + chrono::Duration::hours(1))
+    .workflow("process_payment", "default", payment_data)
+    .retries(3)
     .await?;
-
-// Get workflow status
-let status = client.get_workflow_run(run_id).await?;
-
-// List workflows
-let workflows = client.list_workflow_runs("namespace").await?;
 ```
 
-#### Worker API
+### Worker
 
 ```rust
-let mut worker = Worker::builder("http://localhost:50051", "task_queue")
-    // Optional: cap total concurrent RUNNING workflows for this queue
-    .queue_concurrency_limit(32)
-    // Optional: cap a specific workflow type inside the queue
-    .workflow_type_concurrency("payment_capture", 16)
-    // Optional: default step-level retry if a step does not provide one
-    .default_step_retry(kagzi::RetryPolicy {
-        maximum_attempts: Some(3),
-        initial_interval: Some(std::time::Duration::from_millis(500)),
-        backoff_coefficient: Some(2.0),
-        maximum_interval: Some(std::time::Duration::from_secs(10)),
-        non_retryable_errors: vec![],
-    })
+let mut worker = Worker::builder("http://localhost:50051", "default")
+    .max_concurrent(50)
     .build()
     .await?;
 
-// Register workflow
-worker.register("workflow_name", workflow_function);
-
-// Start polling for work
+worker.register("process_payment", process_payment_workflow);
 worker.run().await?;
 ```
 
-#### Schedules (Cron)
-
-- Cron expressions follow `cron::Schedule` format in UTC: `sec min hour dom month dow [year]`. Missed ticks are replayed on restart using `(from, to]` bounds, capped by `max_catchup` (default 100).
-- Idempotency per fire: `schedule:{schedule_id}:{fire_at_rfc3339}` prevents duplicates across restarts.
-- Scheduler config: `KAGZI_SCHEDULER_INTERVAL_SECS` (default 5s), `KAGZI_SCHEDULER_BATCH_SIZE` (default 100), `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK` (default 1000).
-- Disable stops future fires; re-enable catches up from the last fired time within `max_catchup`.
+### Workflow Context
 
 ```rust
-use kagzi::{Client, ScheduleUpdate};
-
-let mut client = Client::connect("http://localhost:50051").await?;
-
-// Create a cron schedule
-let schedule = client
-    .schedule("daily_report", "reports", "0 0 6 * * *") // 06:00:00 UTC daily
-    .input(serde_json::json!({"region": "us-east"}))
-    .version("1.0.0")
-    .create()
-    .await?;
-
-// Update cron expression
-let updated = client
-    .update_schedule(
-        &schedule.schedule_id,
-        "default",
-        ScheduleUpdate::default().cron_expr("0 0 7 * * *"),
-    )
-    .await?;
-
-// Delete the schedule
-client.delete_schedule(&schedule.schedule_id, "default").await?;
-```
-
-#### Workflow Context API
-
-```rust
-async fn workflow_function(mut ctx: WorkflowContext, input: Input) -> anyhow::Result<Output> {
-    // Run a step - results are memoized for replay
-    let result = ctx.run("step_name", my_async_function(input.value)).await?;
-
-    // Run a step with explicit input tracking (for observability)
-    let result2 = ctx.run_with_input("step_name", &input, my_async_function(input.value)).await?;
-
-    // Run a step with an explicit retry policy; unspecified fields inherit
-    // from workflow-level retry (if set) or the worker's default_step_retry.
-    let result_with_retry = ctx
-        .run_with_input_with_retry(
-            "step_with_retry",
-            &input,
-            Some(kagzi::RetryPolicy {
-                maximum_attempts: Some(5),
-                initial_interval: None,
-                backoff_coefficient: None,
-                maximum_interval: None,
-                non_retryable_errors: vec![],
-            }),
-            my_async_function(input.value),
-        )
+async fn process_payment_workflow(
+    mut ctx: WorkflowContext,
+    payment: Payment,
+) -> anyhow::Result<Result> {
+    // Charge payment - retries on failure
+    let charge = ctx
+        .run("charge", async { charge_card(&payment).await })
         .await?;
 
-    // Durable sleep - survives server restarts
-    ctx.sleep(Duration::from_secs(10)).await?;
+    // Send receipt - skipped if workflow is replayed
+    let receipt = ctx
+        .run("send_receipt", async { send_email(&payment).await })
+        .await?;
 
-    Ok(Output { result })
+    Ok(charge)
 }
+```
+
+### Cron Schedules
+
+```rust
+// Run daily at 9 AM UTC
+client.schedule(
+    "daily_report",
+    "reports",
+    "0 0 9 * * *",
+    report_data,
+)
+.create()
+.await?;
 ```
 
 ## Examples
 
-Run any example with `cargo run -p kagzi --example <name> -- <variant>`.
-
-- 01_basics: hello world, multi-step chain, context passing (`hello|chain|context`)
-- 02_error_handling: retries vs non-retryable, per-step override (`flaky|fatal|override`)
-- 03_scheduling: cron create/delete, durable sleep, catchup (`cron|sleep|catchup`)
-- 04_concurrency: local cap, shared queue cap, workflow-type limits (`local|queue|workflow`)
-- 05_fan_out_in: parallel static fetch + dynamic map-reduce (`static|mapreduce`)
-- 06_long_running: polling loop and timeout guard (`poll|timeout`)
-- 07_idempotency: external IDs and memoized steps (`external|memo`)
-- 08_saga_pattern: trip booking with compensation (`saga|partial`)
-- 09_data_pipeline: JSON transform and large-payload offload (`transform|large`)
-- 10_multi_queue: priority queues and tenant isolation (`priority|namespace`)
+```bash
+cargo run -p kagzi --example simple      # Basic workflow
+cargo run -p kagzi --example scheduling  # Cron jobs
+cargo run -p kagzi --example saga        # Compensation pattern
+cargo run -p kagzi --example fanout      # Parallel processing
+```
 
 ## Configuration
 
-### Environment Variables
-
-| Variable                                 | Description                    | Default                                                  |
-| ---------------------------------------- | ------------------------------ | -------------------------------------------------------- |
-| `KAGZI_DB_URL`                           | PostgreSQL connection string   | `postgresql://postgres:postgres@localhost:5432/postgres` |
-| `KAGZI_SERVER_HOST`                      | Server bind host               | `0.0.0.0`                                                |
-| `KAGZI_SERVER_PORT`                      | Server bind port               | `50051`                                                  |
-| `KAGZI_SCHEDULER_INTERVAL_SECS`          | Scheduler tick interval (secs) | `5`                                                      |
-| `KAGZI_SCHEDULER_BATCH_SIZE`             | Scheduler batch size           | `100`                                                    |
-| `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK` | Max workflows per tick         | `1000`                                                   |
-| `RUST_LOG`                               | Log level filter               | `info`                                                   |
-
-### Payload Limits
-
-Payloads over 1MB log a warning; payloads over 2MB are rejected to avoid bloating the database. Store large data externally and pass references instead.
-
-### Database Setup
-
-Using Docker (recommended):
+Set environment variables:
 
 ```bash
-docker-compose up -d
+export KAGZI_DB_URL="postgresql://user:pass@host:5432/db"
+export KAGZI_SERVER_PORT=50051
+export RUST_LOG=info
 ```
 
-Manual setup:
+**Note**: Payloads over 2MB are rejected. Store large data externally.
+
+### Database
 
 ```bash
-# Create database
-createdb kagzi
+# Start PostgreSQL
+docker-compose up -d
 
 # Run migrations
-sqlx migrate run --database-url "postgresql://user:pass@localhost/kagzi"
+sqlx migrate run --database-url "postgresql://postgres:postgres@localhost:54122/postgres"
 ```
 
 ## Development
 
-### Project Structure
-
-```
-kagzi/
-├── crates/
-│   ├── kagzi/              # Client library
-│   ├── kagzi-proto/        # Generated gRPC code
-│   └── kagzi-server/      # Server implementation
-├── examples/               # Usage examples
-├── migrations/             # Database migrations
-├── proto/                  # Protocol definitions
-└── docker-compose.yml      # Development database
-```
-
-### Building
-
 ```bash
-# Build entire workspace
-cargo build
-
-# Build specific crate
-cargo build -p kagzi-server
-
-# Build with optimizations
-cargo build --release
-```
-
-### Testing
-
-```bash
-# Run all tests
-cargo test
-
-# Run tests for specific crate
-cargo test -p kagzi
-
-# Run with coverage
-cargo tarpaulin --out Html
-```
-
-### Development Commands (using Just)
-
-```bash
-# Start development environment
+# Setup
 just setup
-
-# Start database
-just db-up
 
 # Run server
 just dev
 
-# Run migrations
-just migrate
+# Run tests
+just test
 
-# Lint code
-just lint
-
-# Launch gRPC UI
-just grpcui
+# Run example
+just example simple
 ```
 
 ## Deployment
 
-### Docker Deployment
+### Docker
 
-```dockerfile
-FROM rust:1.70 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+```bash
+# Pull image
+docker pull ghcr.io/spa5k/kagzi/server:latest
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/kagzi-server /usr/local/bin/
-EXPOSE 50051
-CMD ["kagzi-server"]
+# Run
+docker run -d \
+  --name kagzi \
+  -p 50051:50051 \
+  -e KAGZI_DB_URL="$DATABASE_URL" \
+  ghcr.io/spa5k/kagzi/server:latest
 ```
 
-### Kubernetes Deployment
+### From Source
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kagzi-server
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: kagzi-server
-  template:
-    metadata:
-      labels:
-        app: kagzi-server
-    spec:
-      containers:
-        - name: kagzi-server
-          image: kagzi-server:latest
-          ports:
-            - containerPort: 50051
-          env:
-            - name: KAGZI_DB_URL
-              valueFrom:
-                secretKeyRef:
-                  name: kagzi-secrets
-                  key: database-url
+```bash
+cargo build --release
+./target/release/kagzi-server
 ```
 
-## Monitoring & Observability
+## Observability
 
-### Tracing
-
-Kagzi provides comprehensive tracing support with correlation IDs and distributed tracing:
-
-```rust
-// Initialize tracing
-kagzi::tracing_utils::init_tracing("my-service")?;
-
-// All gRPC calls are automatically traced with:
-// - Correlation IDs
-// - Trace IDs
-// - Method names
-// - Request/response timing
-// - Error context
-```
-
-### Metrics
-
-The server exposes structured logs that can be consumed by monitoring systems:
-
-```json
-{
-  "timestamp": "2024-01-01T12:00:00Z",
-  "level": "info",
-  "method": "StartWorkflow",
-  "correlation_id": "abc123",
-  "trace_id": "def456",
-  "duration_ms": 150,
-  "status": "success"
-}
-```
-
-## Performance
-
-### Benchmarks
-
-- **Throughput**: 10,000+ workflows/second per server instance
-- **Latency**: <10ms median for simple workflows
-- **Scalability**: Linear scaling with worker instances
-- **Memory**: <100MB base memory per server
-
-### Optimization Tips
-
-1. **Connection Pooling**: Configure appropriate pool sizes for your workload
-2. **Batch Operations**: Use bulk operations where possible
-3. **Async Patterns**: Leverage Rust's async/await for I/O-bound operations
-4. **Monitoring**: Set up alerts for latency and error rates
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Run `just lint` and `cargo test`
-6. Submit a pull request
-
-## License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-- 📖 [Documentation](https://docs.kagzi.dev)
-- 🐛 [Issue Tracker](https://github.com/spa5k/kagzi/issues)
-- 💬 [Discussions](https://github.com/spa5k/kagzi/discussions)
-- 📧 [Email](mailto:support@kagzi.dev)
+Kagzi includes structured logging and tracing support for workflow executions. Full metrics and OpenTelemetry integration are planned for future releases.
 
 ## Roadmap
 
-- [ ] Web Dashboard UI
-- [ ] Workflow Visualization
-- [ ] Additional Database Backends (MySQL, SQLite)
-- [ ] Workflow Templates
-- [ ] Advanced Scheduling (Cron, Delayed Start)
-- [ ] Workflow Versioning and Migration
-- [ ] Metrics and Alerting Integration
-- [ ] Multi-tenant Support
+### ✅ Current Release
 
----
+| Feature                    | Status  |
+| -------------------------- | ------- |
+| PostgreSQL backend         | ✅ Done |
+| Durable workflow execution | ✅ Done |
+| Step memoization & retries | ✅ Done |
+| Cron-based scheduling      | ✅ Done |
+| Concurrent workers         | ✅ Done |
+| gRPC protocol              | ✅ Done |
+| Saga pattern support       | ✅ Done |
 
-<div align="center">
+### 🚧 Upcoming Features
 
-**Built with ❤️ by the Kagzi team**
+| Feature                      | Version | Status        |
+| ---------------------------- | ------- | ------------- |
+| Web Dashboard UI             | v0.2    | 🏗️ In Progress |
+| OpenTelemetry integration    | v0.3    | 📋 Planned    |
+| REST API Gateway             | v0.3    | 📋 Planned    |
+| Workflow versioning          | v0.4    | 📋 Planned    |
+| Additional database backends | v0.4    | 📋 Planned    |
+| Python SDK                   | v0.5    | 📋 Planned    |
+| CLI tools                    | v0.5    | 📋 Planned    |
+| Workflow templates           | v0.6    | 📋 Planned    |
+| Signals & events             | v0.6    | 📋 Planned    |
 
-[Website](https://kagzi.dev) • [Blog](https://blog.kagzi.dev) • [Twitter](https://twitter.com/kagzi_dev)
+### 🔮 Future Roadmap
 
-</div>
+| Feature                   | Target  | Description                          |
+| ------------------------- | ------- | ------------------------------------ |
+| Multi-tenant support      | v1.0    | Isolate workflows per tenant         |
+| Workflow hooks            | v1.0    | Trigger workflows on external events |
+| Advanced retry policies   | v1.1    | Custom retry strategies              |
+| Kubernetes operator       | v1.2    | Native K8s deployment                |
+| Workflow visualization    | v1.2    | Visual workflow designer             |
+| Performance optimizations | Ongoing | Continuous improvements              |
+
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## License
+
+Apache 2.0 - see [LICENSE](LICENSE) file.
+
+## Links
+
+- [GitHub](https://github.com/spa5k/kagzi)
+- [Issues](https://github.com/spa5k/kagzi/issues)
+- [Discussions](https://github.com/spa5k/kagzi/discussions)

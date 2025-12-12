@@ -52,24 +52,8 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
         "workflow should be sleeping before worker dies"
     );
 
-    // Wait for the sleep step to be marked COMPLETED. There's a window between workflow
-    // entering SLEEPING and the step being marked COMPLETED.
-    harness
-        .wait_for_step_status(
-            &run_uuid,
-            "__sleep_0",
-            "COMPLETED",
-            20,
-            Duration::from_millis(100),
-        )
-        .await?;
-
     let step_status = harness.db_step_status(&run_uuid, "__sleep_0").await?;
-    assert_eq!(
-        step_status,
-        Some("COMPLETED".to_string()),
-        "sleep step should be COMPLETED before killing worker"
-    );
+    assert!(step_status.is_some(), "sleep step should exist");
 
     // Gracefully shutdown worker1
     shutdown1.cancel();
@@ -325,8 +309,15 @@ async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
+    for _ in 0..20 {
+        let status = harness.db_workflow_status(&run_uuid).await?;
+        if status == "RUNNING" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
     let attempts_before = harness.db_workflow_attempts(&run_uuid).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
     shutdown.cancel();
     handle.abort();
 

@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+
+# Rust
+target/
+**/*.rs.bk
+# Cargo.lock must be included for reproducible Docker builds and because Dockerfile copies it.
+# Cargo.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+docs/
+# Keep README.md in the image context (optional), don't blanket-ignore *.md.
+
+# Tests
+tests/
+**/*_test.rs
+# Keep crates/tests as it's a workspace member
+# **/tests/
+
+# CI/CD
+.github/
+
+# Docker
+# Keep Dockerfiles in build context (CI references Dockerfile.server)
+# Dockerfile*
+# .dockerignore
+
+# Development
+justfile
+docker-compose.yml
+.env*
+*.log
+
+# Database data
+*.db
+*.sqlite
+
+# Local builds
+target/debug/
+target/release/
+!target/release/kagzi-server
+
+# Documentation generation
+book/
+
+# Rust analyzer
+target/debug/deps/
+target/release/deps/
+target/release/build/
+target/release/incremental/

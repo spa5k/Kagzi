@@ -108,6 +108,7 @@ test-e2e:
 tidy:
     cargo fmt --all
     buf format -w
+    dprint fmt
 
 fix:
     cargo fix --all-targets --all-features --allow-dirty

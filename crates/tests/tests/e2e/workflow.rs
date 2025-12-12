@@ -341,8 +341,17 @@ async fn cancel_running_workflow_interrupts_execution() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    // Wait for the workflow to start running before issuing cancel.
-    let _ = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Running, 30).await?;
+    // Wait for the workflow to start executing before issuing cancel.
+    // We need to ensure the worker has actually started executing, not just claimed the workflow.
+    let mut execution_wait_count = 0;
+    while started.load(Ordering::SeqCst) == 0 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        execution_wait_count += 1;
+        if execution_wait_count > 100 {
+            // 5 second timeout
+            anyhow::bail!("workflow did not start execution within timeout");
+        }
+    }
     let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
     workflow_client
         .cancel_workflow(Request::new(CancelWorkflowRequest {
