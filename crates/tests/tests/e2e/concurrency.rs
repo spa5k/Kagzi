@@ -244,6 +244,9 @@ async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
     let harness = TestHarness::with_config(TestConfig {
         watchdog_interval_secs: 1,
         scheduler_interval_secs: 1,
+        scheduler_batch_size: 100,
+        scheduler_max_per_tick: 100,
+        worker_stale_threshold_secs: 2,
         poll_timeout_secs: 10,
     })
     .await;

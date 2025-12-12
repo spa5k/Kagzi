@@ -84,9 +84,17 @@ pub trait WorkflowRepository: Send + Sync {
 
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError>;
 
+    async fn find_and_recover_offline_worker_workflows(&self) -> Result<u64, StoreError>;
+
     async fn schedule_retry(&self, run_id: Uuid, delay_ms: u64) -> Result<(), StoreError>;
 
     async fn mark_exhausted(&self, run_id: Uuid, error: &str) -> Result<(), StoreError>;
+
+    async fn mark_exhausted_with_increment(
+        &self,
+        run_id: Uuid,
+        error: &str,
+    ) -> Result<(), StoreError>;
 
     async fn get_retry_policy(&self, run_id: Uuid) -> Result<Option<RetryPolicy>, StoreError>;
 }

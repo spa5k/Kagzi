@@ -37,6 +37,7 @@ pub(super) async fn poll_workflow(
             locked_by = $4,
             locked_until = NOW() + ($5 * interval '1 second'),
             started_at = COALESCE(started_at, NOW()),
+            attempts = attempts + 1,
             wake_up_at = NULL
         FROM task
         WHERE w.run_id = task.run_id

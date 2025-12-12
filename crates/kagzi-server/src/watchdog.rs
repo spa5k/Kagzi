@@ -69,28 +69,56 @@ async fn run_find_orphaned(store: PgStore, shutdown: CancellationToken, interval
                     Ok(orphans) => {
                         for orphan in orphans {
                             let policy = orphan.retry_policy.unwrap_or_default();
+                            let next_attempt = orphan.attempts + 1;
 
                             if policy.should_retry(orphan.attempts) {
-                                let delay_ms = policy.calculate_delay_ms(orphan.attempts) as u64;
+                                // Check if the next attempt would exhaust retries
+                                if policy.should_retry(next_attempt) {
+                                    let delay_ms = policy.calculate_delay_ms(orphan.attempts) as u64;
 
-                                match store
-                                    .workflows()
-                                    .schedule_retry(orphan.run_id, delay_ms)
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        warn!(
-                                            run_id = %orphan.run_id,
-                                            previous_worker = ?orphan.locked_by,
-                                            delay_ms = delay_ms,
-                                            "Recovered orphaned workflow - scheduling retry with backoff"
-                                        );
+                                    match store
+                                        .workflows()
+                                        .schedule_retry(orphan.run_id, delay_ms)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            warn!(
+                                                run_id = %orphan.run_id,
+                                                previous_worker = ?orphan.locked_by,
+                                                delay_ms = delay_ms,
+                                                "Recovered orphaned workflow - scheduling retry with backoff"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Failed to schedule retry for orphaned workflow {}: {:?}",
+                                                orphan.run_id, e
+                                            );
+                                        }
                                     }
-                                    Err(e) => {
-                                        error!(
-                                            "Failed to schedule retry for orphaned workflow {}: {:?}",
-                                            orphan.run_id, e
-                                        );
+                                } else {
+                                    // Next attempt would exhaust retries, mark as failed immediately
+                                    match store
+                                        .workflows()
+                                        .mark_exhausted_with_increment(
+                                            orphan.run_id,
+                                            "Workflow crashed and exhausted all retry attempts",
+                                        )
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            error!(
+                                                run_id = %orphan.run_id,
+                                                attempts = next_attempt,
+                                                "Orphaned workflow exhausted retries - marked as failed"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Failed to mark orphaned workflow {} as failed: {:?}",
+                                                orphan.run_id, e
+                                            );
+                                        }
                                     }
                                 }
                             } else {
@@ -142,11 +170,24 @@ async fn run_mark_stale(
                 break;
             }
             _ = ticker.tick() => {
+                // First mark stale workers as offline
                 match store.workers().mark_stale_offline(stale_threshold_secs).await {
                     Ok(count) if count > 0 => {
                         warn!("Marked {} stale workers as offline", count);
                     }
                     Err(e) => error!("Failed to mark stale workers: {:?}", e),
+                    _ => {}
+                }
+
+                // Then recover workflows from offline workers (treat as orphans)
+                match store.workflows().find_and_recover_offline_worker_workflows().await {
+                    Ok(recovered) if recovered > 0 => {
+                        warn!(
+                            recovered,
+                            "Recovered workflows from offline workers"
+                        );
+                    }
+                    Err(e) => error!("Failed to recover workflows from offline workers: {:?}", e),
                     _ => {}
                 }
             }

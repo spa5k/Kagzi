@@ -18,8 +18,8 @@ use kagzi_server::{
 use kagzi_store::{PgStore, StoreConfig};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use testcontainers::ContainerAsync;
 use testcontainers::runners::AsyncRunner;
+use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::postgres::Postgres;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
@@ -69,9 +69,10 @@ impl TestHarness {
 
     pub async fn with_config(config: TestConfig) -> Self {
         let container = Postgres::default()
-            .with_db_name("kagzi_test")
-            .with_user("postgres")
-            .with_password("postgres")
+            .with_tag("18-alpine")
+            .with_env_var("POSTGRES_DB", "kagzi_test")
+            .with_env_var("POSTGRES_USER", "postgres")
+            .with_env_var("POSTGRES_PASSWORD", "postgres")
             .start()
             .await
             .expect("Failed to start PostgreSQL container");

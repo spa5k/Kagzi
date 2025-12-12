@@ -158,6 +158,15 @@ async fn workflow_panic_treated_as_failure() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-workflow-panic";
 
+    // Use no retries policy to ensure original error message is preserved
+    let retry_policy = RetryPolicy {
+        maximum_attempts: Some(1),
+        initial_interval: Some(Duration::from_millis(100)),
+        backoff_coefficient: Some(1.0),
+        maximum_interval: Some(Duration::from_secs(1)),
+        non_retryable_errors: vec![],
+    };
+
     let mut worker = harness.worker(queue).await;
     worker.register(
         "panic_workflow",
@@ -186,6 +195,7 @@ async fn workflow_panic_treated_as_failure() -> anyhow::Result<()> {
                 name: "panic".into(),
             },
         )
+        .retry_policy(retry_policy)
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
