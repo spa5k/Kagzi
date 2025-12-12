@@ -405,7 +405,7 @@ impl WorkerService for WorkerServiceImpl {
 
             match notification_result {
                 Ok(Ok(_notification)) => {
-                    let jitter_ms = rand::thread_rng().gen_range(0..500);
+                    let jitter_ms = rand::rng().random_range(0..500);
                     tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                 }
                 Ok(Err(e)) => {
