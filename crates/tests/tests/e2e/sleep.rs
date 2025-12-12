@@ -186,10 +186,6 @@ async fn sleep_step_replay_skips_execution() -> anyhow::Result<()> {
         .wait_for_db_status(&run_uuid, "SLEEPING", 20, Duration::from_millis(150))
         .await?;
 
-    // Note: With lazy sleep completion (Simplify_plan.md section 2.3), the sleep step
-    // stays in RUNNING status until the workflow resumes. The step will be completed
-    // lazily by `complete_pending_sleep_steps()` when a new worker claims the workflow.
-    // We only verify the step exists, not that it's completed yet.
     let step_status = harness.db_step_status(&run_uuid, "__sleep_0").await?;
     assert!(step_status.is_some(), "sleep step should exist");
 

@@ -52,10 +52,6 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
         "workflow should be sleeping before worker dies"
     );
 
-    // Note: With lazy sleep completion (Simplify_plan.md section 2.3), the sleep step
-    // stays in RUNNING status until the workflow resumes. The step will be completed
-    // lazily by `complete_pending_sleep_steps()` when a new worker claims the workflow.
-    // We only verify the step exists, not that it's completed yet.
     let step_status = harness.db_step_status(&run_uuid, "__sleep_0").await?;
     assert!(step_status.is_some(), "sleep step should exist");
 
@@ -313,7 +309,6 @@ async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    // Wait for workflow to be RUNNING before we abort (same as orphan_recovery_increments_attempt)
     for _ in 0..20 {
         let status = harness.db_workflow_status(&run_uuid).await?;
         if status == "RUNNING" {
