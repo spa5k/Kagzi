@@ -85,7 +85,7 @@ impl Settings {
                 "watchdog.worker_stale_threshold_secs",
                 default_worker_stale_threshold_secs(),
             )?
-              .set_default(
+            .set_default(
                 "worker.poll_timeout_secs",
                 default_poll_timeout_secs() as i64,
             )?
@@ -162,7 +162,6 @@ fn default_worker_stale_threshold_secs() -> i64 {
     30
 }
 
-
 fn default_poll_timeout_secs() -> u64 {
     60
 }
@@ -170,7 +169,6 @@ fn default_poll_timeout_secs() -> u64 {
 fn default_heartbeat_interval_secs() -> u32 {
     10
 }
-
 
 fn default_payload_warn_threshold_bytes() -> usize {
     1024 * 1024

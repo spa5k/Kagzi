@@ -76,7 +76,6 @@ impl WorkflowService for WorkflowServiceImpl {
 
         let workflows = self.store.workflows();
 
-        // Create workflow - handle unique constraint for idempotency
         let create_result = workflows
             .create(CreateWorkflow {
                 external_id: req.external_id.clone(),
@@ -98,11 +97,9 @@ impl WorkflowService for WorkflowServiceImpl {
             })
             .await;
 
-        // Handle result
         let (run_id, already_exists) = match create_result {
             Ok(id) => (id, false),
             Err(ref e) if e.is_unique_violation() => {
-                // Idempotent request - workflow already exists
                 let existing_id = workflows
                     .find_active_by_external_id(&namespace_id, &req.external_id, None)
                     .await

@@ -77,19 +77,34 @@ impl WorkflowContext {
         match result {
             Ok(val) => {
                 let output_bytes = serde_json::to_vec(&val)?;
-                let complete_request = add_tracing_metadata(Request::new(CompleteStepRequest {
-                    run_id: self.run_id.clone(),
-                    step_id: step_id_resp.clone(),
-                    output: Some(ProtoPayload {
-                        data: output_bytes,
-                        metadata: HashMap::new(),
-                    }),
-                }));
 
-                self.client
-                    .complete_step(complete_request)
-                    .await
-                    .map_err(map_grpc_error)?;
+                let mut backoff = Duration::from_secs(1);
+                loop {
+                    let complete_request =
+                        add_tracing_metadata(Request::new(CompleteStepRequest {
+                            run_id: self.run_id.clone(),
+                            step_id: step_id_resp.clone(),
+                            output: Some(ProtoPayload {
+                                data: output_bytes.clone(),
+                                metadata: HashMap::new(),
+                            }),
+                        }));
+
+                    match self.client.complete_step(complete_request).await {
+                        Ok(_) => break,
+
+                        Err(e) if e.code() == tonic::Code::NotFound => {
+                            error!("Workflow deleted during execution: {}", e);
+                            return Err(map_grpc_error(e));
+                        }
+
+                        Err(e) => {
+                            tracing::warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
+                            tokio::time::sleep(backoff).await;
+                            backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
+                        }
+                    }
+                }
                 Ok(val)
             }
             Err(e) => {

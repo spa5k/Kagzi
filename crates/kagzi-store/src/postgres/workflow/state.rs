@@ -415,7 +415,6 @@ pub(super) async fn complete(
     .execute(&mut *tx)
     .await?;
 
-    // Counters are now managed by worker-side semaphores, not server-side tables
     let _ = counters;
 
     tx.commit().await?;
@@ -431,7 +430,6 @@ pub(super) async fn fail(
 ) -> Result<(), StoreError> {
     let mut tx = repo.pool.begin().await?;
 
-    // Counters are now managed by worker-side semaphores, not server-side tables
     let _ = set_failed_tx(&mut tx, run_id, error).await?;
 
     tx.commit().await?;
@@ -463,7 +461,6 @@ pub(super) async fn schedule_sleep(
     .fetch_optional(&mut *tx)
     .await?;
 
-    // Counters are now managed by worker-side semaphores, not server-side tables
     let _ = row;
 
     tx.commit().await?;
@@ -495,7 +492,6 @@ pub(super) async fn schedule_retry(
     .fetch_optional(&mut *tx)
     .await?;
 
-    // Counters are now managed by worker-side semaphores, not server-side tables
     let _ = row;
 
     tx.commit().await?;
@@ -511,7 +507,6 @@ pub(super) async fn mark_exhausted(
 ) -> Result<(), StoreError> {
     let mut tx = repo.pool.begin().await?;
 
-    // Counters are now managed by worker-side semaphores, not server-side tables
     let _ = set_failed_tx(&mut tx, run_id, error).await?;
 
     tx.commit().await?;

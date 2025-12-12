@@ -106,8 +106,6 @@ pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: Cancella
             _ = ticker.tick() => {}
         }
 
-        // Wake up any sleeping workflows whose time has passed
-        debug!("Scheduler checking for sleeping workflows to wake");
         match store.workflows().wake_sleeping(batch_size).await {
             Ok(0) => {
                 debug!("No sleeping workflows to wake");

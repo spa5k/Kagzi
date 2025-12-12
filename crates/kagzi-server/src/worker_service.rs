@@ -309,9 +309,7 @@ impl WorkerService for WorkerServiceImpl {
         let timeout = Duration::from_secs(self.worker_settings.poll_timeout_secs);
         let deadline = tokio::time::Instant::now() + timeout;
 
-        // Long-polling loop
         loop {
-            // Try to poll for work
             let work_item = self
                 .store
                 .workflows()
@@ -326,8 +324,6 @@ impl WorkerService for WorkerServiceImpl {
                 .map_err(map_store_error)?;
 
             if let Some(work_item) = work_item {
-                // If this workflow was sleeping (poll_workflow can wake up SLEEPING workflows),
-                // complete any pending sleep steps
                 if let Err(e) = self.complete_pending_sleep_steps(work_item.run_id).await {
                     warn!(
                         run_id = %work_item.run_id,
@@ -344,7 +340,6 @@ impl WorkerService for WorkerServiceImpl {
                     "Worker claimed workflow"
                 );
 
-                // Update active count
                 if let Err(e) = self
                     .store
                     .workers()
@@ -371,7 +366,6 @@ impl WorkerService for WorkerServiceImpl {
                 }));
             }
 
-            // Check if timeout reached
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 log_grpc_response(
@@ -389,13 +383,10 @@ impl WorkerService for WorkerServiceImpl {
                 }));
             }
 
-            // Listen for Postgres NOTIFY
             let channel_name = format!(
                 "kagzi_work_{:x}",
                 md5::compute(format!("{}_{}", namespace_id, req.task_queue).as_bytes())
             );
-
-            // Create listener (this is lightweight, connection pooled)
             let mut listener = PgListener::connect_with(self.store.pool())
                 .await
                 .map_err(|e| {
@@ -408,25 +399,20 @@ impl WorkerService for WorkerServiceImpl {
                 Status::internal("Failed to listen for work notifications")
             })?;
 
-            // Wait for notification or timeout
             let notification_result = tokio::time::timeout(remaining, listener.recv()).await;
 
-            // Always unlisten to clean up
             let _ = listener.unlisten(&channel_name).await;
 
             match notification_result {
                 Ok(Ok(_notification)) => {
-                    // Got notification, add jitter to prevent thundering herd
                     let jitter_ms = rand::thread_rng().gen_range(0..500);
                     tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
-                    // Loop back to poll again
                 }
                 Ok(Err(e)) => {
                     warn!(error = ?e, "Error receiving notification");
-                    // Continue polling anyway
                 }
                 Err(_) => {
-                    // Timeout on notification, loop will check deadline
+                    // Timeout, loop will check deadline
                 }
             }
         }
@@ -512,8 +498,6 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?;
 
-        // Lazy sleep completion: if this is a SLEEP step and should_execute is false,
-        // it means the workflow is RUNNING (sleep timer passed), so complete the step now
         if step_kind == kagzi_store::StepKind::Sleep && !result.should_execute {
             tracing::info!(
                 run_id = %run_id,
@@ -938,7 +922,6 @@ impl WorkerService for WorkerServiceImpl {
 }
 
 impl WorkerServiceImpl {
-    /// Complete any sleep steps that are still in RUNNING status when a workflow resumes
     async fn complete_pending_sleep_steps(&self, run_id: Uuid) -> Result<(), Status> {
         let steps = self
             .store
@@ -954,7 +937,6 @@ impl WorkerServiceImpl {
             .map_err(map_store_error)?;
 
         for step in steps.items {
-            // Check if this is a sleep step that's still RUNNING
             if step.step_kind == kagzi_store::StepKind::Sleep
                 && step.status == kagzi_store::StepStatus::Running
             {

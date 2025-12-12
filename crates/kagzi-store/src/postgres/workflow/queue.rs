@@ -6,8 +6,6 @@ use super::helpers::ClaimedRow;
 use crate::error::StoreError;
 use crate::models::{ClaimedWorkflow, OrphanedWorkflow, RetryPolicy};
 
-/// Poll for a single workflow using SKIP LOCKED.
-/// Handles PENDING work, waking SLEEPING workflows, and stealing expired locks (crash recovery).
 #[instrument(skip(repo, types))]
 pub(super) async fn poll_workflow(
     repo: &PgWorkflowRepository,
