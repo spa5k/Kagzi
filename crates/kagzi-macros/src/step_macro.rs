@@ -16,7 +16,10 @@ use syn::{Attribute, Error, FnArg, ItemFn, ReturnType, Signature, Type, TypePath
 /// The macro adds observability features to workflow step functions without
 /// changing the function signature or behavior.
 pub fn expand_kagzi_step(_attrs: TokenStream, item: TokenStream) -> TokenStream {
-    let input_fn = syn::parse2::<ItemFn>(item).expect("Failed to parse function");
+    let input_fn = match syn::parse2::<ItemFn>(item) {
+        Ok(f) => f,
+        Err(e) => return e.to_compile_error(),
+    };
 
     // Validate the function signature
     if let Err(e) = validate_function_signature(&input_fn) {
@@ -171,39 +174,40 @@ fn generate_step_enhancement(config: StepEnhancementConfig) -> TokenStream {
             #input_params
         ) -> anyhow::Result<#output_type> {
             use anyhow::Context;
+            use tracing::Instrument;
 
             let span = tracing::info_span!(
                 "step",
                 step = stringify!(#fn_name),
             );
-            let _enter = span.enter();
 
-            // Log input at debug level (if we can log it)
-            tracing::debug!(
-                "Starting step: {}",
-                stringify!(#fn_name)
-            );
+            async {
+                tracing::debug!(
+                    "Starting step: {}",
+                    stringify!(#fn_name)
+                );
 
-            // Execute the function body with error context
-            let result: anyhow::Result<#output_type> = #block;
-            match result {
-                Ok(output) => {
-                    tracing::debug!(
-                        output = ?output,
-                        "Step completed successfully: {}",
-                        stringify!(#fn_name)
-                    );
-                    Ok(output)
+                // Execute the function body with error context
+                let result: anyhow::Result<#output_type> = #block;
+                match result {
+                    Ok(output) => {
+                        tracing::debug!(
+                            output = ?output,
+                            "Step completed successfully: {}",
+                            stringify!(#fn_name)
+                        );
+                        Ok(output)
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            "Step failed: {}",
+                            stringify!(#fn_name)
+                        );
+                        Err(e.context(format!("Step '{}' failed", stringify!(#fn_name))))
+                    }
                 }
-                Err(e) => {
-                    tracing::error!(
-                        error = %e,
-                        "Step failed: {}",
-                        stringify!(#fn_name)
-                    );
-                    Err(e.context(format!("Step '{}' failed", stringify!(#fn_name))))
-                }
-            }
+            }.instrument(span).await
         }
     }
 }

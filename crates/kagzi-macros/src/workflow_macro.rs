@@ -40,6 +40,8 @@ fn generate_enhanced_workflow(func: ItemFn) -> TokenStream2 {
     quote! {
         #(#fn_attrs)*
         #fn_vis #fn_sig {
+            use tracing::Instrument;
+
             // Define the run! macro for this workflow
             macro_rules! run {
                 ($step_name:expr, $step_expr:expr) => {
@@ -54,15 +56,16 @@ fn generate_enhanced_workflow(func: ItemFn) -> TokenStream2 {
                 "workflow",
                 workflow = stringify!(#fn_name),
             );
-            let _enter = span.enter();
 
-            tracing::info!(
-                "Starting workflow: {}",
-                stringify!(#fn_name)
-            );
+            async move {
+                tracing::info!(
+                    "Starting workflow: {}",
+                    stringify!(#fn_name)
+                );
 
-            // The original function body
-            #fn_block
+                // The original function body
+                #fn_block
+            }.instrument(span).await
         }
     }
 }
