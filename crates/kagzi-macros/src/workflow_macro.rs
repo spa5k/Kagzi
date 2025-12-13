@@ -44,8 +44,7 @@ fn generate_enhanced_workflow(func: ItemFn) -> TokenStream2 {
             macro_rules! run {
                 ($step_name:expr, $step_expr:expr) => {
                     {
-                        let step_future = async move { $step_expr };
-                        ctx.run($step_name, step_future).await?
+                        ctx.run($step_name, $step_expr).await?
                     }
                 };
             }

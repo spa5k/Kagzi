@@ -17,6 +17,7 @@ struct UserInput {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 struct UserProfile {
     user_id: String,
     email: String,
@@ -25,12 +26,14 @@ struct UserProfile {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 struct ValidationResult {
     is_valid: bool,
     user_profile: UserProfile,
 }
 
 // Regular step function without macro for comparison
+#[allow(dead_code)]
 async fn validate_user_regular(
     _ctx: WorkflowContext,
     input: UserInput,
@@ -188,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
     ];
 
     println!("Test cases:");
-    for (name, input) in test_cases {
+    for (name, _input) in test_cases {
         println!("Testing: {}", name);
         println!("------------------------");
 

@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use kagzi::prelude::*;
+use kagzi::WorkflowContext;
 use kagzi_macros::kagzi_workflow;
 use serde::{Deserialize, Serialize};
 
@@ -33,18 +33,18 @@ struct Address {
     postal_code: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct OrderConfirmation {
     order_id: String,
     status: String,
     total_amount: f64,
     tax_amount: f64,
     shipping_cost: f64,
-    estimated_delivery: chrono::Date<chrono::Utc>,
+    estimated_delivery: chrono::DateTime<chrono::Utc>,
 }
 
 // Step functions (these would typically have #[kagzi_step] attribute)
-async fn calculate_total(_ctx: WorkflowContext, order: OrderRequest) -> anyhow::Result<(f64, f64)> {
+async fn calculate_total(order: OrderRequest) -> anyhow::Result<(f64, f64)> {
     let subtotal: f64 = order
         .items
         .iter()
@@ -56,7 +56,7 @@ async fn calculate_total(_ctx: WorkflowContext, order: OrderRequest) -> anyhow::
     Ok((subtotal, tax))
 }
 
-async fn calculate_shipping(_ctx: WorkflowContext, order: OrderRequest) -> anyhow::Result<f64> {
+async fn calculate_shipping(order: OrderRequest) -> anyhow::Result<f64> {
     // Simple shipping calculation based on country
     let cost = match order.shipping_address.country.as_str() {
         "US" => 10.0,
@@ -67,7 +67,7 @@ async fn calculate_shipping(_ctx: WorkflowContext, order: OrderRequest) -> anyho
     Ok(cost)
 }
 
-async fn reserve_inventory(_ctx: WorkflowContext, order: OrderRequest) -> anyhow::Result<String> {
+async fn reserve_inventory(order: OrderRequest) -> anyhow::Result<String> {
     // Simulate inventory reservation
     tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -90,10 +90,7 @@ async fn reserve_inventory(_ctx: WorkflowContext, order: OrderRequest) -> anyhow
     Ok(reservation_id)
 }
 
-async fn process_payment(
-    _ctx: WorkflowContext,
-    (order, total): (OrderRequest, f64),
-) -> anyhow::Result<String> {
+async fn process_payment((order, total): (OrderRequest, f64)) -> anyhow::Result<String> {
     // Simulate payment processing
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -110,7 +107,7 @@ async fn process_payment(
     tracing::info!(
         order_id = %order.order_id,
         payment_id = %payment_id,
-        amount = total,
+        amount = %total,
         "Payment processed"
     );
 
@@ -118,18 +115,13 @@ async fn process_payment(
 }
 
 async fn schedule_shipment(
-    _ctx: WorkflowContext,
-    (order, shipping_cost): (OrderRequest, f64),
-) -> anyhow::Result<chrono::Date<chrono::Utc>> {
+    (order, _shipping_cost): (OrderRequest, f64),
+) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
     // Simulate shipment scheduling
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Estimate delivery (2-5 business days from now)
-    let delivery_date = chrono::Utc::now()
-        .date_naive()
-        .checked_add_days(chrono::Days::new(5))
-        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
-        .unwrap();
+    let delivery_date = chrono::Utc::now() + chrono::Duration::days(5);
 
     tracing::info!(
         order_id = %order.order_id,
@@ -137,15 +129,11 @@ async fn schedule_shipment(
         "Shipment scheduled"
     );
 
-    Ok(chrono::Date::from_utc(
-        delivery_date.and_hms_opt(0, 0, 0).unwrap(),
-        chrono::Utc,
-    ))
+    Ok(delivery_date)
 }
 
 async fn send_confirmation_email(
-    _ctx: WorkflowContext,
-    (order, confirmation): (OrderRequest, OrderConfirmation),
+    (order, _confirmation): (OrderRequest, OrderConfirmation),
 ) -> anyhow::Result<String> {
     // Simulate sending email
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -170,68 +158,6 @@ async fn send_confirmation_email(
     Ok(email_id)
 }
 
-// Traditional workflow definition (without macro)
-pub async fn process_order_traditional(
-    mut ctx: WorkflowContext,
-    input: OrderRequest,
-) -> anyhow::Result<OrderConfirmation> {
-    // Manually run each step - verbose and repetitive
-    let (subtotal, tax) = ctx
-        .run(
-            "calculate_total",
-            calculate_total(ctx.clone(), input.clone()),
-        )
-        .await?;
-
-    let shipping_cost = ctx
-        .run(
-            "calculate_shipping",
-            calculate_shipping(ctx.clone(), input.clone()),
-        )
-        .await?;
-
-    let _inventory = ctx
-        .run(
-            "reserve_inventory",
-            reserve_inventory(ctx.clone(), input.clone()),
-        )
-        .await?;
-
-    let total = subtotal + tax + shipping_cost;
-
-    let _payment = ctx
-        .run(
-            "process_payment",
-            process_payment(ctx.clone(), (input.clone(), total)),
-        )
-        .await?;
-
-    let delivery_date = ctx
-        .run(
-            "schedule_shipment",
-            schedule_shipment(ctx.clone(), (input.clone(), shipping_cost)),
-        )
-        .await?;
-
-    let confirmation = OrderConfirmation {
-        order_id: input.order_id.clone(),
-        status: "confirmed".to_string(),
-        total_amount: total,
-        tax_amount: tax,
-        shipping_cost,
-        estimated_delivery: delivery_date,
-    };
-
-    let _email = ctx
-        .run(
-            "send_email",
-            send_confirmation_email(ctx.clone(), (input, confirmation.clone())),
-        )
-        .await?;
-
-    Ok(confirmation)
-}
-
 // Workflow using kagzi_workflow! macro for cleaner syntax
 kagzi_workflow! {
     /// Process an e-commerce order with inventory reservation and payment
@@ -243,18 +169,18 @@ kagzi_workflow! {
         // It provides a much cleaner syntax for step execution
 
         // Calculate order totals
-        let (subtotal, tax) = run!("calculate_total", calculate_total(&input));
-        let shipping_cost = run!("calculate_shipping", calculate_shipping(&input));
+        let (subtotal, tax) = run!("calculate_total", calculate_total(input.clone()));
+        let shipping_cost = run!("calculate_shipping", calculate_shipping(input.clone()));
 
         // Reserve inventory
-        let inventory_id = run!("reserve_inventory", reserve_inventory(&input));
+        let _inventory_id = run!("reserve_inventory", reserve_inventory(input.clone()));
 
         // Process payment
         let total = subtotal + tax + shipping_cost;
-        let payment_id = run!("process_payment", process_payment(&(input, total)));
+        let _payment_id = run!("process_payment", process_payment((input.clone(), total)));
 
         // Schedule shipment
-        let delivery_date = run!("schedule_shipment", schedule_shipment(&(input, shipping_cost)));
+        let delivery_date = run!("schedule_shipment", schedule_shipment((input.clone(), shipping_cost)));
 
         // Create confirmation
         let confirmation = OrderConfirmation {
@@ -267,7 +193,7 @@ kagzi_workflow! {
         };
 
         // Send confirmation email
-        let _email_id = run!("send_email", send_confirmation_email(&(input, confirmation.clone())));
+        let _email_id = run!("send_email", send_confirmation_email((input, confirmation.clone())));
 
         // Return final result
         Ok(confirmation)
@@ -279,7 +205,7 @@ kagzi_workflow! {
     /// Process a refund workflow
     pub async fn process_refund(
         mut ctx: WorkflowContext,
-        order_id: String,
+        _order_id: String,
     ) -> anyhow::Result<String> {
         // Validate refund eligibility
         let eligible = run!("check_eligibility", async {
@@ -287,7 +213,7 @@ kagzi_workflow! {
             Ok(true)
         });
 
-        if !eligible? {
+        if !eligible {
             anyhow::bail!("Order not eligible for refund");
         }
 
@@ -303,7 +229,7 @@ kagzi_workflow! {
             Ok(())
         });
 
-        refund_id
+        Ok(refund_id)
     }
 }
 
@@ -353,21 +279,9 @@ async fn main() -> anyhow::Result<()> {
     );
     println!();
 
-    // Note: In a real scenario, you would create a proper WorkflowContext
-    // and run these as registered workflows. For this demo, we'll just
-    // show the syntax difference.
-
-    println!("Traditional workflow syntax (verbose):");
-    println!("```rust");
-    println!("let result = ctx");
-    println!("    .run(\"step_name\", async_function(ctx.clone(), input.clone()))");
-    println!("    .await?;");
-    println!("```");
-    println!();
-
     println!("kagzi_workflow! macro syntax (clean):");
     println!("```rust");
-    println!("let result = run!(\"step_name\", async_function(&input));");
+    println!("let result = run!(\"step_name\", async_function(input));");
     println!("```");
     println!();
 

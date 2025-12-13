@@ -1,7 +1,7 @@
 //! Tests for the Kagzi procedural macros.
 
 #[cfg(test)]
-mod tests {
+mod macro_tests {
 
     // Test that the functions exist and can be called
     #[test]
