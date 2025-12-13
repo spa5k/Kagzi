@@ -54,12 +54,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features rustls,postgres
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: sqlx migrate run --source migrations --database-url "$DATABASE_URL"
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        env:
-          SQLX_OFFLINE: true
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run tests
