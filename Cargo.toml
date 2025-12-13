@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "crates/kagzi",
+  "crates/kagzi-macros",
   "crates/kagzi-proto",
   "crates/kagzi-server",
   "crates/kagzi-store",
