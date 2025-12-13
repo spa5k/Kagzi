@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use kagzi::WorkflowContext;
-use kagzi_macros::kagzi_workflow;
+use kagzi_macros::{kagzi_step, kagzi_workflow};
 use serde::{Deserialize, Serialize};
 
 // Define input and output types
@@ -43,7 +43,8 @@ struct OrderConfirmation {
     estimated_delivery: chrono::DateTime<chrono::Utc>,
 }
 
-// Step functions (these would typically have #[kagzi_step] attribute)
+// Step functions enhanced with #[kagzi_step] attribute for automatic tracing and logging
+#[kagzi_step]
 async fn calculate_total(order: OrderRequest) -> anyhow::Result<(f64, f64)> {
     let subtotal: f64 = order
         .items
@@ -56,6 +57,7 @@ async fn calculate_total(order: OrderRequest) -> anyhow::Result<(f64, f64)> {
     Ok((subtotal, tax))
 }
 
+#[kagzi_step]
 async fn calculate_shipping(order: OrderRequest) -> anyhow::Result<f64> {
     // Simple shipping calculation based on country
     let cost = match order.shipping_address.country.as_str() {
@@ -67,6 +69,7 @@ async fn calculate_shipping(order: OrderRequest) -> anyhow::Result<f64> {
     Ok(cost)
 }
 
+#[kagzi_step]
 async fn reserve_inventory(order: OrderRequest) -> anyhow::Result<String> {
     // Simulate inventory reservation
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -90,6 +93,7 @@ async fn reserve_inventory(order: OrderRequest) -> anyhow::Result<String> {
     Ok(reservation_id)
 }
 
+#[kagzi_step]
 async fn process_payment((order, total): (OrderRequest, f64)) -> anyhow::Result<String> {
     // Simulate payment processing
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -114,6 +118,7 @@ async fn process_payment((order, total): (OrderRequest, f64)) -> anyhow::Result<
     Ok(payment_id)
 }
 
+#[kagzi_step]
 async fn schedule_shipment(
     (order, _shipping_cost): (OrderRequest, f64),
 ) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
@@ -132,6 +137,7 @@ async fn schedule_shipment(
     Ok(delivery_date)
 }
 
+#[kagzi_step]
 async fn send_confirmation_email(
     (order, _confirmation): (OrderRequest, OrderConfirmation),
 ) -> anyhow::Result<String> {
