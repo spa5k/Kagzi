@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT attempt_number, COALESCE(sr.retry_policy, wr.retry_policy) as policy\n            FROM kagzi.step_runs sr\n            JOIN kagzi.workflow_runs wr ON sr.run_id = wr.run_id\n            WHERE sr.run_id = $1 AND sr.step_id = $2 AND sr.is_latest = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "attempt_number",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "policy",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "69e01c942a40d411009b7b52d214e2ca1e5b81a58871a1170a79b807626b396e"
+}

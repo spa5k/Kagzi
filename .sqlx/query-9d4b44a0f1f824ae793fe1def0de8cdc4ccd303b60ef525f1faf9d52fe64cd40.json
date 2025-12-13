@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT status\n                FROM kagzi.step_runs\n                WHERE run_id = $1 AND step_id = $2 AND is_latest = true\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9d4b44a0f1f824ae793fe1def0de8cdc4ccd303b60ef525f1faf9d52fe64cd40"
+}

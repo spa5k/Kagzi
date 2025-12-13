@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    UPDATE kagzi.workflow_runs\n                    SET status = 'FAILED',\n                        error = 'Workflow crashed and exhausted all retry attempts (worker offline)'\n                    WHERE run_id = $1\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "515d420efb8be4665ad818a6ab66c7a22b29fb17cf1638c39e25f2ce4b59d9b5"
+}

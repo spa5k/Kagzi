@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.schedules\n            SET last_fired_at = $2,\n                next_fire_at = $3,\n                updated_at = NOW()\n            WHERE schedule_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6e6a9fe9737c3e2ecae50b169d62e52158ff359a805fb5e7081802edc99d67a0"
+}

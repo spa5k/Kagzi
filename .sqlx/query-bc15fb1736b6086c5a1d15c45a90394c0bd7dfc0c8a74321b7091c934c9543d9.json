@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_runs\n        SET locked_until = NOW() + ($2 * INTERVAL '1 second')\n        WHERE run_id = ANY($1)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bc15fb1736b6086c5a1d15c45a90394c0bd7dfc0c8a74321b7091c934c9543d9"
+}

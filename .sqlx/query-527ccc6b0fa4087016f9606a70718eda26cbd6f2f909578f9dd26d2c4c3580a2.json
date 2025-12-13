@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_payloads\n        SET output = $2\n        WHERE run_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "527ccc6b0fa4087016f9606a70718eda26cbd6f2f909578f9dd26d2c4c3580a2"
+}

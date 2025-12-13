@@ -1,0 +1,131 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT \n            w.run_id,\n            w.namespace_id,\n            w.external_id,\n            w.task_queue,\n            w.workflow_type,\n            w.status,\n            p.input,\n            p.output,\n            w.locked_by,\n            w.attempts,\n            w.error,\n            w.created_at,\n            w.started_at,\n            w.finished_at,\n            w.wake_up_at,\n            w.deadline_at,\n            w.version,\n            w.parent_step_attempt_id,\n            w.retry_policy\n        FROM kagzi.workflow_runs w\n        JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id\n        WHERE w.run_id = $1 AND w.namespace_id = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "namespace_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "external_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "task_queue",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "workflow_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "input",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 7,
+        "name": "output",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 8,
+        "name": "locked_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "wake_up_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "deadline_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "parent_step_attempt_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "retry_policy",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "1571e7e33e8bc2950e1f200313951d45fa99f1e6d5385f822570bebd74cdad79"
+}

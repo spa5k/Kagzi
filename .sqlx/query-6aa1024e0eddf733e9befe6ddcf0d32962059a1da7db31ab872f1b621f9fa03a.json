@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO kagzi.workflow_payloads (run_id, input)\n        VALUES ($1, $2)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6aa1024e0eddf733e9befe6ddcf0d32962059a1da7db31ab872f1b621f9fa03a"
+}

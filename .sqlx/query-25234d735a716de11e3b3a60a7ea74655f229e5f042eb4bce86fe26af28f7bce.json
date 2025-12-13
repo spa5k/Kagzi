@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_runs\n        SET status = 'PENDING',\n            wake_up_at = NULL\n        WHERE run_id IN (\n            SELECT run_id\n            FROM kagzi.workflow_runs\n            WHERE status = 'SLEEPING'\n              AND wake_up_at <= NOW()\n            FOR UPDATE SKIP LOCKED\n            LIMIT $1\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "25234d735a716de11e3b3a60a7ea74655f229e5f042eb4bce86fe26af28f7bce"
+}

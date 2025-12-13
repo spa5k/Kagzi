@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.step_runs \n            SET status = 'COMPLETED', output = $3, finished_at = NOW()\n            WHERE run_id = $1 AND step_id = $2 AND is_latest = true AND status = 'RUNNING'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "49891b240ba8d091d05c619c87efa082a4d9ca440b357d24372bc4795e870440"
+}

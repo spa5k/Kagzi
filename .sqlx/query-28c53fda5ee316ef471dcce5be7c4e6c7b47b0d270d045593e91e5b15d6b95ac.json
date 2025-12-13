@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.schedules\n            SET task_queue = COALESCE($3, task_queue),\n                workflow_type = COALESCE($4, workflow_type),\n                cron_expr = COALESCE($5, cron_expr),\n                input = COALESCE($6, input),\n                enabled = COALESCE($7, enabled),\n                max_catchup = COALESCE($8, max_catchup),\n                next_fire_at = COALESCE($9, next_fire_at),\n                version = COALESCE($10, version),\n                updated_at = NOW()\n            WHERE schedule_id = $1 AND namespace_id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bytea",
+        "Bool",
+        "Int4",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "28c53fda5ee316ef471dcce5be7c4e6c7b47b0d270d045593e91e5b15d6b95ac"
+}

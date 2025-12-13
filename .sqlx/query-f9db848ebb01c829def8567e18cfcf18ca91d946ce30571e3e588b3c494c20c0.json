@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT step_kind\n                FROM kagzi.step_runs\n                WHERE run_id = $1 AND step_id = $2 AND is_latest = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "step_kind",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f9db848ebb01c829def8567e18cfcf18ca91d946ce30571e3e588b3c494c20c0"
+}

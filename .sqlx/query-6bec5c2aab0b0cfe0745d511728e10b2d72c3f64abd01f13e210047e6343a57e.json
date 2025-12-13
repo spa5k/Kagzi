@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.workers\n            SET status = 'OFFLINE',\n                deregistered_at = NOW()\n            WHERE status != 'OFFLINE'\n              AND last_heartbeat_at < NOW() - ($1 * INTERVAL '1 second')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6bec5c2aab0b0cfe0745d511728e10b2d72c3f64abd01f13e210047e6343a57e"
+}

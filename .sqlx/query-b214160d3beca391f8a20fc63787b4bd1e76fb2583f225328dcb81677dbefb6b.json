@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH task AS (\n            SELECT run_id\n            FROM kagzi.workflow_runs\n            WHERE namespace_id = $1 AND task_queue = $2\n              AND (\n                  (status = 'PENDING') OR\n                  (status = 'SLEEPING' AND wake_up_at <= NOW()) OR\n                  (status = 'RUNNING' AND locked_until < NOW())\n              )\n              AND (array_length($3::TEXT[], 1) IS NULL OR array_length($3::TEXT[], 1) = 0 OR workflow_type = ANY($3))\n            ORDER BY wake_up_at ASC NULLS FIRST, created_at ASC\n            LIMIT 1\n            FOR UPDATE SKIP LOCKED\n        )\n        UPDATE kagzi.workflow_runs w\n        SET status = 'RUNNING',\n            locked_by = $4,\n            locked_until = NOW() + ($5 * interval '1 second'),\n            started_at = COALESCE(started_at, NOW()),\n            attempts = attempts + 1,\n            wake_up_at = NULL\n        FROM task\n        WHERE w.run_id = task.run_id\n        RETURNING w.run_id,\n                  w.workflow_type,\n                  (SELECT input FROM kagzi.workflow_payloads p WHERE p.run_id = w.run_id) as \"input!\",\n                  w.locked_by\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "workflow_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "input!",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 3,
+        "name": "locked_by",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "TextArray",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      true
+    ]
+  },
+  "hash": "b214160d3beca391f8a20fc63787b4bd1e76fb2583f225328dcb81677dbefb6b"
+}

@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_runs\n        SET status = 'PENDING',\n            locked_by = NULL,\n            locked_until = NULL,\n            wake_up_at = NOW() + ($2 * INTERVAL '1 millisecond'),\n            attempts = attempts + 1\n        WHERE run_id = $1 AND status = 'RUNNING'\n        RETURNING namespace_id, task_queue, workflow_type\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "namespace_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "task_queue",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "workflow_type",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5a06635eba75e0d61ce0e7037fcb2e021331fcb6d3fdd400af580b33fb678334"
+}

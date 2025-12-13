@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*) as count\n            FROM kagzi.workers\n            WHERE namespace_id = $1\n              AND ($2::TEXT IS NULL OR task_queue = $2)\n              AND ($3::TEXT IS NULL OR status = $3)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d072c740d0b5535c80a642cf83157e7b8bfb30315a33ce993e20c95fe835bd46"
+}

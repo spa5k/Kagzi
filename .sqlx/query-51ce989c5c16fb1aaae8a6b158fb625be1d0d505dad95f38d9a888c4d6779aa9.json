@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_runs\n        SET status = 'COMPLETED',\n            finished_at = NOW(),\n            locked_by = NULL,\n            locked_until = NULL\n        WHERE run_id = $1 AND status = 'RUNNING'\n        RETURNING namespace_id, task_queue, workflow_type\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "namespace_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "task_queue",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "workflow_type",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "51ce989c5c16fb1aaae8a6b158fb625be1d0d505dad95f38d9a888c4d6779aa9"
+}

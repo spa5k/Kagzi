@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT retry_policy\n        FROM kagzi.workflow_runs\n        WHERE run_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "retry_policy",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "855765c9fbc8ac173abdbf62d9f959bc8dd18027e2a7f99f5b3734ea00fcd4f7"
+}

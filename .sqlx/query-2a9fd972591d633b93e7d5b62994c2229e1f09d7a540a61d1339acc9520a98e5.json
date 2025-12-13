@@ -1,0 +1,95 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT schedule_id, namespace_id, task_queue, workflow_type, cron_expr,\n                   input, enabled, max_catchup, next_fire_at, last_fired_at,\n                   version, created_at, updated_at\n            FROM kagzi.schedules\n            WHERE schedule_id = $1 AND namespace_id = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "namespace_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "task_queue",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "workflow_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "cron_expr",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "input",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 6,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "max_catchup",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "next_fire_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_fired_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "2a9fd972591d633b93e7d5b62994c2229e1f09d7a540a61d1339acc9520a98e5"
+}

@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.step_runs\n            SET status = 'PENDING', retry_at = NULL\n            WHERE attempt_id IN (\n                SELECT attempt_id\n                FROM kagzi.step_runs\n                WHERE status = 'PENDING'\n                  AND retry_at IS NOT NULL\n                  AND retry_at <= NOW()\n                FOR UPDATE SKIP LOCKED\n                LIMIT 100\n            )\n            RETURNING run_id as \"run_id!\", step_id as \"step_id!\", attempt_number\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "step_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "attempt_number",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "1e2e0e847627884e22022855ee85440ed5f27f0e3ada18a79463bc954e92139a"
+}
