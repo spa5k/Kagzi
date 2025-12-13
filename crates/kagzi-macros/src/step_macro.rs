@@ -64,7 +64,7 @@ fn validate_function_signature(func: &ItemFn) -> Result<(), Error> {
 
     // Check number of parameters (must have 1 or 2 parameters)
     let param_count = sig.inputs.len();
-    if param_count < 1 || param_count > 2 {
+    if !(1..=2).contains(&param_count) {
         return Err(Error::new_spanned(
             sig.inputs.clone(),
             "kagzi_step functions must have 1 or 2 parameters: optionally a WorkflowContext as first parameter and an input parameter",
