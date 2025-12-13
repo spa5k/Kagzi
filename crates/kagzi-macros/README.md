@@ -12,10 +12,31 @@ Enhances workflow step functions with automatic observability features.
 use kagzi_macros::kagzi_step;
 use kagzi::WorkflowContext;
 
+// With WorkflowContext parameter
 #[kagzi_step]
 /// Validates an order and calculates total
 async fn validate_order(
     ctx: WorkflowContext,
+    input: OrderRequest,
+) -> anyhow::Result<ValidationResult> {
+    if input.items.is_empty() {
+        return Err(OrderError::EmptyOrder.into());
+    }
+
+    let total: f64 = input.items.iter()
+        .map(|i| i.price * i.quantity as f64)
+        .sum();
+
+    Ok(ValidationResult {
+        is_valid: true,
+        total_amount: total,
+    })
+}
+
+// Without WorkflowContext parameter
+#[kagzi_step]
+/// Validates an order and calculates total
+async fn validate_order_simple(
     input: OrderRequest,
 ) -> anyhow::Result<ValidationResult> {
     if input.items.is_empty() {
@@ -45,9 +66,9 @@ The macro expands to include:
 Functions using `#[kagzi_step]` must:
 
 1. Be `async`
-2. Have exactly 2 parameters:
-   - First: `WorkflowContext` (or similar context type)
-   - Second: The input type
+2. Have 1 or 2 parameters:
+   - Optionally: `WorkflowContext` (or similar context type) as first parameter
+   - Required: The input parameter
 3. Return a `Result<T, E>` type (typically `anyhow::Result<T>`)
 
 ### `kagzi_workflow!` Macro

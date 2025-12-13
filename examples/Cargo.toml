@@ -14,7 +14,6 @@ kagzi-macros = { path = "../crates/kagzi-macros" }
 kagzi-proto = { path = "../crates/kagzi-proto" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tonic = { workspace = true, features = ["transport"] }
 tracing = { workspace = true }

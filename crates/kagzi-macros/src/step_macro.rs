@@ -59,6 +59,15 @@ fn validate_function_signature(func: &ItemFn) -> Result<(), Error> {
         ));
     }
 
+    // Check number of parameters (must have 1 or 2 parameters)
+    let param_count = sig.inputs.len();
+    if param_count < 1 || param_count > 2 {
+        return Err(Error::new_spanned(
+            sig.inputs.clone(),
+            "kagzi_step functions must have 1 or 2 parameters: optionally a WorkflowContext as first parameter and an input parameter",
+        ));
+    }
+
     // Must return a Result
     match &sig.output {
         ReturnType::Type(_, ty) => {
@@ -161,6 +170,8 @@ fn generate_step_enhancement(config: StepEnhancementConfig) -> TokenStream {
         #vis async fn #fn_name(
             #input_params
         ) -> anyhow::Result<#output_type> {
+            use anyhow::Context;
+
             let span = tracing::info_span!(
                 "step",
                 step = stringify!(#fn_name),
