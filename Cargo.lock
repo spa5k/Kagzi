@@ -680,9 +680,11 @@ dependencies = [
  "futures",
  "hostname",
  "kagzi",
+ "kagzi-macros",
  "kagzi-proto",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tonic",
  "tracing",
@@ -1359,6 +1361,7 @@ dependencies = [
  "chrono",
  "futures",
  "hostname",
+ "kagzi-macros",
  "kagzi-proto",
  "prost",
  "prost-types",
@@ -1371,6 +1374,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "kagzi-macros"
+version = "0.0.1-alpha.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
