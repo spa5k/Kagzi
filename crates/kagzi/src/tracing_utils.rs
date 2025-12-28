@@ -99,20 +99,6 @@ pub fn add_tracing_metadata<T>(request: Request<T>) -> Request<T> {
 
     request
 }
-#[allow(dead_code)]
-pub fn init_tracing() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .json()
-        .with_current_span(false)
-        .with_span_list(true)
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_thread_names(true)
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
-    Ok(())
-}
 #[cfg(test)]
 mod tests {
     use super::*;
