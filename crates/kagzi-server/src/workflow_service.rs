@@ -9,6 +9,7 @@ use kagzi_store::{
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
 
+use crate::constants::{DEFAULT_NAMESPACE, DEFAULT_VERSION};
 use crate::helpers::{
     invalid_argument_error, map_store_error, merge_proto_policy, not_found_error, payload_to_bytes,
     precondition_failed_error,
@@ -62,13 +63,13 @@ impl WorkflowService for WorkflowServiceImpl {
         let input_bytes = payload_to_bytes(req.input);
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
 
         let version = if req.version.is_empty() {
-            "1".to_string()
+            DEFAULT_VERSION.to_string()
         } else {
             req.version
         };
@@ -82,14 +83,6 @@ impl WorkflowService for WorkflowServiceImpl {
                 workflow_type: req.workflow_type,
                 input: input_bytes,
                 namespace_id: namespace_id.clone(),
-                idempotency_suffix: None,
-                deadline_at: req
-                    .deadline_at
-                    .map(|ts| {
-                        chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
-                            .ok_or_else(|| invalid_argument_error("Invalid deadline_at timestamp"))
-                    })
-                    .transpose()?,
                 version,
                 retry_policy: merge_proto_policy(req.retry_policy, None),
             })
@@ -99,7 +92,7 @@ impl WorkflowService for WorkflowServiceImpl {
             Ok(id) => (id, false),
             Err(ref e) if e.is_unique_violation() => {
                 let existing_id = workflows
-                    .find_active_by_external_id(&namespace_id, &req.external_id, None)
+                    .find_active_by_external_id(&namespace_id, &req.external_id)
                     .await
                     .map_err(map_store_error)?
                     .ok_or_else(|| map_store_error(create_result.unwrap_err()))?;
@@ -142,7 +135,7 @@ impl WorkflowService for WorkflowServiceImpl {
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -212,7 +205,7 @@ impl WorkflowService for WorkflowServiceImpl {
         let req = request.into_inner();
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -337,7 +330,7 @@ impl WorkflowService for WorkflowServiceImpl {
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };

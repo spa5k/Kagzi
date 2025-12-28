@@ -72,7 +72,6 @@ Creates a new workflow or returns existing workflow if one with the same `extern
 - `namespace_id` (string): Namespace (default: "default")
 - `version` (string): Workflow version (default: "1")
 - `input` (Payload): Initial workflow input data
-- `deadline_at` (Timestamp): Absolute deadline for workflow completion
 - `retry_policy` (RetryPolicy): Retry configuration (max_attempts, intervals, backoff)
 
 **Returns:**
@@ -425,10 +424,9 @@ The scheduler runs as a background task at configurable intervals (default: 5 se
 
 Scheduled workflows are idempotent using:
 
-- `external_id` = `schedule_id`
-- `idempotency_suffix` = RFC3339 timestamp of fire time
+- `external_id` = `{schedule_id}:{fire_time_rfc3339}`
 
-This ensures duplicate fires create the same workflow.
+This ensures each fire creates a unique workflow while preventing duplicate fires at the same timestamp.
 
 ### Catch-Up Logic
 

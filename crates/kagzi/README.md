@@ -318,7 +318,6 @@ Creates a builder for starting a workflow.
 
 - `id(external_id: impl Into<String>)` - Set business identifier
 - `namespace(ns: impl Into<String>)` - Set namespace (default: "default")
-- `deadline(deadline: chrono::DateTime<chrono::Utc>)` - Set execution deadline
 - `version(version: impl Into<String>)` - Set workflow version
 - `retry_policy(policy: RetryPolicy)` - Set retry policy
 - `retries(max_attempts: i32)` - Shortcut to set max retry attempts

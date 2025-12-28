@@ -44,9 +44,8 @@ impl WorkflowRepository for PgWorkflowRepository {
         &self,
         namespace_id: &str,
         external_id: &str,
-        idempotency_suffix: Option<&str>,
     ) -> Result<Option<Uuid>, StoreError> {
-        state::find_active_by_external_id(self, namespace_id, external_id, idempotency_suffix).await
+        state::find_active_by_external_id(self, namespace_id, external_id).await
     }
 
     async fn list(

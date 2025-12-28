@@ -14,7 +14,7 @@ use crate::models::{
 const WORKFLOW_COLUMNS_WITH_PAYLOAD: &str = "\
     w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
     w.status, p.input, p.output, w.locked_by, w.attempts, w.error, \
-    w.created_at, w.started_at, w.finished_at, w.wake_up_at, w.deadline_at, \
+    w.created_at, w.started_at, w.finished_at, w.wake_up_at, \
     w.version, w.parent_step_attempt_id, w.retry_policy";
 
 fn validate_payload_size(
@@ -57,9 +57,9 @@ pub(super) async fn create(
         INSERT INTO kagzi.workflow_runs (
             run_id,
             external_id, task_queue, workflow_type, status,
-            namespace_id, idempotency_suffix, deadline_at, version, retry_policy
+            namespace_id, version, retry_policy
         )
-        VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7)
         RETURNING run_id
         "#,
         run_id,
@@ -67,8 +67,6 @@ pub(super) async fn create(
         params.task_queue,
         params.workflow_type,
         params.namespace_id,
-        params.idempotency_suffix,
-        params.deadline_at,
         params.version,
         retry_policy_json
     )
@@ -116,7 +114,6 @@ pub(super) async fn find_by_id(
             w.started_at,
             w.finished_at,
             w.wake_up_at,
-            w.deadline_at,
             w.version,
             w.parent_step_attempt_id,
             w.retry_policy
@@ -167,19 +164,16 @@ pub(super) async fn find_active_by_external_id(
     repo: &PgWorkflowRepository,
     namespace_id: &str,
     external_id: &str,
-    idempotency_suffix: Option<&str>,
 ) -> Result<Option<Uuid>, StoreError> {
     let row = sqlx::query!(
         r#"
         SELECT run_id FROM kagzi.workflow_runs
         WHERE namespace_id = $1
           AND external_id = $2
-          AND COALESCE(idempotency_suffix, '') = COALESCE($3, '')
           AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
         "#,
         namespace_id,
-        external_id,
-        idempotency_suffix
+        external_id
     )
     .fetch_optional(&repo.pool)
     .await?;
@@ -533,9 +527,9 @@ pub(super) async fn create_batch(
             INSERT INTO kagzi.workflow_runs (
                 run_id,
                 external_id, task_queue, workflow_type, status,
-                namespace_id, idempotency_suffix, deadline_at, version, retry_policy
+                namespace_id, version, retry_policy
             )
-            VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7)
             RETURNING run_id
             "#,
             run_id,
@@ -543,8 +537,6 @@ pub(super) async fn create_batch(
             p.task_queue,
             p.workflow_type,
             p.namespace_id,
-            p.idempotency_suffix,
-            p.deadline_at,
             p.version,
             retry_policy_json
         )

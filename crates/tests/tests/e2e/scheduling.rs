@@ -87,9 +87,11 @@ async fn scheduler_catchup_fires_missed_runs() -> anyhow::Result<()> {
 
     sleep(Duration::from_secs(4)).await;
 
+    // external_id now includes timestamp suffix, so use LIKE pattern
+    let external_id_pattern = format!("{}:%", schedule.schedule_id);
     let fired: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id = $1")
-            .bind(schedule.schedule_id.clone())
+        sqlx::query_scalar("SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id LIKE $1")
+            .bind(&external_id_pattern)
             .fetch_one(&harness.pool)
             .await?;
 
@@ -99,9 +101,9 @@ async fn scheduler_catchup_fires_missed_runs() -> anyhow::Result<()> {
         fired
     );
     let completed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id = $1 AND status = 'COMPLETED'",
+        "SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id LIKE $1 AND status = 'COMPLETED'",
     )
-    .bind(schedule.schedule_id.clone())
+    .bind(&external_id_pattern)
     .fetch_one(&harness.pool)
     .await?;
     assert!(
@@ -145,9 +147,11 @@ async fn disabled_schedule_does_not_fire() -> anyhow::Result<()> {
     // Wait longer than one cron interval; nothing should fire.
     sleep(Duration::from_secs(3)).await;
 
+    // external_id now includes timestamp suffix, so use LIKE pattern
+    let external_id_pattern = format!("{}:%", schedule.schedule_id);
     let fired: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id = $1")
-            .bind(schedule.schedule_id.clone())
+        sqlx::query_scalar("SELECT COUNT(*) FROM kagzi.workflow_runs WHERE external_id LIKE $1")
+            .bind(&external_id_pattern)
             .fetch_one(&harness.pool)
             .await?;
     assert_eq!(

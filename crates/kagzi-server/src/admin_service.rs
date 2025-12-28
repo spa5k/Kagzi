@@ -14,6 +14,7 @@ use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
 use uuid::Uuid;
 
+use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{invalid_argument_error, map_store_error, not_found_error};
 use crate::proto_convert::{step_to_proto, worker_to_proto};
 use crate::tracing_utils::{
@@ -64,7 +65,7 @@ impl AdminService for AdminServiceImpl {
         let page = req.page.unwrap_or_default();
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -250,7 +251,7 @@ impl AdminService for AdminServiceImpl {
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, "default") // Try default first
+            .find_by_id(run_id, DEFAULT_NAMESPACE) // Try default first
             .await
             .map_err(map_store_error)?;
         let namespace_id = workflow

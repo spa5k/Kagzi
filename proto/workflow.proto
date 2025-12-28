@@ -46,7 +46,6 @@ message Workflow {
   google.protobuf.Timestamp started_at = 12;
   google.protobuf.Timestamp finished_at = 13;
   google.protobuf.Timestamp wake_up_at = 14;
-  google.protobuf.Timestamp deadline_at = 15;
   string worker_id = 16;
   string version = 17;
   string parent_step_id = 18;
@@ -59,7 +58,6 @@ message StartWorkflowRequest {
   string task_queue = 3;
   string workflow_type = 4;
   Payload input = 5;
-  google.protobuf.Timestamp deadline_at = 6;
   string version = 7;
   RetryPolicy retry_policy = 8;
 }

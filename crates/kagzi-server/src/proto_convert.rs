@@ -108,7 +108,6 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
         started_at: w.started_at.map(timestamp_from),
         finished_at: w.finished_at.map(timestamp_from),
         wake_up_at: w.wake_up_at.map(timestamp_from),
-        deadline_at: w.deadline_at.map(timestamp_from),
         worker_id: w.locked_by.unwrap_or_default(),
         version: w.version.unwrap_or_default(),
         parent_step_id: w.parent_step_attempt_id.unwrap_or_default(),

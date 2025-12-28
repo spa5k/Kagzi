@@ -23,6 +23,7 @@ use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::config::WorkerSettings;
+use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{
     bytes_to_payload, internal_error, invalid_argument_error, map_store_error, merge_proto_policy,
     not_found_error, payload_to_optional_bytes, precondition_failed_error,
@@ -80,7 +81,7 @@ impl WorkerService for WorkerServiceImpl {
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -260,7 +261,7 @@ impl WorkerService for WorkerServiceImpl {
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -441,13 +442,13 @@ impl WorkerService for WorkerServiceImpl {
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, "default")
+            .find_by_id(run_id, DEFAULT_NAMESPACE)
             .await
             .map_err(map_store_error)?;
         let namespace_id = workflow
             .as_ref()
             .map(|w| w.namespace_id.clone())
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
 
         // Validate workflow exists and is in a valid state for steps
         let workflow_check = self
@@ -551,12 +552,12 @@ impl WorkerService for WorkerServiceImpl {
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, "default")
+            .find_by_id(run_id, DEFAULT_NAMESPACE)
             .await
             .map_err(map_store_error)?;
         let namespace_id = workflow
             .map(|w| w.namespace_id)
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
 
         let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
@@ -704,13 +705,13 @@ impl WorkerService for WorkerServiceImpl {
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, "default")
+            .find_by_id(run_id, DEFAULT_NAMESPACE)
             .await
             .map_err(map_store_error)?;
         let namespace_id = workflow
             .as_ref()
             .map(|w| w.namespace_id.clone())
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
 
         // Verify workflow exists and is in a completable state
         let workflow_check = self
@@ -795,13 +796,13 @@ impl WorkerService for WorkerServiceImpl {
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, "default")
+            .find_by_id(run_id, DEFAULT_NAMESPACE)
             .await
             .map_err(map_store_error)?;
         let namespace_id = workflow
             .as_ref()
             .map(|w| w.namespace_id.clone())
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
 
         let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
             code: ErrorCode::Unspecified as i32,
@@ -928,7 +929,7 @@ impl WorkerServiceImpl {
             .steps()
             .list(kagzi_store::ListStepsParams {
                 run_id,
-                namespace_id: "default".to_string(),
+                namespace_id: DEFAULT_NAMESPACE.to_string(),
                 step_id: None,
                 page_size: 100,
                 cursor: None,

@@ -15,6 +15,7 @@ use kagzi_store::{
 };
 use tonic::{Request, Response, Status};
 
+use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{
     bytes_to_payload, invalid_argument_error, map_store_error, not_found_error,
     payload_to_optional_bytes,
@@ -105,13 +106,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
-        // Context is not used - user payloads treated as opaque bytes
 
         let enabled = req.enabled.unwrap_or(true);
         let max_catchup = if let Some(m) = req.max_catchup {
@@ -177,7 +177,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -215,7 +215,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let req = request.into_inner();
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -325,7 +325,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -433,7 +433,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
