@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         e
     })?;
 
-    let dbPool = PgPoolOptions::new()
+    let db_pool = PgPoolOptions::new()
         .max_connections(settings.server.db_max_connections)
         .connect(&settings.database_url)
         .await
@@ -31,28 +31,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         })?;
 
-    run_migrations(&dbPool).await?;
+    run_migrations(&db_pool).await?;
 
     // Create the store
     let store_config = kagzi_store::StoreConfig {
         payload_warn_threshold_bytes: settings.payload.warn_threshold_bytes,
         payload_max_size_bytes: settings.payload.max_size_bytes,
     };
-    let store = PgStore::new(dbPool, store_config);
+    let store = PgStore::new(db_pool, store_config);
 
-    let shutdownToken = CancellationToken::new();
+    let shutdown_token = CancellationToken::new();
     let scheduler_settings = settings.scheduler.clone();
     let watchdog_settings = settings.watchdog.clone();
     let worker_settings = settings.worker.clone();
 
     // Start the background watchdog
     let watchdog_store = store.clone();
-    let watchdog_token = shutdownToken.child_token();
+    let watchdog_token = shutdown_token.child_token();
     watchdog::spawn(watchdog_store, watchdog_settings, watchdog_token);
 
     // Start the scheduler loop
     let scheduler_store = store.clone();
-    let scheduler_token = shutdownToken.child_token();
+    let scheduler_token = shutdown_token.child_token();
     tokio::spawn(async move {
         run_scheduler(scheduler_store, scheduler_settings, scheduler_token).await;
     });
@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
         .build_v1()?;
 
-    let server_token = shutdownToken.child_token();
+    let server_token = shutdown_token.child_token();
     let server = Server::builder()
         .add_service(WorkflowServiceServer::new(workflow_service))
         .add_service(WorkflowScheduleServiceServer::new(
@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = server => res?,
         _ = tokio::signal::ctrl_c() => {
             info!("Received shutdown signal");
-            shutdownToken.cancel();
+            shutdown_token.cancel();
         }
     }
 
