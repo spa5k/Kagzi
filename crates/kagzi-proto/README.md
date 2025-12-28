@@ -88,7 +88,7 @@ Handles worker registration, lifecycle management, and task execution.
 use kagzi_proto::kagzi::v1::{
     worker_service_client::WorkerServiceClient,
     RegisterRequest, PollTaskRequest, BeginStepRequest, CompleteStepRequest,
-    step_kind::Kind as StepKindEnum, step_kind,
+    StepKind,
 };
 
 // Register worker
@@ -118,7 +118,7 @@ loop {
     let begin_response = client.begin_step(BeginStepRequest {
         run_id: task.run_id,
         step_name: "validate".to_string(),
-        kind: Some(step_kind::Kind::Function(Empty {})),
+        kind: Some(StepKind::Function),
         input: task.input,
         ..Default::default()
     }).await?;
@@ -749,7 +749,7 @@ async fn run_worker(server_addr: &str) -> Result<(), Box<dyn std::error::Error>>
                     let begin_response = client.begin_step(BeginStepRequest {
                         run_id: task.run_id.clone(),
                         step_name: "process".to_string(),
-                        kind: Some(step_kind::Kind::Function(Empty {})),
+                        kind: Some(StepKind::Function),
                         input: Some(input.clone()),
                         ..Default::default()
                     }).await?;
