@@ -60,7 +60,6 @@ impl WorkflowService for WorkflowServiceImpl {
         }
 
         let input_bytes = payload_to_bytes(req.input);
-        // Context is not used - user payloads treated as opaque bytes
 
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
