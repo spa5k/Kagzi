@@ -14,7 +14,7 @@ use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
 use uuid::Uuid;
 
-use crate::helpers::{invalid_argument, map_store_error, not_found};
+use crate::helpers::{invalid_argument_error, map_store_error, not_found_error};
 use crate::proto_convert::{step_to_proto, worker_to_proto};
 use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
@@ -25,7 +25,7 @@ fn normalize_worker_status(status: Option<i32>) -> Result<Option<StoreWorkerStat
     match status {
         None => Ok(None),
         Some(raw) => match WorkerStatus::try_from(raw)
-            .map_err(|_| invalid_argument("Invalid status_filter"))?
+            .map_err(|_| invalid_argument_error("Invalid status_filter"))?
         {
             WorkerStatus::Online => Ok(Some(StoreWorkerStatus::Online)),
             WorkerStatus::Draining => Ok(Some(StoreWorkerStatus::Draining)),
@@ -82,7 +82,7 @@ impl AdminService for AdminServiceImpl {
         } else {
             Some(
                 Uuid::parse_str(&page.page_token)
-                    .map_err(|_| invalid_argument("Invalid page_token"))?,
+                    .map_err(|_| invalid_argument_error("Invalid page_token"))?,
             )
         };
 
@@ -162,8 +162,8 @@ impl AdminService for AdminServiceImpl {
         log_grpc_request("GetWorker", &correlation_id, &trace_id, None);
 
         let req = request.into_inner();
-        let worker_id =
-            Uuid::parse_str(&req.worker_id).map_err(|_| invalid_argument("Invalid worker_id"))?;
+        let worker_id = Uuid::parse_str(&req.worker_id)
+            .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
 
         let worker = self
             .store
@@ -186,7 +186,7 @@ impl AdminService for AdminServiceImpl {
                     worker: Some(proto),
                 }))
             }
-            None => Err(not_found("Worker not found", "worker", req.worker_id)),
+            None => Err(not_found_error("Worker not found", "worker", req.worker_id)),
         }
     }
 
@@ -205,7 +205,7 @@ impl AdminService for AdminServiceImpl {
 
         let req = request.into_inner();
         let step_id =
-            Uuid::parse_str(&req.step_id).map_err(|_| invalid_argument("Invalid step_id"))?;
+            Uuid::parse_str(&req.step_id).map_err(|_| invalid_argument_error("Invalid step_id"))?;
 
         let step = self
             .store
@@ -226,7 +226,7 @@ impl AdminService for AdminServiceImpl {
                 );
                 Ok(Response::new(GetStepResponse { step: Some(proto) }))
             }
-            None => Err(not_found("Step not found", "step", req.step_id)),
+            None => Err(not_found_error("Step not found", "step", req.step_id)),
         }
     }
 
@@ -245,7 +245,7 @@ impl AdminService for AdminServiceImpl {
 
         let req = request.into_inner();
         let run_id =
-            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         let workflow = self
             .store
@@ -273,17 +273,17 @@ impl AdminService for AdminServiceImpl {
             let created_at_ms = parts
                 .next()
                 .and_then(|p| p.parse::<i64>().ok())
-                .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
             let attempt_id_str = parts
                 .next()
-                .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
 
             let created_at = Utc
                 .timestamp_millis_opt(created_at_ms)
                 .single()
-                .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
             let attempt_id = Uuid::parse_str(attempt_id_str)
-                .map_err(|_| invalid_argument("Invalid page_token"))?;
+                .map_err(|_| invalid_argument_error("Invalid page_token"))?;
 
             Some(kagzi_store::StepCursor {
                 created_at,

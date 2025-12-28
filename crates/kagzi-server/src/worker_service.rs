@@ -24,8 +24,8 @@ use uuid::Uuid;
 
 use crate::config::WorkerSettings;
 use crate::helpers::{
-    bytes_to_payload, invalid_argument, map_store_error, merge_proto_policy, not_found,
-    payload_to_optional_bytes, precondition_failed,
+    bytes_to_payload, internal_error, invalid_argument_error, map_store_error, merge_proto_policy,
+    not_found_error, payload_to_optional_bytes, precondition_failed_error,
 };
 use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
 use crate::tracing_utils::{
@@ -76,7 +76,7 @@ impl WorkerService for WorkerServiceImpl {
         let req = request.into_inner();
 
         if req.workflow_types.is_empty() {
-            return Err(invalid_argument("workflow_types cannot be empty"));
+            return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -142,8 +142,8 @@ impl WorkerService for WorkerServiceImpl {
         request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
         let req = request.into_inner();
-        let worker_id =
-            Uuid::parse_str(&req.worker_id).map_err(|_| invalid_argument("Invalid worker_id"))?;
+        let worker_id = Uuid::parse_str(&req.worker_id)
+            .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
 
         let accepted = self
             .store
@@ -158,7 +158,7 @@ impl WorkerService for WorkerServiceImpl {
             .map_err(map_store_error)?;
 
         if !accepted {
-            return Err(not_found(
+            return Err(not_found_error(
                 "Worker not found or offline",
                 "worker",
                 req.worker_id,
@@ -203,8 +203,8 @@ impl WorkerService for WorkerServiceImpl {
         request: Request<DeregisterRequest>,
     ) -> Result<Response<()>, Status> {
         let req = request.into_inner();
-        let worker_id =
-            Uuid::parse_str(&req.worker_id).map_err(|_| invalid_argument("Invalid worker_id"))?;
+        let worker_id = Uuid::parse_str(&req.worker_id)
+            .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
 
         let worker = self
             .store
@@ -212,7 +212,7 @@ impl WorkerService for WorkerServiceImpl {
             .find_by_id(worker_id)
             .await
             .map_err(map_store_error)?
-            .ok_or_else(|| not_found("Worker not found", "worker", req.worker_id.clone()))?;
+            .ok_or_else(|| not_found_error("Worker not found", "worker", req.worker_id.clone()))?;
 
         let namespace_id = worker.namespace_id;
 
@@ -252,11 +252,11 @@ impl WorkerService for WorkerServiceImpl {
 
         let req = request.into_inner();
 
-        let worker_id =
-            Uuid::parse_str(&req.worker_id).map_err(|_| invalid_argument("Invalid worker_id"))?;
+        let worker_id = Uuid::parse_str(&req.worker_id)
+            .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
 
         if req.workflow_types.is_empty() {
-            return Err(invalid_argument("workflow_types cannot be empty"));
+            return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -272,23 +272,23 @@ impl WorkerService for WorkerServiceImpl {
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| {
-                precondition_failed("Worker not registered or offline. Call Register first.")
+                precondition_failed_error("Worker not registered or offline. Call Register first.")
             })?;
 
         if worker.namespace_id != namespace_id || worker.task_queue != req.task_queue {
-            return Err(precondition_failed(
+            return Err(precondition_failed_error(
                 "Worker not registered for the requested namespace/task_queue",
             ));
         }
 
         if worker.status == StoreWorkerStatus::Offline {
-            return Err(precondition_failed(
+            return Err(precondition_failed_error(
                 "Worker not registered or offline. Call Register first.",
             ));
         }
 
         if worker.status == StoreWorkerStatus::Draining {
-            return Err(precondition_failed(
+            return Err(precondition_failed_error(
                 "Worker is draining and not accepting new work",
             ));
         }
@@ -301,7 +301,7 @@ impl WorkerService for WorkerServiceImpl {
             .collect();
 
         if effective_types.is_empty() {
-            return Err(precondition_failed(
+            return Err(precondition_failed_error(
                 "Worker is not registered for the requested workflow types",
             ));
         }
@@ -391,12 +391,12 @@ impl WorkerService for WorkerServiceImpl {
                 .await
                 .map_err(|e| {
                     warn!(error = ?e, "Failed to create PgListener");
-                    Status::internal("Failed to listen for work notifications")
+                    internal_error("Failed to listen for work notifications")
                 })?;
 
             listener.listen(&channel_name).await.map_err(|e| {
                 warn!(error = ?e, channel = %channel_name, "Failed to listen on channel");
-                Status::internal("Failed to listen for work notifications")
+                internal_error("Failed to listen for work notifications")
             })?;
 
             let notification_result = tokio::time::timeout(remaining, listener.recv()).await;
@@ -436,7 +436,7 @@ impl WorkerService for WorkerServiceImpl {
         let req = request.into_inner();
 
         let run_id =
-            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         let workflow = self
             .store
@@ -458,7 +458,7 @@ impl WorkerService for WorkerServiceImpl {
             .map_err(map_store_error)?;
 
         if !workflow_check.exists {
-            return Err(not_found(
+            return Err(not_found_error(
                 format!("Workflow not found: run_id={}", run_id),
                 "workflow",
                 run_id.to_string(),
@@ -469,7 +469,7 @@ impl WorkerService for WorkerServiceImpl {
         if let Some(status) = workflow_check.status
             && status.is_terminal()
         {
-            return Err(precondition_failed(format!(
+            return Err(precondition_failed_error(format!(
                 "Cannot begin step on workflow with terminal status '{:?}'",
                 status
             )));
@@ -546,7 +546,7 @@ impl WorkerService for WorkerServiceImpl {
         let req = request.into_inner();
 
         let run_id =
-            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         let workflow = self
             .store
@@ -586,7 +586,7 @@ impl WorkerService for WorkerServiceImpl {
             .last()
             .map(step_to_proto)
             .transpose()?
-            .ok_or_else(|| not_found("Step not found", "step", req.step_id.clone()))?;
+            .ok_or_else(|| not_found_error("Step not found", "step", req.step_id.clone()))?;
 
         log_grpc_response(
             "CompleteStep",
@@ -617,10 +617,10 @@ impl WorkerService for WorkerServiceImpl {
         let req = request.into_inner();
 
         let run_id =
-            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         if req.step_id.is_empty() {
-            return Err(invalid_argument("step_id is required"));
+            return Err(invalid_argument_error("step_id is required"));
         }
 
         let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
@@ -699,7 +699,7 @@ impl WorkerService for WorkerServiceImpl {
         let req = request.into_inner();
 
         let run_id =
-            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         let workflow = self
             .store
@@ -721,7 +721,7 @@ impl WorkerService for WorkerServiceImpl {
             .map_err(map_store_error)?;
 
         if !workflow_check.exists {
-            return Err(not_found(
+            return Err(not_found_error(
                 format!("Workflow not found: run_id={}", run_id),
                 "workflow",
                 run_id.to_string(),
@@ -731,7 +731,7 @@ impl WorkerService for WorkerServiceImpl {
         if let Some(status) = workflow_check.status
             && status.is_terminal()
         {
-            return Err(precondition_failed(format!(
+            return Err(precondition_failed_error(format!(
                 "Cannot complete workflow with terminal status '{:?}'",
                 status
             )));
@@ -790,7 +790,7 @@ impl WorkerService for WorkerServiceImpl {
         let req = request.into_inner();
 
         let run_id =
-            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         let workflow = self
             .store
@@ -873,14 +873,14 @@ impl WorkerService for WorkerServiceImpl {
         let req = request.into_inner();
 
         let run_id =
-            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument("Invalid run_id"))?;
+            Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         let duration_proto = req
             .duration
-            .ok_or_else(|| invalid_argument("duration is required"))?;
+            .ok_or_else(|| invalid_argument_error("duration is required"))?;
         let duration: Duration = duration_proto
             .try_into()
-            .map_err(|_| invalid_argument("duration must be non-negative"))?;
+            .map_err(|_| invalid_argument_error("duration must be non-negative"))?;
         let duration_seconds = duration.as_secs();
 
         // Validate duration
@@ -897,7 +897,7 @@ impl WorkerService for WorkerServiceImpl {
         }
 
         if duration_seconds > MAX_SLEEP_SECONDS {
-            return Err(invalid_argument(format!(
+            return Err(invalid_argument_error(format!(
                 "Sleep duration cannot exceed {} seconds (30 days)",
                 MAX_SLEEP_SECONDS
             )));

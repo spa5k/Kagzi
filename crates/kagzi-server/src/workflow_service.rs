@@ -10,8 +10,8 @@ use tonic::{Request, Response, Status};
 use tracing::{info, instrument};
 
 use crate::helpers::{
-    invalid_argument, map_store_error, merge_proto_policy, not_found, payload_to_bytes,
-    precondition_failed,
+    invalid_argument_error, map_store_error, merge_proto_policy, not_found_error, payload_to_bytes,
+    precondition_failed_error,
 };
 use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
 use crate::tracing_utils::{
@@ -50,13 +50,13 @@ impl WorkflowService for WorkflowServiceImpl {
         let req = request.into_inner();
 
         if req.external_id.is_empty() {
-            return Err(invalid_argument("external_id is required"));
+            return Err(invalid_argument_error("external_id is required"));
         }
         if req.task_queue.is_empty() {
-            return Err(invalid_argument("task_queue is required"));
+            return Err(invalid_argument_error("task_queue is required"));
         }
         if req.workflow_type.is_empty() {
-            return Err(invalid_argument("workflow_type is required"));
+            return Err(invalid_argument_error("workflow_type is required"));
         }
 
         let input_bytes = payload_to_bytes(req.input);
@@ -87,7 +87,7 @@ impl WorkflowService for WorkflowServiceImpl {
                     .deadline_at
                     .map(|ts| {
                         chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
-                            .ok_or_else(|| invalid_argument("Invalid deadline_at timestamp"))
+                            .ok_or_else(|| invalid_argument_error("Invalid deadline_at timestamp"))
                     })
                     .transpose()?,
                 version,
@@ -139,7 +139,7 @@ impl WorkflowService for WorkflowServiceImpl {
 
         let req = request.into_inner();
         let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| invalid_argument("Invalid run_id: must be a valid UUID"))?;
+            .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
@@ -171,7 +171,7 @@ impl WorkflowService for WorkflowServiceImpl {
                 }))
             }
             None => {
-                let status = not_found(
+                let status = not_found_error(
                     format!(
                         "Workflow not found: run_id={}, namespace_id={}",
                         run_id, namespace_id
@@ -231,20 +231,20 @@ impl WorkflowService for WorkflowServiceImpl {
         } else {
             let decoded = base64::engine::general_purpose::STANDARD
                 .decode(&page.page_token)
-                .map_err(|_| invalid_argument("Invalid page_token"))?;
+                .map_err(|_| invalid_argument_error("Invalid page_token"))?;
             let cursor_str = String::from_utf8(decoded)
-                .map_err(|_| invalid_argument("Invalid page_token encoding"))?;
+                .map_err(|_| invalid_argument_error("Invalid page_token encoding"))?;
             let parts: Vec<&str> = cursor_str.splitn(2, ':').collect();
             if parts.len() != 2 {
-                return Err(invalid_argument("Invalid page_token format"));
+                return Err(invalid_argument_error("Invalid page_token format"));
             }
             let millis: i64 = parts[0]
                 .parse()
-                .map_err(|_| invalid_argument("Invalid page_token timestamp"))?;
+                .map_err(|_| invalid_argument_error("Invalid page_token timestamp"))?;
             let run_id = uuid::Uuid::parse_str(parts[1])
-                .map_err(|_| invalid_argument("Invalid page_token run_id"))?;
+                .map_err(|_| invalid_argument_error("Invalid page_token run_id"))?;
             let cursor_time = chrono::DateTime::from_timestamp_millis(millis)
-                .ok_or_else(|| invalid_argument("Invalid cursor timestamp"))?;
+                .ok_or_else(|| invalid_argument_error("Invalid cursor timestamp"))?;
             Some(WorkflowCursor {
                 created_at: cursor_time,
                 run_id,
@@ -255,7 +255,7 @@ impl WorkflowService for WorkflowServiceImpl {
             .status_filter
             .map(WorkflowStatus::try_from)
             .transpose()
-            .map_err(|_| invalid_argument("Invalid status_filter"))?
+            .map_err(|_| invalid_argument_error("Invalid status_filter"))?
             .map(workflow_status_to_string);
 
         let filter_status_for_list = filter_status.clone();
@@ -334,7 +334,7 @@ impl WorkflowService for WorkflowServiceImpl {
         let req = request.into_inner();
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
-            .map_err(|_| invalid_argument("Invalid run_id: must be a valid UUID"))?;
+            .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
             "default".to_string()
@@ -368,12 +368,12 @@ impl WorkflowService for WorkflowServiceImpl {
                 .map_err(map_store_error)?;
 
             let status = if exists.exists {
-                precondition_failed(format!(
+                precondition_failed_error(format!(
                     "Cannot cancel workflow with status '{:?}'. Only PENDING, RUNNING, or SLEEPING workflows can be cancelled.",
                     exists.status
                 ))
             } else {
-                not_found(
+                not_found_error(
                     format!(
                         "Workflow not found: run_id={}, namespace_id={}",
                         run_id, namespace_id

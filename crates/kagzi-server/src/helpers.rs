@@ -4,7 +4,7 @@ use kagzi_proto::kagzi::{ErrorCode, ErrorDetail, Payload, RetryPolicy};
 use prost::Message;
 use tonic::{Code, Status};
 
-pub fn detail(
+pub fn err_detail(
     code: ErrorCode,
     message: impl Into<String>,
     non_retryable: bool,
@@ -27,68 +27,68 @@ fn status_with_detail(code: Code, detail: ErrorDetail) -> Status {
     Status::with_details(code, detail.message.clone(), detail.encode_to_vec().into())
 }
 
-pub fn invalid_argument(message: impl Into<String>) -> Status {
+pub fn invalid_argument_error(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::InvalidArgument,
-        detail(ErrorCode::InvalidArgument, message, true, 0, "", ""),
+        err_detail(ErrorCode::InvalidArgument, message, true, 0, "", ""),
     )
 }
 
-pub fn not_found(
+pub fn not_found_error(
     message: impl Into<String>,
     subject: impl Into<String>,
     id: impl Into<String>,
 ) -> Status {
     status_with_detail(
         Code::NotFound,
-        detail(ErrorCode::NotFound, message, true, 0, subject, id),
+        err_detail(ErrorCode::NotFound, message, true, 0, subject, id),
     )
 }
 
-pub fn precondition_failed(message: impl Into<String>) -> Status {
+pub fn precondition_failed_error(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::FailedPrecondition,
-        detail(ErrorCode::PreconditionFailed, message, true, 0, "", ""),
+        err_detail(ErrorCode::PreconditionFailed, message, true, 0, "", ""),
     )
 }
 
-pub fn conflict(message: impl Into<String>) -> Status {
+pub fn conflict_error(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::Aborted,
-        detail(ErrorCode::Conflict, message, false, 0, "", ""),
+        err_detail(ErrorCode::Conflict, message, false, 0, "", ""),
     )
 }
 
-pub fn unavailable(message: impl Into<String>) -> Status {
+pub fn unavailable_error(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::Unavailable,
-        detail(ErrorCode::Unavailable, message, false, 0, "", ""),
+        err_detail(ErrorCode::Unavailable, message, false, 0, "", ""),
     )
 }
 
-pub fn deadline_exceeded(message: impl Into<String>) -> Status {
+pub fn deadline_exceeded_error(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::DeadlineExceeded,
-        detail(ErrorCode::Timeout, message, false, 0, "", ""),
+        err_detail(ErrorCode::Timeout, message, false, 0, "", ""),
     )
 }
 
-pub fn permission_denied(message: impl Into<String>) -> Status {
+pub fn permission_denied_error(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::PermissionDenied,
-        detail(ErrorCode::Unauthorized, message, true, 0, "", ""),
+        err_detail(ErrorCode::Unauthorized, message, true, 0, "", ""),
     )
 }
 
-pub fn internal(message: impl Into<String>) -> Status {
+pub fn internal_error(message: impl Into<String>) -> Status {
     status_with_detail(
         Code::Internal,
-        detail(ErrorCode::Internal, message, true, 0, "", ""),
+        err_detail(ErrorCode::Internal, message, true, 0, "", ""),
     )
 }
 
 pub fn string_error_detail(message: Option<String>) -> ErrorDetail {
-    detail(
+    err_detail(
         ErrorCode::Unspecified,
         message.unwrap_or_default(),
         false,
@@ -121,7 +121,7 @@ pub fn json_to_payload(value: Option<serde_json::Value>) -> Result<Payload, Stat
         }),
         Some(v) => {
             let data = serde_json::to_vec(&v)
-                .map_err(|e| internal(format!("Failed to serialize payload: {}", e)))?;
+                .map_err(|e| internal_error(format!("Failed to serialize payload: {}", e)))?;
             Ok(Payload {
                 data,
                 metadata: HashMap::new(),
@@ -184,24 +184,26 @@ pub fn merge_proto_policy(
 pub fn map_store_error(e: kagzi_store::StoreError) -> Status {
     match e {
         kagzi_store::StoreError::NotFound { entity, id } => {
-            not_found(format!("{} not found", entity), entity, id)
+            not_found_error(format!("{} not found", entity), entity, id)
         }
-        kagzi_store::StoreError::InvalidArgument { message } => invalid_argument(message),
-        kagzi_store::StoreError::InvalidState { message } => precondition_failed(message),
-        kagzi_store::StoreError::AlreadyCompleted { message } => precondition_failed(message),
-        kagzi_store::StoreError::Conflict { message } => conflict(message),
-        kagzi_store::StoreError::LockConflict { message } => conflict(message),
-        kagzi_store::StoreError::PreconditionFailed { message } => precondition_failed(message),
-        kagzi_store::StoreError::Unauthorized { message } => permission_denied(message),
-        kagzi_store::StoreError::Unavailable { message } => unavailable(message),
-        kagzi_store::StoreError::Timeout { message } => deadline_exceeded(message),
+        kagzi_store::StoreError::InvalidArgument { message } => invalid_argument_error(message),
+        kagzi_store::StoreError::InvalidState { message } => precondition_failed_error(message),
+        kagzi_store::StoreError::AlreadyCompleted { message } => precondition_failed_error(message),
+        kagzi_store::StoreError::Conflict { message } => conflict_error(message),
+        kagzi_store::StoreError::LockConflict { message } => conflict_error(message),
+        kagzi_store::StoreError::PreconditionFailed { message } => {
+            precondition_failed_error(message)
+        }
+        kagzi_store::StoreError::Unauthorized { message } => permission_denied_error(message),
+        kagzi_store::StoreError::Unavailable { message } => unavailable_error(message),
+        kagzi_store::StoreError::Timeout { message } => deadline_exceeded_error(message),
         kagzi_store::StoreError::Database(e) => {
             tracing::error!("Database error: {:?}", e);
-            internal("Database error")
+            internal_error("Database error")
         }
         kagzi_store::StoreError::Serialization(e) => {
             tracing::error!("Serialization error: {:?}", e);
-            internal("Serialization error")
+            internal_error("Serialization error")
         }
     }
 }
