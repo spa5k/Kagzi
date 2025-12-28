@@ -14,7 +14,7 @@ use kagzi_store::{
 };
 use tonic::Status;
 
-use crate::helpers::{bytes_to_payload, invalid_argument, string_error_detail};
+use crate::helpers::{bytes_to_payload, invalid_argument_error, string_error_detail};
 
 /// Convert chrono DateTime to proto Timestamp.
 pub fn timestamp_from(dt: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
@@ -70,12 +70,13 @@ pub fn map_step_kind(kind: StoreStepKind) -> StepKind {
 
 /// Convert proto StepKind to store StepKind.
 pub fn map_proto_step_kind(kind: i32) -> Result<StoreStepKind, Status> {
-    let kind = StepKind::try_from(kind).map_err(|_| invalid_argument("step kind is required"))?;
+    let kind =
+        StepKind::try_from(kind).map_err(|_| invalid_argument_error("step kind is required"))?;
 
     match kind {
         StepKind::Function => Ok(StoreStepKind::Function),
         StepKind::Sleep => Ok(StoreStepKind::Sleep),
-        StepKind::Unspecified => Err(invalid_argument("step kind is required")),
+        StepKind::Unspecified => Err(invalid_argument_error("step kind is required")),
     }
 }
 
@@ -107,7 +108,6 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
         started_at: w.started_at.map(timestamp_from),
         finished_at: w.finished_at.map(timestamp_from),
         wake_up_at: w.wake_up_at.map(timestamp_from),
-        deadline_at: w.deadline_at.map(timestamp_from),
         worker_id: w.locked_by.unwrap_or_default(),
         version: w.version.unwrap_or_default(),
         parent_step_id: w.parent_step_attempt_id.unwrap_or_default(),

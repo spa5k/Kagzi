@@ -29,16 +29,6 @@ pub fn extract_or_generate_trace_id<T>(request: &Request<T>) -> String {
 
     Uuid::now_v7().to_string()
 }
-#[allow(dead_code)]
-/// Create tracing span with correlation and trace IDs
-pub fn create_request_span(method: &str, correlation_id: &str, trace_id: &str) -> tracing::Span {
-    tracing::info_span!(
-        "grpc_request",
-        method = method,
-        correlation_id = correlation_id,
-        trace_id = trace_id,
-    )
-}
 pub fn log_grpc_request(
     method: &str,
     correlation_id: &str,

@@ -24,7 +24,6 @@ async fn start_workflow_returns_run_id() -> anyhow::Result<()> {
                 metadata: HashMap::new(),
             }),
             namespace_id: "default".to_string(),
-            deadline_at: None,
             version: "v1".to_string(),
             retry_policy: None,
         }))
@@ -51,7 +50,6 @@ async fn get_workflow_returns_correct_state() -> anyhow::Result<()> {
                 metadata: HashMap::new(),
             }),
             namespace_id: "default".to_string(),
-            deadline_at: None,
             version: "v1".to_string(),
             retry_policy: None,
         }))
@@ -95,7 +93,6 @@ async fn start_workflow_rejects_oversized_input() -> anyhow::Result<()> {
                 metadata: HashMap::new(),
             }),
             namespace_id: "default".to_string(),
-            deadline_at: None,
             version: "v1".to_string(),
             retry_policy: None,
         }))
@@ -125,7 +122,6 @@ async fn start_workflow_accepts_large_but_within_limit_input() -> anyhow::Result
                 metadata: HashMap::new(),
             }),
             namespace_id: "default".to_string(),
-            deadline_at: None,
             version: "v1".to_string(),
             retry_policy: None,
         }))
@@ -157,7 +153,6 @@ async fn list_workflows_paginates_results() -> anyhow::Result<()> {
                     metadata: HashMap::new(),
                 }),
                 namespace_id: "default".to_string(),
-                deadline_at: None,
                 version: "v1".to_string(),
                 retry_policy: None,
             }))

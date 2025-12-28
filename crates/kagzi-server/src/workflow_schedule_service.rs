@@ -15,8 +15,10 @@ use kagzi_store::{
 };
 use tonic::{Request, Response, Status};
 
+use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{
-    bytes_to_payload, invalid_argument, map_store_error, not_found, payload_to_optional_bytes,
+    bytes_to_payload, invalid_argument_error, map_store_error, not_found_error,
+    payload_to_optional_bytes,
 };
 use crate::tracing_utils::{
     extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
@@ -25,9 +27,10 @@ use crate::tracing_utils::{
 
 fn parse_cron_expr(expr: &str) -> Result<cron::Schedule, Status> {
     if expr.trim().is_empty() {
-        return Err(invalid_argument("cron_expr cannot be empty"));
+        return Err(invalid_argument_error("cron_expr cannot be empty"));
     }
-    cron::Schedule::from_str(expr).map_err(|e| invalid_argument(format!("Invalid cron: {}", e)))
+    cron::Schedule::from_str(expr)
+        .map_err(|e| invalid_argument_error(format!("Invalid cron: {}", e)))
 }
 
 fn next_fire_from_now(
@@ -38,7 +41,7 @@ fn next_fire_from_now(
     let next = schedule
         .after(&now)
         .next()
-        .ok_or_else(|| invalid_argument("Cron expression has no future occurrences"))?;
+        .ok_or_else(|| invalid_argument_error("Cron expression has no future occurrences"))?;
     Ok(next.with_timezone(&chrono::Utc))
 }
 
@@ -93,23 +96,22 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let req = request.into_inner();
 
         if req.task_queue.is_empty() {
-            return Err(invalid_argument("task_queue is required"));
+            return Err(invalid_argument_error("task_queue is required"));
         }
         if req.workflow_type.is_empty() {
-            return Err(invalid_argument("workflow_type is required"));
+            return Err(invalid_argument_error("workflow_type is required"));
         }
         if req.cron_expr.is_empty() {
-            return Err(invalid_argument("cron_expr is required"));
+            return Err(invalid_argument_error("cron_expr is required"));
         }
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
-        // Context is not used - user payloads treated as opaque bytes
 
         let enabled = req.enabled.unwrap_or(true);
         let max_catchup = if let Some(m) = req.max_catchup {
@@ -145,7 +147,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(map_store_error)?
             .map(workflow_schedule_to_proto)
             .transpose()?
-            .ok_or_else(|| not_found("Schedule not found", "schedule", schedule_id.to_string()))?;
+            .ok_or_else(|| {
+                not_found_error("Schedule not found", "schedule", schedule_id.to_string())
+            })?;
 
         log_grpc_response(
             "CreateWorkflowSchedule",
@@ -170,10 +174,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let req = request.into_inner();
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
-            .map_err(|_| invalid_argument("Invalid schedule_id"))?;
+            .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -186,7 +190,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(map_store_error)?
             .map(workflow_schedule_to_proto)
             .transpose()?
-            .ok_or_else(|| not_found("Schedule not found", "schedule", req.schedule_id))?;
+            .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
 
         log_grpc_response(
             "GetWorkflowSchedule",
@@ -211,7 +215,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let req = request.into_inner();
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -235,25 +239,25 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             } else {
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(&page.page_token)
-                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+                    .map_err(|_| invalid_argument_error("Invalid page_token"))?;
                 let token_str = std::str::from_utf8(&decoded)
-                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+                    .map_err(|_| invalid_argument_error("Invalid page_token"))?;
 
                 let mut parts = token_str.splitn(2, ':');
                 let created_at_ms = parts
                     .next()
                     .and_then(|p| p.parse::<i64>().ok())
-                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                    .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
                 let schedule_id_str = parts
                     .next()
-                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                    .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
 
                 let created_at = Utc
                     .timestamp_millis_opt(created_at_ms)
                     .single()
-                    .ok_or_else(|| invalid_argument("Invalid page_token"))?;
+                    .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
                 let schedule_id = uuid::Uuid::parse_str(schedule_id_str)
-                    .map_err(|_| invalid_argument("Invalid page_token"))?;
+                    .map_err(|_| invalid_argument_error("Invalid page_token"))?;
 
                 Some(kagzi_store::ScheduleCursor {
                     created_at,
@@ -318,10 +322,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let req = request.into_inner();
 
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
-            .map_err(|_| invalid_argument("Invalid schedule_id"))?;
+            .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -332,7 +336,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .find_by_id(schedule_id, &namespace_id)
             .await
             .map_err(map_store_error)?
-            .ok_or_else(|| not_found("Schedule not found", "schedule", req.schedule_id.clone()))?;
+            .ok_or_else(|| {
+                not_found_error("Schedule not found", "schedule", req.schedule_id.clone())
+            })?;
 
         let cron_expr = req.cron_expr.clone();
         let parsed_cron = if let Some(ref expr) = cron_expr {
@@ -345,7 +351,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             let candidate = cron
                 .after(&Utc::now())
                 .next()
-                .ok_or_else(|| invalid_argument("Cron expression has no future occurrences"))?
+                .ok_or_else(|| invalid_argument_error("Cron expression has no future occurrences"))?
                 .with_timezone(&Utc);
 
             // If the candidate matches the current scheduled time (e.g., update happens
@@ -360,7 +366,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             }
         } else if let Some(ts) = req.next_fire_at {
             let dt = chrono::DateTime::<Utc>::from_timestamp(ts.seconds, ts.nanos as u32)
-                .ok_or_else(|| invalid_argument("next_fire_at is out of supported range"))?;
+                .ok_or_else(|| invalid_argument_error("next_fire_at is out of supported range"))?;
             Some(dt)
         } else {
             None
@@ -397,7 +403,9 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(map_store_error)?
             .map(workflow_schedule_to_proto)
             .transpose()?
-            .ok_or_else(|| not_found("Schedule not found", "schedule", schedule_id.to_string()))?;
+            .ok_or_else(|| {
+                not_found_error("Schedule not found", "schedule", schedule_id.to_string())
+            })?;
 
         log_grpc_response(
             "UpdateWorkflowSchedule",
@@ -422,10 +430,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let req = request.into_inner();
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
-            .map_err(|_| invalid_argument("Invalid schedule_id"))?;
+            .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
-            "default".to_string()
+            DEFAULT_NAMESPACE.to_string()
         } else {
             req.namespace_id
         };
@@ -438,7 +446,11 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(map_store_error)?;
 
         if !deleted {
-            return Err(not_found("Schedule not found", "schedule", req.schedule_id));
+            return Err(not_found_error(
+                "Schedule not found",
+                "schedule",
+                req.schedule_id,
+            ));
         }
 
         log_grpc_response(

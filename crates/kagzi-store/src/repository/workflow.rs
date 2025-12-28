@@ -21,7 +21,6 @@ pub trait WorkflowRepository: Send + Sync {
         &self,
         namespace_id: &str,
         external_id: &str,
-        idempotency_suffix: Option<&str>,
     ) -> Result<Option<Uuid>, StoreError>;
 
     async fn list(

@@ -21,7 +21,6 @@ pub(super) struct WorkflowRunRow {
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
     pub wake_up_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub deadline_at: Option<chrono::DateTime<chrono::Utc>>,
     pub version: Option<String>,
     pub parent_step_attempt_id: Option<String>,
     pub retry_policy: Option<serde_json::Value>,
@@ -49,7 +48,6 @@ impl WorkflowRunRow {
             started_at: self.started_at,
             finished_at: self.finished_at,
             wake_up_at: self.wake_up_at,
-            deadline_at: self.deadline_at,
             version: self.version,
             parent_step_attempt_id: self.parent_step_attempt_id,
             retry_policy: self.retry_policy.and_then(|v| {

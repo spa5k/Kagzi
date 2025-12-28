@@ -75,7 +75,6 @@ async fn poll_filters_by_workflow_types() -> anyhow::Result<()> {
                 metadata: HashMap::new(),
             }),
             namespace_id: "default".to_string(),
-            deadline_at: None,
             version: "v1".to_string(),
             retry_policy: None,
         }))
@@ -93,7 +92,6 @@ async fn poll_filters_by_workflow_types() -> anyhow::Result<()> {
                 metadata: HashMap::new(),
             }),
             namespace_id: "default".to_string(),
-            deadline_at: None,
             version: "v1".to_string(),
             retry_policy: None,
         }))

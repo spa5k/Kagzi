@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::config::SchedulerSettings;
+use crate::constants::DEFAULT_VERSION;
 
 fn parse_cron(expr: &str) -> Option<CronSchedule> {
     CronSchedule::from_str(expr).ok()
@@ -48,14 +49,11 @@ async fn fire_workflow(
     schedule: &WorkflowSchedule,
     fire_at: DateTime<Utc>,
 ) -> Result<Option<uuid::Uuid>, kagzi_store::StoreError> {
-    let idempotency_suffix = fire_at.to_rfc3339();
+    // Create unique external_id by combining schedule_id with fire time
+    let external_id = format!("{}:{}", schedule.schedule_id, fire_at.to_rfc3339());
 
     if let Some(existing) = workflows
-        .find_active_by_external_id(
-            &schedule.namespace_id,
-            &schedule.schedule_id.to_string(),
-            Some(&idempotency_suffix),
-        )
+        .find_active_by_external_id(&schedule.namespace_id, &external_id)
         .await?
     {
         warn!(
@@ -69,14 +67,15 @@ async fn fire_workflow(
 
     let run_id = workflows
         .create(CreateWorkflow {
-            external_id: schedule.schedule_id.to_string(),
+            external_id,
             task_queue: schedule.task_queue.clone(),
             workflow_type: schedule.workflow_type.clone(),
             input: schedule.input.clone(),
             namespace_id: schedule.namespace_id.clone(),
-            idempotency_suffix: Some(idempotency_suffix),
-            deadline_at: None,
-            version: schedule.version.clone().unwrap_or_else(|| "1".to_string()),
+            version: schedule
+                .version
+                .clone()
+                .unwrap_or_else(|| DEFAULT_VERSION.to_string()),
             retry_policy: None,
         })
         .await?;

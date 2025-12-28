@@ -20,7 +20,6 @@ base64 = "0.22"
 chrono.workspace = true
 config.workspace = true
 cron.workspace = true
-dashmap = "6.1"
 kagzi-proto = { path = "../kagzi-proto" }
 kagzi-store = { path = "../kagzi-store" }
 md5 = "0.8.0"

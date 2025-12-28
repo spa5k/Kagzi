@@ -101,7 +101,6 @@ pub struct WorkflowRun {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub wake_up_at: Option<DateTime<Utc>>,
-    pub deadline_at: Option<DateTime<Utc>>,
     pub version: Option<String>,
     pub parent_step_attempt_id: Option<String>,
     pub retry_policy: Option<RetryPolicy>,
@@ -114,8 +113,6 @@ pub struct CreateWorkflow {
     pub workflow_type: String,
     pub input: Vec<u8>,
     pub namespace_id: String,
-    pub idempotency_suffix: Option<String>,
-    pub deadline_at: Option<DateTime<Utc>>,
     pub version: String,
     pub retry_policy: Option<RetryPolicy>,
 }

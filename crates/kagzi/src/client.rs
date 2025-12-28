@@ -10,7 +10,6 @@ use kagzi_proto::kagzi::{
     ListWorkflowSchedulesRequest, PageRequest, Payload as ProtoPayload, StartWorkflowRequest,
     WorkflowSchedule,
 };
-use prost_types::Timestamp;
 use serde::Serialize;
 use tonic::Request;
 use tonic::transport::Channel;
@@ -127,7 +126,6 @@ pub struct WorkflowBuilder<'a, I> {
     input: I,
     namespace_id: String,
     external_id: Option<String>,
-    deadline_at: Option<chrono::DateTime<chrono::Utc>>,
     version: Option<String>,
     retry_policy: Option<RetryPolicy>,
 }
@@ -141,7 +139,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
             input,
             namespace_id: "default".to_string(),
             external_id: None,
-            deadline_at: None,
             version: None,
             retry_policy: None,
         }
@@ -154,11 +151,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
 
     pub fn namespace(mut self, ns: impl Into<String>) -> Self {
         self.namespace_id = ns.into();
-        self
-    }
-
-    pub fn deadline(mut self, deadline: chrono::DateTime<chrono::Utc>) -> Self {
-        self.deadline_at = Some(deadline);
         self
     }
 
@@ -196,10 +188,6 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
                     metadata: HashMap::new(),
                 }),
                 namespace_id: self.namespace_id,
-                deadline_at: self.deadline_at.map(|dt| Timestamp {
-                    seconds: dt.timestamp(),
-                    nanos: dt.timestamp_subsec_nanos() as i32,
-                }),
                 version: self.version.unwrap_or_default(),
                 retry_policy: self.retry_policy.map(Into::into),
             })
