@@ -118,11 +118,25 @@ pub async fn run<Q: QueueNotifier>(
         }
 
         match store.workflows().wake_sleeping(batch_size).await {
-            Ok(0) => {
+            Ok(woken) if woken.is_empty() => {
                 debug!("No sleeping workflows to wake");
             }
-            Ok(count) => {
-                info!(count, "Scheduler woke up sleeping workflows");
+            Ok(woken) => {
+                info!(count = woken.len(), "Scheduler woke up sleeping workflows");
+                // Notify queues for each woken workflow
+                for workflow in &woken {
+                    if let Err(e) = queue
+                        .notify(&workflow.namespace_id, &workflow.task_queue)
+                        .await
+                    {
+                        warn!(
+                            run_id = %workflow.run_id,
+                            task_queue = %workflow.task_queue,
+                            error = %e,
+                            "Failed to notify queue for woken workflow"
+                        );
+                    }
+                }
             }
             Err(e) => {
                 error!("Failed to wake sleeping workflows: {:?}", e);

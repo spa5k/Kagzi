@@ -4,7 +4,7 @@ use uuid::Uuid;
 use super::PgWorkflowRepository;
 use super::helpers::ClaimedRow;
 use crate::error::StoreError;
-use crate::models::{ClaimedWorkflow, OrphanedWorkflow, RetryPolicy};
+use crate::models::{ClaimedWorkflow, OrphanedWorkflow, RetryPolicy, WokenWorkflow};
 
 #[instrument(skip(repo, types))]
 pub(super) async fn poll_workflow(
@@ -114,8 +114,8 @@ pub(super) async fn extend_locks_for_runs(
 pub(super) async fn wake_sleeping(
     repo: &PgWorkflowRepository,
     batch_size: i64,
-) -> Result<u64, StoreError> {
-    let result = sqlx::query!(
+) -> Result<Vec<WokenWorkflow>, StoreError> {
+    let rows = sqlx::query!(
         r#"
         UPDATE kagzi.workflow_runs
         SET status = 'PENDING',
@@ -128,18 +128,26 @@ pub(super) async fn wake_sleeping(
             FOR UPDATE SKIP LOCKED
             LIMIT $1
         )
+        RETURNING run_id, task_queue, namespace_id
         "#,
         batch_size
     )
-    .execute(&repo.pool)
+    .fetch_all(&repo.pool)
     .await?;
 
-    let rows_affected = result.rows_affected();
-    if rows_affected > 0 {
-        tracing::info!(rows_affected, "Woke up sleeping workflows");
+    let woken: Vec<WokenWorkflow> = rows
+        .into_iter()
+        .map(|r| WokenWorkflow {
+            run_id: r.run_id,
+            task_queue: r.task_queue,
+            namespace_id: r.namespace_id,
+        })
+        .collect();
+    if !woken.is_empty() {
+        tracing::info!(count = woken.len(), "Woke up sleeping workflows");
     }
 
-    Ok(rows_affected)
+    Ok(woken)
 }
 
 #[instrument(skip(repo))]
