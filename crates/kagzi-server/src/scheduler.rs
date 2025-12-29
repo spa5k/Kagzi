@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
+use kagzi_queue::QueueNotifier;
 use kagzi_store::{
     CreateWorkflow, PgStore, Schedule as WorkflowSchedule, WorkflowRepository,
     WorkflowScheduleRepository,
@@ -44,12 +45,12 @@ fn compute_missed_fires(
     fires
 }
 
-async fn fire_workflow(
+async fn fire_workflow<Q: QueueNotifier>(
     workflows: &impl WorkflowRepository,
+    queue: &Q,
     schedule: &WorkflowSchedule,
     fire_at: DateTime<Utc>,
 ) -> Result<Option<uuid::Uuid>, kagzi_store::StoreError> {
-    // Create unique external_id by combining schedule_id with fire time
     let external_id = format!("{}:{}", schedule.schedule_id, fire_at.to_rfc3339());
 
     if let Some(existing) = workflows
@@ -80,10 +81,22 @@ async fn fire_workflow(
         })
         .await?;
 
+    if let Err(e) = queue
+        .notify(&schedule.namespace_id, &schedule.task_queue)
+        .await
+    {
+        warn!(error = %e, "Failed to notify queue from scheduler");
+    }
+
     Ok(Some(run_id))
 }
 
-pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: CancellationToken) {
+pub async fn run<Q: QueueNotifier>(
+    store: PgStore,
+    queue: Q,
+    settings: SchedulerSettings,
+    shutdown: CancellationToken,
+) {
     let interval_secs = settings.interval_secs.max(1);
     let batch_size = settings.batch_size.max(1);
     let max_workflows_per_tick = settings.max_workflows_per_tick.max(1);
@@ -105,11 +118,25 @@ pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: Cancella
         }
 
         match store.workflows().wake_sleeping(batch_size).await {
-            Ok(0) => {
+            Ok(woken) if woken.is_empty() => {
                 debug!("No sleeping workflows to wake");
             }
-            Ok(count) => {
-                info!(count, "Scheduler woke up sleeping workflows");
+            Ok(woken) => {
+                info!(count = woken.len(), "Scheduler woke up sleeping workflows");
+                // Notify queues for each woken workflow
+                for workflow in &woken {
+                    if let Err(e) = queue
+                        .notify(&workflow.namespace_id, &workflow.task_queue)
+                        .await
+                    {
+                        warn!(
+                            run_id = %workflow.run_id,
+                            task_queue = %workflow.task_queue,
+                            error = %e,
+                            "Failed to notify queue for woken workflow"
+                        );
+                    }
+                }
             }
             Err(e) => {
                 error!("Failed to wake sleeping workflows: {:?}", e);
@@ -160,7 +187,7 @@ pub async fn run(store: PgStore, settings: SchedulerSettings, shutdown: Cancella
 
             let mut last_fired = None;
             for fire_at in fires {
-                match fire_workflow(&workflows_repo, &schedule, fire_at).await {
+                match fire_workflow(&workflows_repo, &queue, &schedule, fire_at).await {
                     Ok(Some(run_id)) => {
                         created_this_tick += 1;
                         last_fired = Some(fire_at);

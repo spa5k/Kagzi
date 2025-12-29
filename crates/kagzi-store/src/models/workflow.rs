@@ -148,6 +148,13 @@ pub struct OrphanedWorkflow {
 }
 
 #[derive(Debug, Clone)]
+pub struct WokenWorkflow {
+    pub run_id: Uuid,
+    pub task_queue: String,
+    pub namespace_id: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct WorkflowExistsResult {
     pub exists: bool,
     pub status: Option<WorkflowStatus>,

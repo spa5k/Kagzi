@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
-    RetryPolicy, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
+    RetryPolicy, WokenWorkflow, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
 
 #[async_trait]
@@ -79,7 +79,7 @@ pub trait WorkflowRepository: Send + Sync {
 
     async fn create_batch(&self, params: Vec<CreateWorkflow>) -> Result<Vec<Uuid>, StoreError>;
 
-    async fn wake_sleeping(&self, batch_size: i32) -> Result<u64, StoreError>;
+    async fn wake_sleeping(&self, batch_size: i32) -> Result<Vec<WokenWorkflow>, StoreError>;
 
     async fn find_orphaned(&self) -> Result<Vec<OrphanedWorkflow>, StoreError>;
 

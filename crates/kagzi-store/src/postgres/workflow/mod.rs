@@ -10,7 +10,7 @@ use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     ClaimedWorkflow, CreateWorkflow, ListWorkflowsParams, OrphanedWorkflow, PaginatedResult,
-    RetryPolicy, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
+    RetryPolicy, WokenWorkflow, WorkflowCursor, WorkflowExistsResult, WorkflowRun,
 };
 use crate::repository::WorkflowRepository;
 
@@ -167,7 +167,7 @@ impl WorkflowRepository for PgWorkflowRepository {
         state::create_batch(self, params).await
     }
 
-    async fn wake_sleeping(&self, batch_size: i32) -> Result<u64, StoreError> {
+    async fn wake_sleeping(&self, batch_size: i32) -> Result<Vec<WokenWorkflow>, StoreError> {
         queue::wake_sleeping(self, batch_size as i64).await
     }
 

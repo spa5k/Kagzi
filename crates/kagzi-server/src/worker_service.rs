@@ -11,13 +11,13 @@ use kagzi_proto::kagzi::{
     HeartbeatResponse, PollTaskRequest, PollTaskResponse, RegisterRequest, RegisterResponse,
     SleepRequest,
 };
+use kagzi_queue::QueueNotifier;
 use kagzi_store::{
     BeginStepParams, FailStepParams, PgStore, RegisterWorkerParams, StepRepository,
     WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus, WorkflowRepository,
     WorkflowTypeConcurrency,
 };
 use rand::Rng;
-use sqlx::postgres::PgListener;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -25,8 +25,8 @@ use uuid::Uuid;
 use crate::config::WorkerSettings;
 use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{
-    bytes_to_payload, internal_error, invalid_argument_error, map_store_error, merge_proto_policy,
-    not_found_error, payload_to_optional_bytes, precondition_failed_error,
+    bytes_to_payload, invalid_argument_error, map_store_error, merge_proto_policy, not_found_error,
+    payload_to_optional_bytes, precondition_failed_error,
 };
 use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
 use crate::tracing_utils::{
@@ -46,24 +46,33 @@ fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
 }
 
 #[derive(Clone)]
-pub struct WorkerServiceImpl {
+pub struct WorkerServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
     pub worker_settings: WorkerSettings,
+    pub queue_settings: crate::config::QueueSettings,
+    pub queue: Q,
 }
 
-impl WorkerServiceImpl {
+impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
     const WORKFLOW_LOCK_DURATION_SECS: i64 = 30;
 
-    pub fn new(store: PgStore, worker_settings: WorkerSettings) -> Self {
+    pub fn new(
+        store: PgStore,
+        worker_settings: WorkerSettings,
+        queue_settings: crate::config::QueueSettings,
+        queue: Q,
+    ) -> Self {
         Self {
             store,
             worker_settings,
+            queue_settings,
+            queue,
         }
     }
 }
 
 #[tonic::async_trait]
-impl WorkerService for WorkerServiceImpl {
+impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     #[instrument(skip(self), fields(
         correlation_id = %extract_or_generate_correlation_id(&request),
         trace_id = %extract_or_generate_trace_id(&request),
@@ -384,37 +393,23 @@ impl WorkerService for WorkerServiceImpl {
                 }));
             }
 
-            let channel_name = format!(
-                "kagzi_work_{:x}",
-                md5::compute(format!("{}_{}", namespace_id, req.task_queue).as_bytes())
-            );
-            let mut listener = PgListener::connect_with(self.store.pool())
-                .await
-                .map_err(|e| {
-                    warn!(error = ?e, "Failed to create PgListener");
-                    internal_error("Failed to listen for work notifications")
-                })?;
+            let mut rx = self.queue.subscribe(&namespace_id, &req.task_queue);
 
-            listener.listen(&channel_name).await.map_err(|e| {
-                warn!(error = ?e, channel = %channel_name, "Failed to listen on channel");
-                internal_error("Failed to listen for work notifications")
-            })?;
-
-            let notification_result = tokio::time::timeout(remaining, listener.recv()).await;
-
-            let _ = listener.unlisten(&channel_name).await;
+            let notification_result = tokio::time::timeout(remaining, rx.recv()).await;
 
             match notification_result {
-                Ok(Ok(_notification)) => {
-                    let jitter_ms = rand::rng().random_range(0..500);
-                    tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
+                Ok(Ok(_)) => {
+                    // Add jitter to prevent thundering herd, but handle zero config gracefully
+                    if self.queue_settings.poll_jitter_ms > 0 {
+                        let jitter_ms =
+                            rand::rng().random_range(0..self.queue_settings.poll_jitter_ms);
+                        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
+                    }
                 }
-                Ok(Err(e)) => {
-                    warn!(error = ?e, "Error receiving notification");
+                Ok(Err(_)) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                Err(_) => {
-                    // Timeout, loop will check deadline
-                }
+                Err(_) => {}
             }
         }
     }
@@ -922,7 +917,7 @@ impl WorkerService for WorkerServiceImpl {
     }
 }
 
-impl WorkerServiceImpl {
+impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
     async fn complete_pending_sleep_steps(&self, run_id: Uuid) -> Result<(), Status> {
         let steps = self
             .store

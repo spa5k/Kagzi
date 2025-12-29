@@ -9,6 +9,7 @@ pub struct Settings {
     pub watchdog: WatchdogSettings,
     pub worker: WorkerSettings,
     pub payload: PayloadSettings,
+    pub queue: QueueSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -53,6 +54,19 @@ pub struct PayloadSettings {
     pub warn_threshold_bytes: usize,
     #[serde(default = "default_payload_max_size_bytes")]
     pub max_size_bytes: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct QueueSettings {
+    /// Interval in seconds for cleaning up stale notification channels
+    #[serde(default = "default_queue_cleanup_interval_secs")]
+    pub cleanup_interval_secs: u64,
+    /// Maximum jitter in milliseconds to add when workers wake from notifications
+    #[serde(default = "default_queue_poll_jitter_ms")]
+    pub poll_jitter_ms: u64,
+    /// Maximum time in seconds to retry reconnecting the queue listener before giving up
+    #[serde(default = "default_queue_max_reconnect_secs")]
+    pub max_reconnect_secs: u64,
 }
 
 impl Settings {
@@ -101,6 +115,18 @@ impl Settings {
                 "payload.max_size_bytes",
                 default_payload_max_size_bytes() as i64,
             )?
+            .set_default(
+                "queue.cleanup_interval_secs",
+                default_queue_cleanup_interval_secs() as i64,
+            )?
+            .set_default(
+                "queue.poll_jitter_ms",
+                default_queue_poll_jitter_ms() as i64,
+            )?
+            .set_default(
+                "queue.max_reconnect_secs",
+                default_queue_max_reconnect_secs() as i64,
+            )?
             // Single canonical source: KAGZI_* (flat, single underscore)
             .add_source(Environment::with_prefix("KAGZI").separator("_"));
 
@@ -126,6 +152,16 @@ impl Default for PayloadSettings {
         Self {
             warn_threshold_bytes: default_payload_warn_threshold_bytes(),
             max_size_bytes: default_payload_max_size_bytes(),
+        }
+    }
+}
+
+impl Default for QueueSettings {
+    fn default() -> Self {
+        Self {
+            cleanup_interval_secs: default_queue_cleanup_interval_secs(),
+            poll_jitter_ms: default_queue_poll_jitter_ms(),
+            max_reconnect_secs: default_queue_max_reconnect_secs(),
         }
     }
 }
@@ -176,4 +212,16 @@ fn default_payload_warn_threshold_bytes() -> usize {
 
 fn default_payload_max_size_bytes() -> usize {
     2 * 1024 * 1024
+}
+
+fn default_queue_cleanup_interval_secs() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_queue_poll_jitter_ms() -> u64 {
+    100 // 100ms max jitter
+}
+
+fn default_queue_max_reconnect_secs() -> u64 {
+    300 // 5 minutes max reconnection attempts
 }
