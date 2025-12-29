@@ -21,6 +21,7 @@ chrono.workspace = true
 config.workspace = true
 cron.workspace = true
 kagzi-proto = { path = "../kagzi-proto" }
+kagzi-queue = { path = "../kagzi-queue" }
 kagzi-store = { path = "../kagzi-store" }
 md5 = "0.8.0"
 prost.workspace = true

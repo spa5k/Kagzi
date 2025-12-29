@@ -3,11 +3,12 @@ use kagzi_proto::kagzi::{
     CancelWorkflowRequest, GetWorkflowRequest, GetWorkflowResponse, ListWorkflowsRequest,
     ListWorkflowsResponse, PageInfo, StartWorkflowRequest, StartWorkflowResponse, WorkflowStatus,
 };
+use kagzi_queue::QueueNotifier;
 use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowCursor, WorkflowRepository,
 };
 use tonic::{Request, Response, Status};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::constants::{DEFAULT_NAMESPACE, DEFAULT_VERSION};
 use crate::helpers::{
@@ -20,18 +21,19 @@ use crate::tracing_utils::{
     log_grpc_response,
 };
 
-pub struct WorkflowServiceImpl {
+pub struct WorkflowServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
+    pub queue: Q,
 }
 
-impl WorkflowServiceImpl {
-    pub fn new(store: PgStore) -> Self {
-        Self { store }
+impl<Q: QueueNotifier> WorkflowServiceImpl<Q> {
+    pub fn new(store: PgStore, queue: Q) -> Self {
+        Self { store, queue }
     }
 }
 
 #[tonic::async_trait]
-impl WorkflowService for WorkflowServiceImpl {
+impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
     #[instrument(skip(self), fields(
         correlation_id = %extract_or_generate_correlation_id(&request),
         trace_id = %extract_or_generate_trace_id(&request),
@@ -76,6 +78,9 @@ impl WorkflowService for WorkflowServiceImpl {
 
         let workflows = self.store.workflows();
 
+        // Capture task_queue before struct creation moves it
+        let task_queue = req.task_queue.clone();
+
         let create_result = workflows
             .create(CreateWorkflow {
                 external_id: req.external_id.clone(),
@@ -100,6 +105,14 @@ impl WorkflowService for WorkflowServiceImpl {
             }
             Err(e) => return Err(map_store_error(e)),
         };
+
+        // Notify queue that work is available
+        if !already_exists {
+            match self.queue.notify(&namespace_id, &task_queue).await {
+                Ok(_) => {}
+                Err(e) => warn!(error = %e, "Failed to notify queue"),
+            }
+        }
 
         log_grpc_response(
             "StartWorkflow",

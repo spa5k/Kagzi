@@ -9,6 +9,7 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 kagzi = { path = "../kagzi" }
 kagzi-proto = { path = "../kagzi-proto" }
+kagzi-queue = { path = "../kagzi-queue" }
 kagzi-server = { path = "../kagzi-server" }
 kagzi-store = { path = "../kagzi-store" }
 prost = { workspace = true }

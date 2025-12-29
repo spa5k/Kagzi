@@ -4,6 +4,7 @@ members = [
   "crates/kagzi",
   "crates/kagzi-macros",
   "crates/kagzi-proto",
+  "crates/kagzi-queue",
   "crates/kagzi-server",
   "crates/kagzi-store",
   "crates/tests",

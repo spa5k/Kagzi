@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use kagzi::{Client, Worker};
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
+use kagzi_queue::QueueNotifier;
 use kagzi_server::config::{SchedulerSettings, WatchdogSettings, WorkerSettings};
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
@@ -119,6 +120,14 @@ impl TestHarness {
 
         let shutdown = CancellationToken::new();
 
+        // Create queue notifier for services
+        let queue = kagzi_queue::PostgresNotifier::new(pool.clone());
+        let queue_listener = queue.clone();
+        let queue_listener_token = shutdown.child_token();
+        tokio::spawn(async move {
+            let _ = queue_listener.start(queue_listener_token).await;
+        });
+
         // Spawn watchdog tasks.
         watchdog::spawn(
             store.clone(),
@@ -128,9 +137,16 @@ impl TestHarness {
 
         // Spawn scheduler loop.
         let scheduler_store = store.clone();
+        let scheduler_queue = queue.clone();
         let scheduler_token = shutdown.child_token();
         tokio::spawn(async move {
-            run_scheduler(scheduler_store, scheduler_settings, scheduler_token).await;
+            run_scheduler(
+                scheduler_store,
+                scheduler_queue,
+                scheduler_settings,
+                scheduler_token,
+            )
+            .await;
         });
 
         // Start gRPC server on a random port.
@@ -140,10 +156,10 @@ impl TestHarness {
         let addr = listener.local_addr().expect("Failed to read bound address");
         let incoming = TcpListenerStream::new(listener);
 
-        let workflow_service = WorkflowServiceImpl::new(store.clone());
+        let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
         let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
         let admin_service = AdminServiceImpl::new(store.clone());
-        let worker_service = WorkerServiceImpl::new(store.clone(), worker_settings);
+        let worker_service = WorkerServiceImpl::new(store.clone(), worker_settings, queue.clone());
 
         let server_shutdown = shutdown.child_token();
         let server_handle = tokio::spawn(async move {
