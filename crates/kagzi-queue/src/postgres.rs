@@ -17,15 +17,17 @@ const CHANNEL_CAPACITY: usize = 64;
 pub struct PostgresNotifier {
     pool: PgPool,
     channels: Arc<DashMap<String, broadcast::Sender<()>>>,
+    cleanup_interval_secs: u64,
+    max_reconnect_secs: u64,
 }
 
-const CLEANUP_INTERVAL_SECS: u64 = 300;
-
 impl PostgresNotifier {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: PgPool, cleanup_interval_secs: u64, max_reconnect_secs: u64) -> Self {
         Self {
             pool,
             channels: Arc::new(DashMap::new()),
+            cleanup_interval_secs,
+            max_reconnect_secs,
         }
     }
 
@@ -92,7 +94,7 @@ impl QueueNotifier for PostgresNotifier {
         info!("Queue listener started on channel 'kagzi_work'");
 
         let mut cleanup_interval =
-            tokio::time::interval(std::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
+            tokio::time::interval(std::time::Duration::from_secs(self.cleanup_interval_secs));
 
         loop {
             tokio::select! {
@@ -123,6 +125,7 @@ impl QueueNotifier for PostgresNotifier {
                             let mut backoff = backoff::ExponentialBackoff {
                                 initial_interval: std::time::Duration::from_secs(1),
                                 max_interval: std::time::Duration::from_secs(30),
+                                max_elapsed_time: Some(std::time::Duration::from_secs(self.max_reconnect_secs)),
                                 ..Default::default()
                             };
 
@@ -138,6 +141,12 @@ impl QueueNotifier for PostgresNotifier {
                                             if let Some(delay) = backoff::backoff::Backoff::next_backoff(&mut backoff) {
                                                 tokio::time::sleep(delay).await;
                                                 continue;
+                                            } else {
+                                                error!("Exhausted reconnection attempts after {} seconds", self.max_reconnect_secs);
+                                                return Err(QueueError::Other(format!(
+                                                    "Failed to reconnect queue listener after {} seconds",
+                                                    self.max_reconnect_secs
+                                                )));
                                             }
                                         }
                                         listener = new_listener;
@@ -150,6 +159,7 @@ impl QueueNotifier for PostgresNotifier {
                                             tokio::time::sleep(delay).await;
                                             continue;
                                         } else {
+                                            error!("Exhausted reconnection attempts after {} seconds", self.max_reconnect_secs);
                                             return Err(QueueError::Database(e));
                                         }
                                     }

@@ -49,16 +49,23 @@ fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
 pub struct WorkerServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
     pub worker_settings: WorkerSettings,
+    pub queue_settings: crate::config::QueueSettings,
     pub queue: Q,
 }
 
 impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
     const WORKFLOW_LOCK_DURATION_SECS: i64 = 30;
 
-    pub fn new(store: PgStore, worker_settings: WorkerSettings, queue: Q) -> Self {
+    pub fn new(
+        store: PgStore,
+        worker_settings: WorkerSettings,
+        queue_settings: crate::config::QueueSettings,
+        queue: Q,
+    ) -> Self {
         Self {
             store,
             worker_settings,
+            queue_settings,
             queue,
         }
     }
@@ -392,8 +399,12 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
             match notification_result {
                 Ok(Ok(_)) => {
-                    let jitter_ms = rand::rng().random_range(0..500);
-                    tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
+                    // Add jitter to prevent thundering herd, but handle zero config gracefully
+                    if self.queue_settings.poll_jitter_ms > 0 {
+                        let jitter_ms =
+                            rand::rng().random_range(0..self.queue_settings.poll_jitter_ms);
+                        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
+                    }
                 }
                 Ok(Err(_)) => {
                     tokio::time::sleep(Duration::from_millis(100)).await;

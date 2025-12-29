@@ -121,7 +121,7 @@ impl TestHarness {
 
         let shutdown = CancellationToken::new();
 
-        let queue = kagzi_queue::PostgresNotifier::new(pool.clone());
+        let queue = kagzi_queue::PostgresNotifier::new(pool.clone(), 300, 300);
         let queue_listener = queue.clone();
         let queue_listener_token = shutdown.child_token();
         tokio::spawn(async move {
@@ -155,10 +155,22 @@ impl TestHarness {
         let addr = listener.local_addr().expect("Failed to read bound address");
         let incoming = TcpListenerStream::new(listener);
 
+        // Use default queue settings for tests
+        let queue_settings = kagzi_server::config::QueueSettings {
+            cleanup_interval_secs: 300,
+            poll_jitter_ms: 100,
+            max_reconnect_secs: 300,
+        };
+
         let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
         let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
         let admin_service = AdminServiceImpl::new(store.clone());
-        let worker_service = WorkerServiceImpl::new(store.clone(), worker_settings, queue.clone());
+        let worker_service = WorkerServiceImpl::new(
+            store.clone(),
+            worker_settings,
+            queue_settings,
+            queue.clone(),
+        );
 
         let server_shutdown = shutdown.child_token();
         let server_handle = tokio::spawn(async move {

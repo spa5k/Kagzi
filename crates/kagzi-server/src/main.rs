@@ -45,14 +45,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scheduler_settings = settings.scheduler.clone();
     let watchdog_settings = settings.watchdog.clone();
     let worker_settings = settings.worker.clone();
+    let queue_settings = settings.queue.clone();
 
     // Create the queue notifier and start background listener
-    let queue = kagzi_queue::PostgresNotifier::new(store.pool().clone());
+    let queue = kagzi_queue::PostgresNotifier::new(
+        store.pool().clone(),
+        queue_settings.cleanup_interval_secs,
+        queue_settings.max_reconnect_secs,
+    );
     let queue_listener = queue.clone();
     let queue_listener_token = shutdown_token.child_token();
-    tokio::spawn(async move {
+    let _queue_listener_handle = tokio::spawn(async move {
         if let Err(e) = queue_listener.start(queue_listener_token).await {
-            tracing::error!("Queue listener error: {:?}", e);
+            tracing::error!("Queue listener failed: {:?}", e);
+            tracing::error!(
+                "Server is running in degraded mode - queue notifications will not work"
+            );
         }
     });
 
@@ -79,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
     let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
     let admin_service = AdminServiceImpl::new(store.clone());
-    let worker_service = WorkerServiceImpl::new(store, worker_settings, queue);
+    let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
     info!("Kagzi Server listening on {}", addr);
 
