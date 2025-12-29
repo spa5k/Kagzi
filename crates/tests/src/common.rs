@@ -121,7 +121,6 @@ impl TestHarness {
 
         let shutdown = CancellationToken::new();
 
-        // Create queue notifier for services
         let queue = kagzi_queue::PostgresNotifier::new(pool.clone());
         let queue_listener = queue.clone();
         let queue_listener_token = shutdown.child_token();
@@ -131,14 +130,12 @@ impl TestHarness {
             }
         });
 
-        // Spawn watchdog tasks.
         watchdog::spawn(
             store.clone(),
             watchdog_settings.clone(),
             shutdown.child_token(),
         );
 
-        // Spawn scheduler loop.
         let scheduler_store = store.clone();
         let scheduler_queue = queue.clone();
         let scheduler_token = shutdown.child_token();
@@ -152,7 +149,6 @@ impl TestHarness {
             .await;
         });
 
-        // Start gRPC server on a random port.
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("Failed to bind server socket");

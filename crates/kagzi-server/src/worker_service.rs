@@ -386,24 +386,19 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 }));
             }
 
-            // Subscribe to the shared queue notifier instead of per-request PgListener
             let mut rx = self.queue.subscribe(&namespace_id, &req.task_queue);
 
             let notification_result = tokio::time::timeout(remaining, rx.recv()).await;
 
             match notification_result {
                 Ok(Ok(_)) => {
-                    // Notification received, add jitter and retry poll
                     let jitter_ms = rand::rng().random_range(0..500);
                     tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                 }
                 Ok(Err(_)) => {
-                    // Channel lagged or closed, retry after brief sleep
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                Err(_) => {
-                    // Timeout, loop will check deadline
-                }
+                Err(_) => {}
             }
         }
     }

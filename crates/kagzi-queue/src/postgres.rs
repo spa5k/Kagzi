@@ -1,5 +1,3 @@
-//! PostgreSQL implementation of QueueNotifier using NOTIFY/LISTEN.
-
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -13,29 +11,17 @@ use tracing::{debug, error, info, warn};
 use crate::error::QueueError;
 use crate::traits::QueueNotifier;
 
-/// Channel capacity for broadcast senders.
 const CHANNEL_CAPACITY: usize = 64;
 
-/// PostgreSQL-based queue notifier.
-///
-/// Uses a single shared `PgListener` to receive notifications and broadcasts
-/// them to subscribers via `tokio::sync::broadcast` channels.
-///
-/// ### Important Note
-/// Notifications can be lost during the reconnection window if the database connection
-/// is lost. Callers should implement a fallback polling mechanism.
 #[derive(Clone)]
 pub struct PostgresNotifier {
     pool: PgPool,
-    /// Map "namespace:queue" -> broadcast sender
     channels: Arc<DashMap<String, broadcast::Sender<()>>>,
 }
 
-/// Interval between stale channel cleanup checks.
-const CLEANUP_INTERVAL_SECS: u64 = 300; // 5 minutes
+const CLEANUP_INTERVAL_SECS: u64 = 300;
 
 impl PostgresNotifier {
-    /// Create a new PostgresNotifier.
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
@@ -43,12 +29,10 @@ impl PostgresNotifier {
         }
     }
 
-    /// Build the queue key from namespace and task_queue.
     fn queue_key(namespace: &str, task_queue: &str) -> String {
         format!("{}:{}", namespace, task_queue)
     }
 
-    /// Get or create a broadcast channel for the given queue key.
     fn get_or_create_channel(&self, key: &str) -> broadcast::Sender<()> {
         self.channels
             .entry(key.to_string())
@@ -59,7 +43,6 @@ impl PostgresNotifier {
             .clone()
     }
 
-    /// Clean up channels that have no active receivers.
     fn cleanup_stale_channels(&self) {
         let mut removed = 0;
         self.channels.retain(|key, tx| {
@@ -82,7 +65,6 @@ impl QueueNotifier for PostgresNotifier {
     async fn notify(&self, namespace: &str, task_queue: &str) -> Result<(), QueueError> {
         let key = Self::queue_key(namespace, task_queue);
 
-        // Send NOTIFY to PostgreSQL
         sqlx::query("SELECT pg_notify('kagzi_work', $1)")
             .bind(&key)
             .execute(&self.pool)
@@ -90,9 +72,8 @@ impl QueueNotifier for PostgresNotifier {
 
         debug!(queue = %key, "Sent pg_notify");
 
-        // Also broadcast locally in case listener hasn't picked it up yet
         if let Some(tx) = self.channels.get(&key) {
-            let _ = tx.send(()); // Ignore error if no receivers
+            let _ = tx.send(());
         }
 
         Ok(())
@@ -133,15 +114,12 @@ impl QueueNotifier for PostgresNotifier {
                             debug!(queue = %key, "Received pg_notify");
 
                             if let Some(tx) = self.channels.get(key) {
-                                // Broadcast to all subscribers
-                                // Ignore send errors (no receivers is fine)
                                 let _ = tx.send(());
                             }
                         }
                         Err(e) => {
                             error!(error = %e, "Error receiving notification, attempting to reconnect");
 
-                            // Use exponential backoff for reconnection
                             let mut backoff = backoff::ExponentialBackoff {
                                 initial_interval: std::time::Duration::from_secs(1),
                                 max_interval: std::time::Duration::from_secs(30),

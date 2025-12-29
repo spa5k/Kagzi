@@ -51,7 +51,6 @@ async fn fire_workflow<Q: QueueNotifier>(
     schedule: &WorkflowSchedule,
     fire_at: DateTime<Utc>,
 ) -> Result<Option<uuid::Uuid>, kagzi_store::StoreError> {
-    // Create unique external_id by combining schedule_id with fire time
     let external_id = format!("{}:{}", schedule.schedule_id, fire_at.to_rfc3339());
 
     if let Some(existing) = workflows
@@ -82,7 +81,6 @@ async fn fire_workflow<Q: QueueNotifier>(
         })
         .await?;
 
-    // Notify queue that work is available
     if let Err(e) = queue
         .notify(&schedule.namespace_id, &schedule.task_queue)
         .await

@@ -1,5 +1,3 @@
-//! Error types for the queue system.
-
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -78,13 +78,12 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let workflows = self.store.workflows();
 
-        // Capture task_queue before struct creation moves it
         let task_queue = req.task_queue.clone();
 
         let create_result = workflows
             .create(CreateWorkflow {
                 external_id: req.external_id.clone(),
-                task_queue: req.task_queue,
+                task_queue,
                 workflow_type: req.workflow_type,
                 input: input_bytes,
                 namespace_id: namespace_id.clone(),
@@ -106,8 +105,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             Err(e) => return Err(map_store_error(e)),
         };
 
-        // Notify queue that work is available
-        if !already_exists && let Err(e) = self.queue.notify(&namespace_id, &task_queue).await {
+        if !already_exists && let Err(e) = self.queue.notify(&namespace_id, &req.task_queue).await {
             warn!(error = %e, "Failed to notify queue");
         }
 
