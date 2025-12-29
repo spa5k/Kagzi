@@ -20,12 +20,19 @@ const CHANNEL_CAPACITY: usize = 64;
 ///
 /// Uses a single shared `PgListener` to receive notifications and broadcasts
 /// them to subscribers via `tokio::sync::broadcast` channels.
+///
+/// ### Important Note
+/// Notifications can be lost during the reconnection window if the database connection
+/// is lost. Callers should implement a fallback polling mechanism.
 #[derive(Clone)]
 pub struct PostgresNotifier {
     pool: PgPool,
     /// Map "namespace:queue" -> broadcast sender
     channels: Arc<DashMap<String, broadcast::Sender<()>>>,
 }
+
+/// Interval between stale channel cleanup checks.
+const CLEANUP_INTERVAL_SECS: u64 = 300; // 5 minutes
 
 impl PostgresNotifier {
     /// Create a new PostgresNotifier.
@@ -50,6 +57,23 @@ impl PostgresNotifier {
                 tx
             })
             .clone()
+    }
+
+    /// Clean up channels that have no active receivers.
+    fn cleanup_stale_channels(&self) {
+        let mut removed = 0;
+        self.channels.retain(|key, tx| {
+            if tx.receiver_count() == 0 {
+                debug!(queue = %key, "Removing stale channel for queue");
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        if removed > 0 {
+            info!(count = removed, "Cleaned up stale notification channels");
+        }
     }
 }
 
@@ -86,6 +110,9 @@ impl QueueNotifier for PostgresNotifier {
 
         info!("Queue listener started on channel 'kagzi_work'");
 
+        let mut cleanup_interval =
+            tokio::time::interval(std::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
+
         loop {
             tokio::select! {
                 biased;
@@ -93,6 +120,10 @@ impl QueueNotifier for PostgresNotifier {
                 _ = shutdown.cancelled() => {
                     info!("Queue listener shutting down");
                     break;
+                }
+
+                _ = cleanup_interval.tick() => {
+                    self.cleanup_stale_channels();
                 }
 
                 result = listener.recv() => {
@@ -109,20 +140,41 @@ impl QueueNotifier for PostgresNotifier {
                         }
                         Err(e) => {
                             error!(error = %e, "Error receiving notification, attempting to reconnect");
-                            // Attempt to reconnect
-                            match PgListener::connect_with(&self.pool).await {
-                                Ok(mut new_listener) => {
-                                    if let Err(e) = new_listener.listen("kagzi_work").await {
-                                        warn!(error = %e, "Failed to re-listen after reconnect");
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        continue;
-                                    }
-                                    listener = new_listener;
-                                    info!("Queue listener reconnected");
+
+                            // Use exponential backoff for reconnection
+                            let mut backoff = backoff::ExponentialBackoff {
+                                initial_interval: std::time::Duration::from_secs(1),
+                                max_interval: std::time::Duration::from_secs(30),
+                                ..Default::default()
+                            };
+
+                            loop {
+                                if shutdown.is_cancelled() {
+                                    return Ok(());
                                 }
-                                Err(e) => {
-                                    warn!(error = %e, "Failed to reconnect listener, retrying in 1s");
-                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                                match PgListener::connect_with(&self.pool).await {
+                                    Ok(mut new_listener) => {
+                                        if let Err(e) = new_listener.listen("kagzi_work").await {
+                                            warn!(error = %e, "Failed to re-listen after reconnect, retrying");
+                                            if let Some(delay) = backoff::backoff::Backoff::next_backoff(&mut backoff) {
+                                                tokio::time::sleep(delay).await;
+                                                continue;
+                                            }
+                                        }
+                                        listener = new_listener;
+                                        info!("Queue listener reconnected");
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, "Failed to reconnect listener, retrying");
+                                        if let Some(delay) = backoff::backoff::Backoff::next_backoff(&mut backoff) {
+                                            tokio::time::sleep(delay).await;
+                                            continue;
+                                        } else {
+                                            return Err(QueueError::Database(e));
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -27,6 +27,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tonic::transport::Server;
+use tracing;
 use uuid::Uuid;
 
 /// Configuration knobs for the test server to keep integration tests fast.
@@ -125,7 +126,9 @@ impl TestHarness {
         let queue_listener = queue.clone();
         let queue_listener_token = shutdown.child_token();
         tokio::spawn(async move {
-            let _ = queue_listener.start(queue_listener_token).await;
+            if let Err(e) = queue_listener.start(queue_listener_token).await {
+                tracing::error!("Queue listener failed to start: {:?}", e);
+            }
         });
 
         // Spawn watchdog tasks.

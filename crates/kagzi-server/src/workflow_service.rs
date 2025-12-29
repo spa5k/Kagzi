@@ -107,11 +107,8 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         };
 
         // Notify queue that work is available
-        if !already_exists {
-            match self.queue.notify(&namespace_id, &task_queue).await {
-                Ok(_) => {}
-                Err(e) => warn!(error = %e, "Failed to notify queue"),
-            }
+        if !already_exists && let Err(e) = self.queue.notify(&namespace_id, &task_queue).await {
+            warn!(error = %e, "Failed to notify queue");
         }
 
         log_grpc_response(

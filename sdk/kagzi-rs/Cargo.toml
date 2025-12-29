@@ -10,8 +10,8 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 futures = "0.3"
 hostname = "0.4.2"
-kagzi-macros = { path = "../kagzi-macros" }
-kagzi-proto = { path = "../kagzi-proto" }
+kagzi-macros = { path = "../../crates/kagzi-macros" }
+kagzi-proto = { path = "../../crates/kagzi-proto" }
 prost = { workspace = true }
 prost-types = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

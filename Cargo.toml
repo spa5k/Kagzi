@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-  "crates/kagzi",
   "crates/kagzi-macros",
   "crates/kagzi-proto",
   "crates/kagzi-queue",
@@ -10,6 +9,7 @@ members = [
   "crates/tests",
   "examples",
   "examples/separate_files",
+  "sdk/kagzi-rs",
 ]
 
 [workspace.package]

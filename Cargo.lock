@@ -1401,6 +1401,7 @@ name = "kagzi-queue"
 version = "0.0.1-alpha.1"
 dependencies = [
  "async-trait",
+ "backoff",
  "dashmap",
  "sqlx",
  "thiserror",
@@ -2970,6 +2971,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic",
+ "tracing",
  "uuid",
 ]
 

@@ -18,7 +18,7 @@ path = "src/trigger.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-kagzi = { path = "../../crates/kagzi" }
+kagzi = { path = "../../sdk/kagzi-rs" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
