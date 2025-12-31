@@ -274,7 +274,7 @@ cargo build --release
 
 ## Observability
 
-Kagzi includes structured logging and tracing support for workflow executions. Full metrics and OpenTelemetry integration are planned for future releases.
+Kagzi includes structured logging for workflow executions. Full metrics and tracing integration are planned for future releases.
 
 ## Roadmap
 

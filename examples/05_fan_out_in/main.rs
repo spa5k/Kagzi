@@ -1,7 +1,7 @@
 use std::env;
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::{Context, Kagzi, Worker};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
@@ -33,16 +33,15 @@ struct NumbersOutput {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("static");
 
     let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
-    let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "fanout".into());
+    let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "fanout".into());
 
     match variant {
-        "static" => static_fanout(&server, &queue).await?,
-        "mapreduce" => dynamic_mapreduce(&server, &queue).await?,
+        "static" => static_fanout(&server, &namespace).await?,
+        "mapreduce" => dynamic_mapreduce(&server, &namespace).await?,
         _ => {
             eprintln!("Usage: cargo run -p kagzi --example 05_fan_out_in -- [static|mapreduce]");
             std::process::exit(1);
@@ -52,61 +51,65 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn static_fanout(server: &str, queue: &str) -> anyhow::Result<()> {
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("profile_aggregate", static_workflow);
-
-    let mut client = common::connect_client(server).await?;
-    let run = client
-        .workflow(
-            "profile_aggregate",
-            queue,
-            StaticInput {
-                user_id: "user-123".into(),
-            },
-        )
+async fn static_fanout(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("profile_aggregate", static_workflow)])
+        .build()
         .await?;
-    tracing::info!(%run, "Started static fan-out workflow");
+
+    let client = Kagzi::connect(server).await?;
+    let run = client
+        .start("profile_aggregate")
+        .namespace(namespace)
+        .input(StaticInput {
+            user_id: "user-123".into(),
+        })
+        .r#await()
+        .await?;
+    println!("Started static fan-out workflow: {}", run.id);
 
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(())
 }
 
-async fn dynamic_mapreduce(server: &str, queue: &str) -> anyhow::Result<()> {
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("square_and_sum", mapreduce_workflow);
-
-    let mut client = common::connect_client(server).await?;
-    let run = client
-        .workflow(
-            "square_and_sum",
-            queue,
-            NumbersInput {
-                values: vec![1, 2, 3, 4],
-            },
-        )
+async fn dynamic_mapreduce(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("square_and_sum", mapreduce_workflow)])
+        .build()
         .await?;
-    tracing::info!(%run, "Started dynamic map-reduce workflow");
+
+    let client = Kagzi::connect(server).await?;
+    let run = client
+        .start("square_and_sum")
+        .namespace(namespace)
+        .input(NumbersInput {
+            values: vec![1, 2, 3, 4],
+        })
+        .r#await()
+        .await?;
+    println!("Started dynamic map-reduce workflow: {}", run.id);
 
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(())
 }
 
-async fn static_workflow(
-    mut ctx: WorkflowContext,
-    input: StaticInput,
-) -> anyhow::Result<StaticOutput> {
+async fn static_workflow(mut ctx: Context, input: StaticInput) -> anyhow::Result<StaticOutput> {
     // Run sequentially to satisfy the single mutable borrow of `ctx`
     let user = ctx
-        .run("fetch_user", fetch_user(input.user_id.clone()))
+        .step("fetch_user")
+        .run(|| fetch_user(input.user_id.clone()))
         .await?;
     let orders = ctx
-        .run("fetch_orders", fetch_orders(input.user_id.clone()))
+        .step("fetch_orders")
+        .run(|| fetch_orders(input.user_id.clone()))
         .await?;
     let payments = ctx
-        .run("fetch_payments", fetch_payments(input.user_id.clone()))
+        .step("fetch_payments")
+        .run(|| fetch_payments(input.user_id.clone()))
         .await?;
 
     Ok(StaticOutput {
@@ -138,13 +141,16 @@ async fn fetch_payments(user_id: String) -> anyhow::Result<Vec<String>> {
 }
 
 async fn mapreduce_workflow(
-    mut ctx: WorkflowContext,
+    mut ctx: Context,
     input: NumbersInput,
 ) -> anyhow::Result<NumbersOutput> {
     // Run steps one by one (ctx is single-mut-borrow), but keep per-item step ids.
     let mut squared = Vec::with_capacity(input.values.len());
     for (idx, value) in input.values.iter().enumerate() {
-        let val = ctx.run(&format!("square-{idx}"), square(*value)).await?;
+        let val = ctx
+            .step(&format!("square-{idx}"))
+            .run(|| square(*value))
+            .await?;
         squared.push(val);
     }
     let sum = squared.iter().copied().sum();

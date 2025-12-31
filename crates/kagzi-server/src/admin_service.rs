@@ -11,16 +11,11 @@ use kagzi_store::{
     WorkflowRepository,
 };
 use tonic::{Request, Response, Status};
-use tracing::{info, instrument};
 use uuid::Uuid;
 
 use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{invalid_argument_error, map_store_error, not_found_error};
 use crate::proto_convert::{step_to_proto, worker_to_proto};
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
-};
 
 fn normalize_worker_status(status: Option<i32>) -> Result<Option<StoreWorkerStatus>, Status> {
     match status {
@@ -48,19 +43,10 @@ impl AdminServiceImpl {
 
 #[tonic::async_trait]
 impl AdminService for AdminServiceImpl {
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        namespace_id = %request.get_ref().namespace_id
-    ))]
     async fn list_workers(
         &self,
         request: Request<ListWorkersRequest>,
     ) -> Result<Response<ListWorkersResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("ListWorkers", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let page = req.page.unwrap_or_default();
 
@@ -135,33 +121,16 @@ impl AdminService for AdminServiceImpl {
             total_count,
         };
 
-        log_grpc_response(
-            "ListWorkers",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(ListWorkersResponse {
             workers: proto_workers,
             page: Some(page_info),
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        worker_id = %request.get_ref().worker_id
-    ))]
     async fn get_worker(
         &self,
         request: Request<GetWorkerRequest>,
     ) -> Result<Response<GetWorkerResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("GetWorker", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let worker_id = Uuid::parse_str(&req.worker_id)
             .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
@@ -176,13 +145,6 @@ impl AdminService for AdminServiceImpl {
         match worker {
             Some(w) => {
                 let proto = worker_to_proto(w);
-                log_grpc_response(
-                    "GetWorker",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    None,
-                );
                 Ok(Response::new(GetWorkerResponse {
                     worker: Some(proto),
                 }))
@@ -191,19 +153,10 @@ impl AdminService for AdminServiceImpl {
         }
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        step_id = %request.get_ref().step_id
-    ))]
     async fn get_step(
         &self,
         request: Request<GetStepRequest>,
     ) -> Result<Response<GetStepResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("GetStep", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let step_id =
             Uuid::parse_str(&req.step_id).map_err(|_| invalid_argument_error("Invalid step_id"))?;
@@ -218,32 +171,16 @@ impl AdminService for AdminServiceImpl {
         match step {
             Some(s) => {
                 let proto = step_to_proto(s)?;
-                log_grpc_response(
-                    "GetStep",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    None,
-                );
                 Ok(Response::new(GetStepResponse { step: Some(proto) }))
             }
             None => Err(not_found_error("Step not found", "step", req.step_id)),
         }
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id
-    ))]
     async fn list_steps(
         &self,
         request: Request<ListStepsRequest>,
     ) -> Result<Response<ListStepsResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("ListSteps", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
@@ -320,52 +257,21 @@ impl AdminService for AdminServiceImpl {
             total_count: 0,
         };
 
-        log_grpc_response(
-            "ListSteps",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(ListStepsResponse {
             steps: attempts,
             page: Some(page_info),
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request)
-    ))]
     async fn health_check(
         &self,
         request: Request<HealthCheckRequest>,
     ) -> Result<Response<HealthCheckResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("HealthCheck", &correlation_id, &trace_id, None);
-
         let _req = request.into_inner();
         let db_status =
             match kagzi_store::HealthRepository::health_check(&self.store.health()).await {
-                Ok(_) => {
-                    info!(
-                        correlation_id = correlation_id,
-                        trace_id = trace_id,
-                        "Database health check passed"
-                    );
-                    ServingStatus::Serving
-                }
-                Err(e) => {
-                    tracing::error!(
-                        correlation_id = correlation_id,
-                        trace_id = trace_id,
-                        error = %e,
-                        "Database health check failed"
-                    );
-                    ServingStatus::NotServing
-                }
+                Ok(_) => ServingStatus::Serving,
+                Err(_) => ServingStatus::NotServing,
             };
 
         let response = HealthCheckResponse {
@@ -386,29 +292,13 @@ impl AdminService for AdminServiceImpl {
             }),
         };
 
-        log_grpc_response(
-            "HealthCheck",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(response))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request)
-    ))]
     async fn get_server_info(
         &self,
         request: Request<GetServerInfoRequest>,
     ) -> Result<Response<GetServerInfoResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("GetServerInfo", &correlation_id, &trace_id, None);
-
         let _req = request.into_inner();
 
         let response = GetServerInfoResponse {
@@ -422,14 +312,6 @@ impl AdminService for AdminServiceImpl {
             ],
             min_sdk_version: "0.1.0".to_string(),
         };
-
-        log_grpc_response(
-            "GetServerInfo",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
 
         Ok(Response::new(response))
     }

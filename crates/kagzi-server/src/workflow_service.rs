@@ -8,7 +8,6 @@ use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowCursor, WorkflowRepository,
 };
 use tonic::{Request, Response, Status};
-use tracing::{info, instrument, warn};
 
 use crate::constants::{DEFAULT_NAMESPACE, DEFAULT_VERSION};
 use crate::helpers::{
@@ -16,10 +15,6 @@ use crate::helpers::{
     precondition_failed_error,
 };
 use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
-};
 
 pub struct WorkflowServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
@@ -34,22 +29,10 @@ impl<Q: QueueNotifier> WorkflowServiceImpl<Q> {
 
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        external_id = %request.get_ref().external_id,
-        task_queue = %request.get_ref().task_queue,
-        workflow_type = %request.get_ref().workflow_type
-    ))]
     async fn start_workflow(
         &self,
         request: Request<StartWorkflowRequest>,
     ) -> Result<Response<StartWorkflowResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("StartWorkflow", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         if req.external_id.is_empty() {
@@ -105,17 +88,9 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             Err(e) => return Err(map_store_error(e)),
         };
 
-        if !already_exists && let Err(e) = self.queue.notify(&namespace_id, &req.task_queue).await {
-            warn!(error = %e, "Failed to notify queue");
+        if !already_exists {
+            let _ = self.queue.notify(&namespace_id, &req.task_queue).await;
         }
-
-        log_grpc_response(
-            "StartWorkflow",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
 
         Ok(Response::new(StartWorkflowResponse {
             run_id: run_id.to_string(),
@@ -123,21 +98,10 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        namespace_id = %request.get_ref().namespace_id
-    ))]
     async fn get_workflow(
         &self,
         request: Request<GetWorkflowRequest>,
     ) -> Result<Response<GetWorkflowResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("GetWorkflow", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
@@ -158,57 +122,26 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         match workflow {
             Some(w) => {
                 let proto = workflow_to_proto(w)?;
-
-                log_grpc_response(
-                    "GetWorkflow",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    None,
-                );
-
                 Ok(Response::new(GetWorkflowResponse {
                     workflow: Some(proto),
                 }))
             }
-            None => {
-                let status = not_found_error(
-                    format!(
-                        "Workflow not found: run_id={}, namespace_id={}",
-                        run_id, namespace_id
-                    ),
-                    "workflow",
-                    run_id.to_string(),
-                );
-
-                log_grpc_response(
-                    "GetWorkflow",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&status),
-                    Some("Workflow not found"),
-                );
-
-                Err(status)
-            }
+            None => Err(not_found_error(
+                format!(
+                    "Workflow not found: run_id={}, namespace_id={}",
+                    run_id, namespace_id
+                ),
+                "workflow",
+                run_id.to_string(),
+            )),
         }
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        namespace_id = %request.get_ref().namespace_id
-    ))]
     async fn list_workflows(
         &self,
         request: Request<ListWorkflowsRequest>,
     ) -> Result<Response<ListWorkflowsResponse>, Status> {
         use base64::Engine;
-
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("ListWorkflows", &correlation_id, &trace_id, None);
 
         let req = request.into_inner();
 
@@ -306,32 +239,13 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             }),
         });
 
-        log_grpc_response(
-            "ListWorkflows",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(response)
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        namespace_id = %request.get_ref().namespace_id
-    ))]
     async fn cancel_workflow(
         &self,
         request: Request<CancelWorkflowRequest>,
     ) -> Result<Response<()>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("CancelWorkflow", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
@@ -351,16 +265,6 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             .map_err(map_store_error)?;
 
         if cancelled {
-            info!("Workflow {} cancelled successfully", run_id);
-
-            log_grpc_response(
-                "CancelWorkflow",
-                &correlation_id,
-                &trace_id,
-                Status::code(&Status::ok("")),
-                None,
-            );
-
             Ok(Response::new(()))
         } else {
             let exists = workflows
@@ -368,31 +272,21 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
                 .await
                 .map_err(map_store_error)?;
 
-            let status = if exists.exists {
-                precondition_failed_error(format!(
+            if exists.exists {
+                Err(precondition_failed_error(format!(
                     "Cannot cancel workflow with status '{:?}'. Only PENDING, RUNNING, or SLEEPING workflows can be cancelled.",
                     exists.status
-                ))
+                )))
             } else {
-                not_found_error(
+                Err(not_found_error(
                     format!(
                         "Workflow not found: run_id={}, namespace_id={}",
                         run_id, namespace_id
                     ),
                     "workflow",
                     run_id.to_string(),
-                )
-            };
-
-            log_grpc_response(
-                "CancelWorkflow",
-                &correlation_id,
-                &trace_id,
-                Status::code(&status),
-                Some("Workflow cancellation failed"),
-            );
-
-            Err(status)
+                ))
+            }
         }
     }
 }

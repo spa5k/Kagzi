@@ -1,44 +1,27 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
-use kagzi::{Client, RetryPolicy, Worker};
+use kagzi::{Kagzi, Retry, Worker};
 use tokio::sync::Mutex;
-use tracing_subscriber::{EnvFilter, fmt};
 use uuid::Uuid;
-
-/// Initialize tracing with env filter, defaulting to `info`.
-pub fn init_tracing() -> Result<()> {
-    fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with_target(false)
-        .with_level(true)
-        .init();
-    Ok(())
-}
 
 /// Connect a Kagzi client to the given server.
 #[allow(dead_code)]
-pub async fn connect_client(server: &str) -> Result<Client> {
-    Client::connect(server).await
+pub async fn connect_client(server: &str) -> Result<Kagzi> {
+    Kagzi::connect(server).await
 }
 
-pub fn default_retry() -> RetryPolicy {
-    RetryPolicy {
-        maximum_attempts: Some(3),
-        initial_interval: Some(Duration::from_millis(300)),
-        backoff_coefficient: Some(2.0),
-        maximum_interval: Some(Duration::from_secs(5)),
-        non_retryable_errors: vec![],
-    }
+pub fn default_retry() -> Retry {
+    Retry::exponential(3).initial("300ms").max("5s")
 }
 
 /// Build a worker with sensible defaults (retry/backoff). Caller registers workflows.
 #[allow(dead_code)]
-pub async fn build_worker(server: &str, queue: &str) -> Result<Worker> {
-    Worker::builder(server, queue)
-        .default_step_retry(default_retry())
+pub async fn build_worker(server: &str, namespace: &str) -> Result<Worker> {
+    Worker::new(server)
+        .namespace(namespace)
+        .retry(default_retry())
         .build()
         .await
 }

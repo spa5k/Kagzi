@@ -2,7 +2,7 @@ use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::{Context, Kagzi, Worker};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
@@ -21,16 +21,15 @@ struct JobStatus {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("poll");
 
     let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
-    let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "long-running".into());
+    let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "long-running".into());
 
     match variant {
-        "poll" => run_polling(&server, &queue).await?,
-        "timeout" => run_timeout(&server, &queue).await?,
+        "poll" => run_polling(&server, &namespace).await?,
+        "timeout" => run_timeout(&server, &namespace).await?,
         _ => {
             eprintln!("Usage: cargo run -p kagzi --example 06_long_running -- [poll|timeout]");
             std::process::exit(1);
@@ -40,79 +39,88 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_polling(server: &str, queue: &str) -> anyhow::Result<()> {
+async fn run_polling(server: &str, namespace: &str) -> anyhow::Result<()> {
     FAST_COUNTER.store(0, Ordering::SeqCst);
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("poll_job", polling_workflow);
-
-    let mut client = common::connect_client(server).await?;
-    let run = client
-        .workflow(
-            "poll_job",
-            queue,
-            JobInput {
-                job_id: "job-42".into(),
-            },
-        )
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("poll_job", polling_workflow)])
+        .build()
         .await?;
 
-    tracing::info!(%run, "Started polling workflow");
+    let client = Kagzi::connect(server).await?;
+    let run = client
+        .start("poll_job")
+        .namespace(namespace)
+        .input(JobInput {
+            job_id: "job-42".into(),
+        })
+        .r#await()
+        .await?;
+
+    println!("Started polling workflow: {}", run.id);
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(20)).await;
     Ok(())
 }
 
-async fn run_timeout(server: &str, queue: &str) -> anyhow::Result<()> {
+async fn run_timeout(server: &str, namespace: &str) -> anyhow::Result<()> {
     FAST_COUNTER.store(0, Ordering::SeqCst);
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("poll_with_timeout", timeout_workflow);
-
-    let mut client = common::connect_client(server).await?;
-    let run = client
-        .workflow(
-            "poll_with_timeout",
-            queue,
-            JobInput {
-                job_id: "job-timeout".into(),
-            },
-        )
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("poll_with_timeout", timeout_workflow)])
+        .build()
         .await?;
 
-    tracing::info!(%run, "Started timeout workflow (expected to fail after limit)");
+    let client = Kagzi::connect(server).await?;
+    let run = client
+        .start("poll_with_timeout")
+        .namespace(namespace)
+        .input(JobInput {
+            job_id: "job-timeout".into(),
+        })
+        .r#await()
+        .await?;
+
+    println!(
+        "Started timeout workflow (expected to fail after limit): {}",
+        run.id
+    );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(20)).await;
     Ok(())
 }
 
-async fn polling_workflow(mut ctx: WorkflowContext, input: JobInput) -> anyhow::Result<JobStatus> {
+async fn polling_workflow(mut ctx: Context, input: JobInput) -> anyhow::Result<JobStatus> {
     // Simulate external job creation
-    tracing::info!(job_id = %input.job_id, "Trigger external job");
+    println!("Trigger external job: job_id={}", input.job_id);
 
     let mut attempts = 0;
     loop {
         attempts += 1;
         let step_name = format!("check-status-{attempts}");
         let status = ctx
-            .run(&step_name, check_status(input.job_id.clone(), false))
+            .step(&step_name)
+            .run(|| check_status(input.job_id.clone(), false))
             .await?;
 
         if status.state == "complete" {
-            tracing::info!(job_id = %input.job_id, "Job finished");
+            println!("Job finished: job_id={}", input.job_id);
             return Ok(status);
         }
 
-        tracing::info!(job_id = %input.job_id, "Job pending -> sleep 5s");
-        ctx.sleep(Duration::from_secs(5)).await?;
+        println!("Job pending -> sleep 5s: job_id={}", input.job_id);
+        ctx.sleep("poll-wait", "5s").await?;
     }
 }
 
-async fn timeout_workflow(mut ctx: WorkflowContext, input: JobInput) -> anyhow::Result<JobStatus> {
+async fn timeout_workflow(mut ctx: Context, input: JobInput) -> anyhow::Result<JobStatus> {
     let mut attempts = 0;
     loop {
         attempts += 1;
         let step_name = format!("check-status-timeout-{attempts}");
         let status = ctx
-            .run(&step_name, check_status(input.job_id.clone(), true))
+            .step(&step_name)
+            .run(|| check_status(input.job_id.clone(), true))
             .await?;
 
         if status.state == "complete" {
@@ -123,7 +131,7 @@ async fn timeout_workflow(mut ctx: WorkflowContext, input: JobInput) -> anyhow::
             anyhow::bail!("job {} did not complete within 3 polls", input.job_id);
         }
 
-        ctx.sleep(Duration::from_secs(3)).await?;
+        ctx.sleep("timeout-wait", "3s").await?;
     }
 }
 
@@ -132,7 +140,7 @@ static FAST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 async fn check_status(job_id: String, slow: bool) -> anyhow::Result<JobStatus> {
     if slow {
         // Simulate a job that never completes quickly
-        tracing::info!(job_id = %job_id, "job still processing");
+        println!("job still processing: job_id={}", job_id);
         sleep(Duration::from_secs(2)).await;
         Ok(JobStatus {
             state: "pending".into(),

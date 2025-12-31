@@ -1,7 +1,6 @@
 use std::env;
-use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::{Context, Kagzi, Worker};
 use serde::{Deserialize, Serialize};
 
 #[path = "../common.rs"]
@@ -19,17 +18,16 @@ struct SleepInput {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("cron");
 
     let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
-    let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "scheduling".into());
+    let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "scheduling".into());
 
     match variant {
-        "cron" => cron_demo(&server, &queue).await?,
-        "sleep" => durable_sleep_demo(&server, &queue).await?,
-        "catchup" => catchup_demo(&server, &queue).await?,
+        "cron" => cron_demo(&server, &namespace).await?,
+        "sleep" => durable_sleep_demo(&server, &namespace).await?,
+        "catchup" => catchup_demo(&server, &namespace).await?,
         _ => {
             eprintln!("Usage: cargo run -p kagzi --example 03_scheduling -- [cron|sleep|catchup]");
             std::process::exit(1);
@@ -39,83 +37,86 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cron_demo(server: &str, queue: &str) -> anyhow::Result<()> {
-    let mut client = common::connect_client(server).await?;
+async fn cron_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let client = Kagzi::connect(server).await?;
     let schedule = client
-        .workflow_schedule(
-            "cleanup_workflow",
-            queue,
-            "*/1 * * * * *", // every second for demo
-            CleanupInput {
-                table: "sessions".into(),
-            },
-        )
-        .version("v1")
-        .max_catchup(3)
+        .schedule("cleanup_workflow")
+        .namespace(namespace)
+        .workflow("cleanup_workflow")
+        .cron("*/1 * * * * *") // every second for demo
+        .input(CleanupInput {
+            table: "sessions".into(),
+        })
+        .r#await()
         .await?;
 
-    tracing::info!(schedule_id = %schedule.schedule_id, "Created schedule");
+    println!("Created schedule: schedule_id={}", schedule.schedule_id);
 
     let fetched = client
-        .get_workflow_schedule(&schedule.schedule_id, Some("default"))
+        .get_workflow_schedule(&schedule.schedule_id, Some(namespace))
         .await?;
-    tracing::info!(?fetched, "Fetched schedule");
+    println!("Fetched schedule: {:?}", fetched);
 
     client
-        .delete_workflow_schedule(&schedule.schedule_id, Some("default"))
+        .delete_workflow_schedule(&schedule.schedule_id, Some(namespace))
         .await?;
-    tracing::info!("Deleted schedule");
+    println!("Deleted schedule");
 
     Ok(())
 }
 
-async fn durable_sleep_demo(server: &str, queue: &str) -> anyhow::Result<()> {
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("sleep_demo", sleep_workflow);
-    let mut client = common::connect_client(server).await?;
-
-    let run_id = client
-        .workflow(
-            "sleep_demo",
-            queue,
-            SleepInput {
-                step: "wait-and-resume".into(),
-            },
-        )
+async fn durable_sleep_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("sleep_demo", sleep_workflow)])
+        .build()
         .await?;
 
-    tracing::info!(%run_id, "Started sleep demo; stop worker during sleep to see resume");
+    let client = Kagzi::connect(server).await?;
+
+    let run = client
+        .start("sleep_demo")
+        .namespace(namespace)
+        .input(SleepInput {
+            step: "wait-and-resume".into(),
+        })
+        .r#await()
+        .await?;
+
+    println!(
+        "Started sleep demo; stop worker during sleep to see resume: {}",
+        run.id
+    );
     tokio::spawn(async move { worker.run().await });
-    tokio::time::sleep(Duration::from_secs(25)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(25)).await;
     Ok(())
 }
 
-async fn catchup_demo(server: &str, queue: &str) -> anyhow::Result<()> {
-    let mut client = common::connect_client(server).await?;
+async fn catchup_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let client = Kagzi::connect(server).await?;
     let schedule = client
-        .workflow_schedule(
-            "catchup_workflow",
-            queue,
-            "*/5 * * * * *", // every 5 seconds
-            CleanupInput {
-                table: "audit_logs".into(),
-            },
-        )
-        .max_catchup(10)
-        .enabled(true)
+        .schedule("catchup_workflow")
+        .namespace(namespace)
+        .workflow("catchup_workflow")
+        .cron("*/5 * * * * *") // every 5 seconds
+        .input(CleanupInput {
+            table: "audit_logs".into(),
+        })
+        .catchup(10)
+        .r#await()
         .await?;
 
-    tracing::info!(schedule_id = %schedule.schedule_id, "Created catchup schedule; pause server to see replay");
+    println!(
+        "Created catchup schedule; pause server to see replay: schedule_id={}",
+        schedule.schedule_id
+    );
     // Instruct user to stop scheduler and restart; no automated pause here.
     Ok(())
 }
 
-async fn sleep_workflow(
-    mut ctx: WorkflowContext,
-    input: SleepInput,
-) -> anyhow::Result<serde_json::Value> {
-    tracing::info!(step = %input.step, "Step A started");
-    ctx.sleep(Duration::from_secs(15)).await?;
-    tracing::info!("Step B resumed after durable sleep");
+async fn sleep_workflow(mut ctx: Context, input: SleepInput) -> anyhow::Result<serde_json::Value> {
+    println!("Step A started: step={}", input.step);
+    ctx.sleep("wait-15s", "15s").await?;
+    println!("Step B resumed after durable sleep");
     Ok(serde_json::json!({ "status": "resumed", "step": input.step }))
 }

@@ -12,13 +12,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tonic::Request;
 use tonic::transport::Channel;
-use tracing::{error, instrument};
+use tracing::{error, warn};
 
 use crate::errors::{KagziError, WorkflowPaused, map_grpc_error};
 use crate::retry::RetryPolicy;
-use crate::tracing_utils::{
-    add_tracing_metadata, get_or_generate_correlation_id, get_or_generate_trace_id,
-};
 
 pub struct WorkflowContext {
     pub(crate) client: WorkerServiceClient<Channel>,
@@ -28,18 +25,12 @@ pub struct WorkflowContext {
 }
 
 impl WorkflowContext {
-    #[instrument(skip(self, fut), fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        run_id = %self.run_id,
-        step_id = %step_id
-    ))]
     pub async fn run<R, Fut>(&mut self, step_id: &str, fut: Fut) -> anyhow::Result<R>
     where
         R: Serialize + DeserializeOwned + Send + 'static,
         Fut: Future<Output = anyhow::Result<R>> + Send,
     {
-        let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
+        let begin_request = Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_name: step_id.to_string(),
             kind: StepKind::Function as i32,
@@ -48,7 +39,7 @@ impl WorkflowContext {
                 metadata: HashMap::new(),
             }),
             retry_policy: self.default_step_retry.clone().map(Into::into),
-        }));
+        });
 
         let begin_resp = self
             .client
@@ -80,15 +71,14 @@ impl WorkflowContext {
 
                 let mut backoff = Duration::from_secs(1);
                 loop {
-                    let complete_request =
-                        add_tracing_metadata(Request::new(CompleteStepRequest {
-                            run_id: self.run_id.clone(),
-                            step_id: step_id_resp.clone(),
-                            output: Some(ProtoPayload {
-                                data: output_bytes.clone(),
-                                metadata: HashMap::new(),
-                            }),
-                        }));
+                    let complete_request = Request::new(CompleteStepRequest {
+                        run_id: self.run_id.clone(),
+                        step_id: step_id_resp.clone(),
+                        output: Some(ProtoPayload {
+                            data: output_bytes.clone(),
+                            metadata: HashMap::new(),
+                        }),
+                    });
 
                     match self.client.complete_step(complete_request).await {
                         Ok(_) => break,
@@ -99,7 +89,7 @@ impl WorkflowContext {
                         }
 
                         Err(e) => {
-                            tracing::warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
+                            warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
                             tokio::time::sleep(backoff).await;
                             backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
                         }
@@ -115,11 +105,11 @@ impl WorkflowContext {
                     .cloned()
                     .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
 
-                let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
+                let fail_request = Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
                     step_id: step_id_resp,
                     error: Some(kagzi_err.to_detail()),
-                }));
+                });
 
                 let fail_resp = self
                     .client
@@ -137,12 +127,6 @@ impl WorkflowContext {
         }
     }
 
-    #[instrument(skip(self, input, fut), fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        run_id = %self.run_id,
-        step_id = %step_id
-    ))]
     pub async fn run_with_input<I, R, Fut>(
         &mut self,
         step_id: &str,
@@ -173,7 +157,7 @@ impl WorkflowContext {
         let effective_retry = retry_policy.or_else(|| self.default_step_retry.clone());
 
         let input_bytes = serde_json::to_vec(input)?;
-        let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
+        let begin_request = Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_name: step_id.to_string(),
             kind: StepKind::Function as i32,
@@ -182,7 +166,7 @@ impl WorkflowContext {
                 metadata: HashMap::new(),
             }),
             retry_policy: effective_retry.clone().map(Into::into),
-        }));
+        });
 
         let begin_resp = self
             .client
@@ -216,15 +200,14 @@ impl WorkflowContext {
                 // If the user function succeeded, we MUST persist that success to the DB
                 let mut backoff = Duration::from_secs(1);
                 loop {
-                    let complete_request =
-                        add_tracing_metadata(Request::new(CompleteStepRequest {
-                            run_id: self.run_id.clone(),
-                            step_id: step_id_resp.clone(),
-                            output: Some(ProtoPayload {
-                                data: output_bytes.clone(),
-                                metadata: HashMap::new(),
-                            }),
-                        }));
+                    let complete_request = Request::new(CompleteStepRequest {
+                        run_id: self.run_id.clone(),
+                        step_id: step_id_resp.clone(),
+                        output: Some(ProtoPayload {
+                            data: output_bytes.clone(),
+                            metadata: HashMap::new(),
+                        }),
+                    });
 
                     match self.client.complete_step(complete_request).await {
                         Ok(_) => break, // Success!
@@ -237,7 +220,7 @@ impl WorkflowContext {
 
                         Err(e) => {
                             // Transient error - retry with exponential backoff
-                            tracing::warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
+                            warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
                             tokio::time::sleep(backoff).await;
                             backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
                         }
@@ -254,11 +237,11 @@ impl WorkflowContext {
                     .cloned()
                     .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
 
-                let fail_request = add_tracing_metadata(Request::new(FailStepRequest {
+                let fail_request = Request::new(FailStepRequest {
                     run_id: self.run_id.clone(),
                     step_id: step_id_resp,
                     error: Some(kagzi_err.to_detail()),
-                }));
+                });
 
                 let fail_resp = self
                     .client
@@ -276,17 +259,11 @@ impl WorkflowContext {
         }
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        run_id = %self.run_id,
-        duration_seconds = duration.as_secs()
-    ))]
     pub async fn sleep(&mut self, duration: Duration) -> anyhow::Result<()> {
         let step_id = format!("__sleep_{}", self.sleep_counter);
         self.sleep_counter += 1;
 
-        let begin_request = add_tracing_metadata(Request::new(BeginStepRequest {
+        let begin_request = Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_name: step_id.clone(),
             kind: StepKind::Sleep as i32,
@@ -295,7 +272,7 @@ impl WorkflowContext {
                 metadata: HashMap::new(),
             }),
             retry_policy: None,
-        }));
+        });
 
         let begin_resp = self
             .client
@@ -314,14 +291,14 @@ impl WorkflowContext {
             return Ok(());
         }
 
-        let sleep_request = add_tracing_metadata(Request::new(SleepRequest {
+        let sleep_request = Request::new(SleepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id_resp.clone(),
             duration: Some(ProstDuration {
                 seconds: duration.as_secs() as i64,
                 nanos: 0,
             }),
-        }));
+        });
 
         self.client
             .sleep(sleep_request)

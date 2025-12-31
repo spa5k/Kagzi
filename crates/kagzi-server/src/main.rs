@@ -6,20 +6,17 @@ use kagzi_queue::QueueNotifier;
 use kagzi_server::config::Settings;
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    run_scheduler, tracing_utils, watchdog,
+    run_scheduler, watchdog,
 };
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
-use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_utils::init_tracing("kagzi-server")?;
-
     let settings = Settings::new().map_err(|e| {
-        tracing::error!("Failed to load configuration: {:?}", e);
+        eprintln!("Failed to load configuration: {:?}", e);
         e
     })?;
 
@@ -28,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&settings.database_url)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to connect to database: {:?}", e);
+            eprintln!("Failed to connect to database: {:?}", e);
             e
         })?;
 
@@ -57,10 +54,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let queue_listener_token = shutdown_token.child_token();
     let _queue_listener_handle = tokio::spawn(async move {
         if let Err(e) = queue_listener.start(queue_listener_token).await {
-            tracing::error!("Queue listener failed: {:?}", e);
-            tracing::error!(
-                "Server is running in degraded mode - queue notifications will not work"
-            );
+            eprintln!("Queue listener failed: {:?}", e);
+            eprintln!("Server is running in degraded mode - queue notifications will not work");
         }
     });
 
@@ -89,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admin_service = AdminServiceImpl::new(store.clone());
     let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
-    info!("Kagzi Server listening on {}", addr);
+    println!("Kagzi Server listening on {}", addr);
 
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
@@ -109,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::select! {
         res = server => res?,
         _ = tokio::signal::ctrl_c() => {
-            info!("Received shutdown signal");
+            println!("Received shutdown signal");
             shutdown_token.cancel();
         }
     }
@@ -124,7 +119,7 @@ async fn run_migrations(
         .run(pool)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to run migrations: {:?}", e);
+            eprintln!("Failed to run migrations: {:?}", e);
             e
         })?;
 

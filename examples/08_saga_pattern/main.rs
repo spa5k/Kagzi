@@ -1,7 +1,7 @@
 use std::env;
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::{Context, Kagzi, Worker};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
@@ -25,16 +25,15 @@ struct TripResult {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("saga");
 
     let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
-    let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "saga".into());
+    let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "saga".into());
 
     match variant {
-        "saga" => run_saga(&server, &queue, false, true).await?,
-        "partial" => run_saga(&server, &queue, true, false).await?,
+        "saga" => run_saga(&server, &namespace, false, true).await?,
+        "partial" => run_saga(&server, &namespace, true, false).await?,
         _ => {
             eprintln!("Usage: cargo run -p examples --example 08_saga_pattern -- [saga|partial]");
             std::process::exit(1);
@@ -46,48 +45,49 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_saga(
     server: &str,
-    queue: &str,
+    namespace: &str,
     fail_hotel: bool,
     fail_car: bool,
 ) -> anyhow::Result<()> {
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("trip_booking", trip_workflow);
-
-    let mut client = common::connect_client(server).await?;
-    let run = client
-        .workflow(
-            "trip_booking",
-            queue,
-            TripRequest {
-                destination: "SFO".into(),
-                fail_car,
-                fail_hotel,
-            },
-        )
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("trip_booking", trip_workflow)])
+        .build()
         .await?;
 
-    tracing::info!(%run, fail_car, fail_hotel, "Started saga workflow");
+    let client = Kagzi::connect(server).await?;
+    let run = client
+        .start("trip_booking")
+        .namespace(namespace)
+        .input(TripRequest {
+            destination: "SFO".into(),
+            fail_car,
+            fail_hotel,
+        })
+        .r#await()
+        .await?;
+
+    println!(
+        "Started saga workflow: run={}, fail_car={}, fail_hotel={}",
+        run.id, fail_car, fail_hotel
+    );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
 }
 
-async fn trip_workflow(
-    mut ctx: WorkflowContext,
-    request: TripRequest,
-) -> anyhow::Result<TripResult> {
+async fn trip_workflow(mut ctx: Context, request: TripRequest) -> anyhow::Result<TripResult> {
     // Bookings
     let flight = ctx
-        .run_with_input("book_flight", &request, book_flight(request.clone()))
+        .step("book_flight")
+        .run(|| book_flight(request.clone()))
         .await?;
     let hotel = ctx
-        .run_with_input("book_hotel", &request, book_hotel(request.clone()))
+        .step("book_hotel")
+        .run(|| book_hotel(request.clone()))
         .await?;
 
-    match ctx
-        .run_with_input("book_car", &request, book_car(request.clone()))
-        .await
-    {
+    match ctx.step("book_car").run(|| book_car(request.clone())).await {
         Ok(car) => Ok(TripResult {
             flight_id: Some(flight),
             hotel_id: Some(hotel),
@@ -95,10 +95,12 @@ async fn trip_workflow(
             status: "confirmed".into(),
         }),
         Err(err) => {
-            tracing::warn!(error = ?err, "Car booking failed, running compensation");
-            ctx.run_with_input("cancel_hotel", &hotel, cancel_hotel(hotel.clone()))
+            println!("Car booking failed, running compensation: error={:?}", err);
+            ctx.step("cancel_hotel")
+                .run(|| cancel_hotel(hotel.clone()))
                 .await?;
-            ctx.run_with_input("cancel_flight", &flight, cancel_flight(flight.clone()))
+            ctx.step("cancel_flight")
+                .run(|| cancel_flight(flight.clone()))
                 .await?;
             Ok(TripResult {
                 flight_id: Some(flight),
@@ -133,12 +135,12 @@ async fn book_car(req: TripRequest) -> anyhow::Result<String> {
 
 async fn cancel_hotel(hotel_id: String) -> anyhow::Result<String> {
     sleep(Duration::from_millis(150)).await;
-    tracing::info!(%hotel_id, "cancelled hotel");
+    println!("cancelled hotel: {}", hotel_id);
     Ok(format!("cancelled-{hotel_id}"))
 }
 
 async fn cancel_flight(flight_id: String) -> anyhow::Result<String> {
     sleep(Duration::from_millis(150)).await;
-    tracing::info!(%flight_id, "cancelled flight");
+    println!("cancelled flight: {}", flight_id);
     Ok(format!("cancelled-{flight_id}"))
 }

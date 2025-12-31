@@ -10,7 +10,7 @@ Kagzi is a durable workflow orchestration system that guarantees at-least-once e
 - Start workflows programmatically or on schedules (cron expressions)
 - Register workers to poll and execute workflows
 - Configure retry policies and concurrency limits
-- Leverage built-in distributed tracing and error handling
+- Leverage built-in error handling
 
 ## Features
 
@@ -19,7 +19,6 @@ Kagzi is a durable workflow orchestration system that guarantees at-least-once e
 - **Retry policies**: Configurable exponential backoff with non-retryable error types
 - **Concurrency control**: Per-queue and per-workflow-type limits
 - **Scheduled workflows**: Cron-based workflow execution with catchup support
-- **Distributed tracing**: Automatic correlation and trace ID propagation
 - **Graceful shutdown**: Draining of active workflows and clean deregistration
 - **Rich error handling**: Structured errors with retry hints and metadata
 
@@ -63,8 +62,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
-tracing = "0.1"
-tracing-subscriber = "0.3"
 ```
 
 ## Quick Start
@@ -139,9 +136,6 @@ use kagzi::Client;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-
     // Connect to Kagzi server
     let mut client = Client::connect("http://localhost:50051").await?;
 
@@ -173,8 +167,6 @@ use kagzi::{Worker, WorkerBuilder};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
-
     // Build and register worker
     let mut worker = WorkerBuilder::new("http://localhost:50051", "orders")
         .namespace("production")
@@ -599,22 +591,6 @@ The client library uses standard Rust environment variables for gRPC:
 - `KAGZI_SERVER_ADDRESS`: Default server address
 - `RUST_LOG`: Logging level (e.g., `info`, `debug`, `kagzi=trace`)
 
-### Tracing Setup
-
-```rust
-use tracing_subscriber::{EnvFilter, fmt};
-
-fn init_tracing() {
-    let filter = EnvFilter::from_default_env()
-        .add_directive(tracing::Level::INFO.into());
-
-    fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
-}
-```
-
 ## Error Handling
 
 ### Best Practices
@@ -718,41 +694,6 @@ let run_id = client
         non_retryable_errors: vec![],
     })
     .await?;
-```
-
-## Tracing
-
-Kagzi automatically propagates correlation and trace IDs through the workflow execution. These are available in structured logs.
-
-### Viewing Traced Workflows
-
-Logs include correlation and trace IDs:
-
-```
-2025-12-28T10:30:45.123Z INFO process_order:run correlation_id=0190abc1-2345-6789-abcd-ef0123456789 trace_id=0190def2-3456-7890-bcde-f01234567890 run_id=run-123 step_id=validate-order Executing step
-```
-
-### Custom Tracing
-
-You can add custom spans and events:
-
-```rust
-use tracing::{info_span, instrument};
-
-async fn my_workflow(
-    mut ctx: WorkflowContext,
-    input: MyInput,
-) -> anyhow::Result<MyOutput> {
-    let span = info_span!("my_workflow", order_id = %input.order_id);
-    let _enter = span.enter();
-
-    let result = ctx.run("process", async move {
-        info!("Processing order");
-        Ok(MyOutput {})
-    }).await?;
-
-    Ok(result)
-}
 ```
 
 ## Best Practices

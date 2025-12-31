@@ -23,6 +23,10 @@ db-reset: db-down
     sleep 2
     just migrate
 
+# Dump database schema to schema.sql
+schema-dump:
+    docker-compose exec -T kagzi-db pg_dump -U postgres --schema-only --no-owner --no-privileges postgres > schema.sql
+
 # --- Migrations ---
 
 # Prepare SQLx offline data (requires reachable DATABASE_URL)

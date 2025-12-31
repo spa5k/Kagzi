@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::Context;
 
 use crate::types::{SendWelcomeEmailInput, User, WorkflowOutput};
 
@@ -31,7 +31,7 @@ pub async fn mark_welcome_email_sent(user_id: &str) -> anyhow::Result<()> {
 
 // The main workflow function
 pub async fn send_welcome_email(
-    mut ctx: WorkflowContext,
+    mut ctx: Context,
     input: SendWelcomeEmailInput,
 ) -> anyhow::Result<WorkflowOutput> {
     println!(
@@ -41,24 +41,21 @@ pub async fn send_welcome_email(
 
     // Step 1: Fetch user (memoized - runs once)
     let user = ctx
-        .run("fetch-user", async {
-            fetch_user_from_db(&input.user_id).await
-        })
+        .step("fetch-user")
+        .run(|| fetch_user_from_db(&input.user_id))
         .await?;
 
     println!("👤 Fetched user: {}", user.name);
 
     // Step 2: Send email (runs only if first step succeeded)
-    ctx.run("send-email", async {
-        send_welcome_email_to_user(&user.email).await
-    })
-    .await?;
+    ctx.step("send-email")
+        .run(|| send_welcome_email_to_user(&user.email))
+        .await?;
 
     // Step 3: Update user record
-    ctx.run("mark-welcome-sent", async {
-        mark_welcome_email_sent(&input.user_id).await
-    })
-    .await?;
+    ctx.step("mark-welcome-sent")
+        .run(|| mark_welcome_email_sent(&input.user_id))
+        .await?;
 
     println!(
         "✅ Workflow completed successfully for user: {}",

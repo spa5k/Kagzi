@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kagzi::Client;
+use kagzi::Kagzi;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -23,7 +23,7 @@ async fn create_user(name: String, email: String) -> anyhow::Result<User> {
 }
 
 async fn welcome_user_route(user_id: String, user_email: String) -> anyhow::Result<()> {
-    let mut client = Client::connect("http://localhost:50051").await?;
+    let client = Kagzi::connect("http://localhost:50051").await?;
 
     println!("Triggering welcome email workflow for user: {}", user_id);
 
@@ -31,19 +31,17 @@ async fn welcome_user_route(user_id: String, user_email: String) -> anyhow::Resu
     use separate_files_example::types::SendWelcomeEmailInput;
 
     // Run workflow asynchronously
-    let run_id = client
-        .workflow(
-            "send-welcome-email",
-            "email",
-            SendWelcomeEmailInput {
-                user_id: user_id.clone(),
-                user_email,
-            },
-        )
-        .retries(3)
+    let run = client
+        .start("send-welcome-email")
+        .namespace("email")
+        .input(SendWelcomeEmailInput {
+            user_id: user_id.clone(),
+            user_email,
+        })
+        .r#await()
         .await?;
 
-    println!("Started welcome email workflow: {}", run_id);
+    println!("Started welcome email workflow: {}", run.id);
 
     // Wait a bit to see the workflow complete
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -53,11 +51,6 @@ async fn welcome_user_route(user_id: String, user_email: String) -> anyhow::Resu
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
-
     println!("🚀 Kagzi Example - Separate Files");
     println!("================================");
 
