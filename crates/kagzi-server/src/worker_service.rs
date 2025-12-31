@@ -19,7 +19,6 @@ use kagzi_store::{
 };
 use rand::Rng;
 use tonic::{Request, Response, Status};
-use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::config::WorkerSettings;
@@ -29,10 +28,6 @@ use crate::helpers::{
     payload_to_optional_bytes, precondition_failed_error,
 };
 use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
-};
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
@@ -73,12 +68,6 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
 
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        task_queue = %request.get_ref().task_queue,
-        workflow_types = ?request.get_ref().workflow_types
-    ))]
     async fn register(
         &self,
         request: Request<RegisterRequest>,
@@ -134,19 +123,12 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        info!(worker_id = %worker_id, "Worker registered");
-
         Ok(Response::new(RegisterResponse {
             worker_id: worker_id.to_string(),
             heartbeat_interval_secs: self.worker_settings.heartbeat_interval_secs as i32,
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        worker_id = %request.get_ref().worker_id
-    ))]
     async fn heartbeat(
         &self,
         request: Request<HeartbeatRequest>,
@@ -182,9 +164,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        if extended > 0 {
-            debug!(worker_id = %worker_id, extended = extended, "Extended workflow locks");
-        }
+        let _ = extended; // We don't need to log this
 
         let worker = self
             .store
@@ -203,11 +183,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        worker_id = %request.get_ref().worker_id
-    ))]
     async fn deregister(
         &self,
         request: Request<DeregisterRequest>,
@@ -232,34 +207,21 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 .start_drain(worker_id, &namespace_id)
                 .await
                 .map_err(map_store_error)?;
-            info!(worker_id = %worker_id, "Worker draining");
         } else {
             self.store
                 .workers()
                 .deregister(worker_id, &namespace_id)
                 .await
                 .map_err(map_store_error)?;
-            info!(worker_id = %worker_id, "Worker deregistered");
         }
 
         Ok(Response::new(()))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        task_queue = %request.get_ref().task_queue,
-        worker_id = %request.get_ref().worker_id
-    ))]
     async fn poll_task(
         &self,
         request: Request<PollTaskRequest>,
     ) -> Result<Response<PollTaskResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("PollTask", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let worker_id = Uuid::parse_str(&req.worker_id)
@@ -334,40 +296,15 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 .map_err(map_store_error)?;
 
             if let Some(work_item) = work_item {
-                if let Err(e) = self.complete_pending_sleep_steps(work_item.run_id).await {
-                    warn!(
-                        run_id = %work_item.run_id,
-                        error = ?e,
-                        "Failed to complete pending sleep steps"
-                    );
-                }
+                let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 
-                tracing::info!(
-                    worker_id = %worker_id,
-                    run_id = %work_item.run_id,
-                    workflow_type = %work_item.workflow_type,
-                    task_queue = %req.task_queue,
-                    "Worker claimed workflow"
-                );
-
-                if let Err(e) = self
+                let _ = self
                     .store
                     .workers()
                     .update_active_count(worker_id, &worker.namespace_id, 1)
-                    .await
-                {
-                    warn!(worker_id = %worker_id, error = ?e, "Failed to update active count");
-                }
+                    .await;
 
                 let payload = bytes_to_payload(Some(work_item.input));
-
-                log_grpc_response(
-                    "PollTask",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    None,
-                );
 
                 return Ok(Response::new(PollTaskResponse {
                     run_id: work_item.run_id.to_string(),
@@ -378,14 +315,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
-                log_grpc_response(
-                    "PollTask",
-                    &correlation_id,
-                    &trace_id,
-                    Status::code(&Status::ok("")),
-                    Some("No work available - timeout"),
-                );
-
                 return Ok(Response::new(PollTaskResponse {
                     run_id: String::new(),
                     workflow_type: String::new(),
@@ -414,21 +343,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        step_name = %request.get_ref().step_name
-    ))]
     async fn begin_step(
         &self,
         request: Request<BeginStepRequest>,
     ) -> Result<Response<BeginStepResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("BeginStep", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let run_id =
@@ -495,11 +413,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .map_err(map_store_error)?;
 
         if step_kind == kagzi_store::StepKind::Sleep && !result.should_execute {
-            tracing::info!(
-                run_id = %run_id,
-                step_name = %req.step_name,
-                "Completing sleep step lazily"
-            );
             self.store
                 .steps()
                 .complete(run_id, &req.step_name, vec![])
@@ -509,14 +422,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         let cached_output = bytes_to_payload(result.cached_output);
 
-        log_grpc_response(
-            "BeginStep",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(BeginStepResponse {
             step_id: req.step_name,
             should_execute: result.should_execute,
@@ -524,21 +429,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        step_id = %request.get_ref().step_id
-    ))]
     async fn complete_step(
         &self,
         request: Request<CompleteStepRequest>,
     ) -> Result<Response<CompleteStepResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("CompleteStep", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let run_id =
@@ -584,32 +478,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .transpose()?
             .ok_or_else(|| not_found_error("Step not found", "step", req.step_id.clone()))?;
 
-        log_grpc_response(
-            "CompleteStep",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(CompleteStepResponse { step: Some(step) }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        step_id = %request.get_ref().step_id
-    ))]
     async fn fail_step(
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<FailStepResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("FailStep", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let run_id =
@@ -664,34 +539,16 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 .map_err(map_store_error)?;
         }
 
-        log_grpc_response(
-            "FailStep",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(FailStepResponse {
             scheduled_retry: result.scheduled_retry,
             retry_at,
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id
-    ))]
     async fn complete_workflow(
         &self,
         request: Request<CompleteWorkflowRequest>,
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("CompleteWorkflow", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let run_id =
@@ -743,46 +600,23 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         if let Some(locked_by) = workflow_check.locked_by {
             if let Ok(worker_uuid) = Uuid::parse_str(&locked_by) {
-                if let Err(e) = self
+                let _ = self
                     .store
                     .workers()
                     .update_active_count(worker_uuid, &namespace_id, -1)
-                    .await
-                {
-                    warn!(worker_id = %locked_by, error = ?e, "Failed to decrement active_count after completion");
-                }
-            } else {
-                warn!(worker_id = %locked_by, "Invalid worker_id stored in locked_by; active_count not decremented");
+                    .await;
             }
         }
-
-        log_grpc_response(
-            "CompleteWorkflow",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
 
         Ok(Response::new(CompleteWorkflowResponse {
             status: kagzi_proto::kagzi::WorkflowStatus::Completed as i32,
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id
-    ))]
     async fn fail_workflow(
         &self,
         request: Request<FailWorkflowRequest>,
     ) -> Result<Response<FailWorkflowResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("FailWorkflow", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let run_id =
@@ -825,46 +659,21 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         // Decrement active count for the worker that held the lock, if any.
         if let Some(locked_by) = workflow_status.locked_by {
             if let Ok(worker_uuid) = Uuid::parse_str(&locked_by) {
-                if let Err(e) = self
+                let _ = self
                     .store
                     .workers()
                     .update_active_count(worker_uuid, &namespace_id, -1)
-                    .await
-                {
-                    warn!(worker_id = %locked_by, error = ?e, "Failed to decrement active_count after failure");
-                }
-            } else {
-                warn!(worker_id = %locked_by, "Invalid worker_id stored in locked_by; active_count not decremented");
+                    .await;
             }
         }
-
-        log_grpc_response(
-            "FailWorkflow",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
 
         Ok(Response::new(FailWorkflowResponse {
             status: kagzi_proto::kagzi::WorkflowStatus::Failed as i32,
         }))
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %extract_or_generate_correlation_id(&request),
-        trace_id = %extract_or_generate_trace_id(&request),
-        run_id = %request.get_ref().run_id,
-        step_id = %request.get_ref().step_id,
-        duration = ?request.get_ref().duration
-    ))]
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
         const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
-
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-
-        log_grpc_request("Sleep", &correlation_id, &trace_id, None);
 
         let req = request.into_inner();
 
@@ -882,13 +691,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         // Validate duration
         if duration_seconds == 0 {
             // Zero duration sleep is a no-op, return immediately
-            log_grpc_response(
-                "Sleep",
-                &correlation_id,
-                &trace_id,
-                Status::code(&Status::ok("")),
-                Some("Zero duration - no-op"),
-            );
             return Ok(Response::new(()));
         }
 
@@ -904,14 +706,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .schedule_sleep(run_id, duration_seconds)
             .await
             .map_err(map_store_error)?;
-
-        log_grpc_response(
-            "Sleep",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
 
         Ok(Response::new(()))
     }
@@ -936,11 +730,6 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
             if step.step_kind == kagzi_store::StepKind::Sleep
                 && step.status == kagzi_store::StepStatus::Running
             {
-                tracing::info!(
-                    run_id = %run_id,
-                    step_id = %step.step_id,
-                    "Completing pending sleep step"
-                );
                 self.store
                     .steps()
                     .complete(run_id, &step.step_id, vec![])

@@ -16,7 +16,6 @@ struct TaskInput {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("priority");
 
@@ -40,7 +39,7 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
     high_worker.register(
         "priority_task",
         |_: WorkflowContext, input: TaskInput| async move {
-            tracing::info!(queue = "high", label = %input.label, "handling priority task");
+            println!("handling priority task: queue=high, label={}", input.label);
             sleep(Duration::from_secs(1)).await;
             Ok(serde_json::json!({"queue": "high", "label": input.label}))
         },
@@ -50,7 +49,7 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
     low_worker.register(
         "priority_task",
         |_: WorkflowContext, input: TaskInput| async move {
-            tracing::info!(queue = "low", label = %input.label, "handling low task");
+            println!("handling low task: queue=low, label={}", input.label);
             sleep(Duration::from_secs(2)).await;
             Ok(serde_json::json!({"queue": "low", "label": input.label}))
         },
@@ -80,7 +79,7 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    tracing::info!(%high, %low, "High queue should finish first");
+    println!("High queue should finish first: high={}, low={}", high, low);
     tokio::time::sleep(Duration::from_secs(6)).await;
     for h in handles {
         h.abort();
@@ -94,7 +93,10 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
     prod_worker.register(
         "ns_task",
         |_: WorkflowContext, input: TaskInput| async move {
-            tracing::info!(namespace = "production", label = %input.label, "processing prod task");
+            println!(
+                "processing prod task: namespace=production, label={}",
+                input.label
+            );
             Ok(serde_json::json!({"ns": "prod", "label": input.label}))
         },
     );
@@ -103,7 +105,10 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
     staging_worker.register(
         "ns_task",
         |_: WorkflowContext, input: TaskInput| async move {
-            tracing::info!(namespace = "staging", label = %input.label, "processing staging task");
+            println!(
+                "processing staging task: namespace=staging, label={}",
+                input.label
+            );
             Ok(serde_json::json!({"ns": "staging", "label": input.label}))
         },
     );
@@ -132,7 +137,10 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    tracing::info!(%prod_run, %staging_run, "Queues isolate tenants");
+    println!(
+        "Queues isolate tenants: prod_run={}, staging_run={}",
+        prod_run, staging_run
+    );
     tokio::time::sleep(Duration::from_secs(5)).await;
     for h in handles {
         h.abort();

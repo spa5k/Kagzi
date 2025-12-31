@@ -1,8 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
 
-pub mod tracing_utils;
-
 mod client;
 mod errors;
 mod retry;

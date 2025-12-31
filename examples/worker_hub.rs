@@ -24,7 +24,6 @@ struct SleepDemoInput {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
     let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "default".into());
 
@@ -35,7 +34,10 @@ async fn main() -> anyhow::Result<()> {
     // Matches the sleep demo from 03_scheduling to allow resuming those runs.
     worker.register("sleep_demo", sleep_demo);
 
-    tracing::info!(%server, %queue, "Worker hub starting; waiting for incoming runs");
+    println!(
+        "Worker hub starting; waiting for incoming runs: server={}, queue={}",
+        server, queue
+    );
     worker.run().await?;
     Ok(())
 }
@@ -48,9 +50,9 @@ async fn sleep_workflow(
     mut ctx: WorkflowContext,
     input: SleepInput,
 ) -> anyhow::Result<serde_json::Value> {
-    tracing::info!(seconds = input.seconds, "Sleeping workflow started");
+    println!("Sleeping workflow started: seconds={}", input.seconds);
     ctx.sleep(Duration::from_secs(input.seconds)).await?;
-    tracing::info!("Sleeping workflow resumed");
+    println!("Sleeping workflow resumed");
     Ok(serde_json::json!({ "slept_for": input.seconds }))
 }
 
@@ -58,9 +60,9 @@ async fn sleep_demo(
     mut ctx: WorkflowContext,
     input: SleepDemoInput,
 ) -> anyhow::Result<serde_json::Value> {
-    tracing::info!(step = %input.step, "Sleep demo started");
+    println!("Sleep demo started: step={}", input.step);
     ctx.sleep(Duration::from_secs(15)).await?;
-    tracing::info!("Sleep demo resumed");
+    println!("Sleep demo resumed");
     Ok(serde_json::json!({ "status": "resumed", "step": input.step }))
 }
 
@@ -70,7 +72,7 @@ async fn long_poll_workflow(
 ) -> anyhow::Result<String> {
     // Simulates a worker that periodically checks for external completion.
     for attempt in 1..=5 {
-        tracing::info!(attempt, "Polling external job...");
+        println!("Polling external job...: attempt={}", attempt);
         ctx.sleep(Duration::from_secs(2)).await?;
     }
     Ok("external job finished".to_string())

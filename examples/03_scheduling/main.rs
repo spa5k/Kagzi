@@ -19,7 +19,6 @@ struct SleepInput {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("cron");
 
@@ -54,17 +53,17 @@ async fn cron_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         .max_catchup(3)
         .await?;
 
-    tracing::info!(schedule_id = %schedule.schedule_id, "Created schedule");
+    println!("Created schedule: schedule_id={}", schedule.schedule_id);
 
     let fetched = client
         .get_workflow_schedule(&schedule.schedule_id, Some("default"))
         .await?;
-    tracing::info!(?fetched, "Fetched schedule");
+    println!("Fetched schedule: {:?}", fetched);
 
     client
         .delete_workflow_schedule(&schedule.schedule_id, Some("default"))
         .await?;
-    tracing::info!("Deleted schedule");
+    println!("Deleted schedule");
 
     Ok(())
 }
@@ -84,7 +83,10 @@ async fn durable_sleep_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    tracing::info!(%run_id, "Started sleep demo; stop worker during sleep to see resume");
+    println!(
+        "Started sleep demo; stop worker during sleep to see resume: {}",
+        run_id
+    );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(25)).await;
     Ok(())
@@ -105,7 +107,10 @@ async fn catchup_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         .enabled(true)
         .await?;
 
-    tracing::info!(schedule_id = %schedule.schedule_id, "Created catchup schedule; pause server to see replay");
+    println!(
+        "Created catchup schedule; pause server to see replay: schedule_id={}",
+        schedule.schedule_id
+    );
     // Instruct user to stop scheduler and restart; no automated pause here.
     Ok(())
 }
@@ -114,8 +119,8 @@ async fn sleep_workflow(
     mut ctx: WorkflowContext,
     input: SleepInput,
 ) -> anyhow::Result<serde_json::Value> {
-    tracing::info!(step = %input.step, "Step A started");
+    println!("Step A started: step={}", input.step);
     ctx.sleep(Duration::from_secs(15)).await?;
-    tracing::info!("Step B resumed after durable sleep");
+    println!("Step B resumed after durable sleep");
     Ok(serde_json::json!({ "status": "resumed", "step": input.step }))
 }

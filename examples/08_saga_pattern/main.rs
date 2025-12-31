@@ -25,7 +25,6 @@ struct TripResult {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("saga");
 
@@ -66,7 +65,10 @@ async fn run_saga(
         )
         .await?;
 
-    tracing::info!(%run, fail_car, fail_hotel, "Started saga workflow");
+    println!(
+        "Started saga workflow: run={}, fail_car={}, fail_hotel={}",
+        run, fail_car, fail_hotel
+    );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(10)).await;
     Ok(())
@@ -95,7 +97,7 @@ async fn trip_workflow(
             status: "confirmed".into(),
         }),
         Err(err) => {
-            tracing::warn!(error = ?err, "Car booking failed, running compensation");
+            println!("Car booking failed, running compensation: error={:?}", err);
             ctx.run_with_input("cancel_hotel", &hotel, cancel_hotel(hotel.clone()))
                 .await?;
             ctx.run_with_input("cancel_flight", &flight, cancel_flight(flight.clone()))
@@ -133,12 +135,12 @@ async fn book_car(req: TripRequest) -> anyhow::Result<String> {
 
 async fn cancel_hotel(hotel_id: String) -> anyhow::Result<String> {
     sleep(Duration::from_millis(150)).await;
-    tracing::info!(%hotel_id, "cancelled hotel");
+    println!("cancelled hotel: {}", hotel_id);
     Ok(format!("cancelled-{hotel_id}"))
 }
 
 async fn cancel_flight(flight_id: String) -> anyhow::Result<String> {
     sleep(Duration::from_millis(150)).await;
-    tracing::info!(%flight_id, "cancelled flight");
+    println!("cancelled flight: {}", flight_id);
     Ok(format!("cancelled-{flight_id}"))
 }

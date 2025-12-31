@@ -33,7 +33,6 @@ struct NumbersOutput {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("static");
 
@@ -66,7 +65,7 @@ async fn static_fanout(server: &str, queue: &str) -> anyhow::Result<()> {
             },
         )
         .await?;
-    tracing::info!(%run, "Started static fan-out workflow");
+    println!("Started static fan-out workflow: {}", run);
 
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -87,7 +86,7 @@ async fn dynamic_mapreduce(server: &str, queue: &str) -> anyhow::Result<()> {
             },
         )
         .await?;
-    tracing::info!(%run, "Started dynamic map-reduce workflow");
+    println!("Started dynamic map-reduce workflow: {}", run);
 
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;

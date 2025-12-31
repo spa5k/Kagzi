@@ -5,18 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use kagzi::{Client, RetryPolicy, Worker};
 use tokio::sync::Mutex;
-use tracing_subscriber::{EnvFilter, fmt};
 use uuid::Uuid;
-
-/// Initialize tracing with env filter, defaulting to `info`.
-pub fn init_tracing() -> Result<()> {
-    fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with_target(false)
-        .with_level(true)
-        .init();
-    Ok(())
-}
 
 /// Connect a Kagzi client to the given server.
 #[allow(dead_code)]

@@ -53,11 +53,6 @@ async fn welcome_user_route(user_id: String, user_email: String) -> anyhow::Resu
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
-
     println!("🚀 Kagzi Example - Separate Files");
     println!("================================");
 

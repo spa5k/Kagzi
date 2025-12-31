@@ -3,11 +3,6 @@ use separate_files_example::workflows::send_welcome_email;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing for better logs
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
-
     println!("🔄 Starting Kagzi worker...");
 
     let mut worker = Worker::builder("http://localhost:50051", "email")

@@ -17,7 +17,6 @@ use uuid::Uuid;
 
 use crate::errors::map_grpc_error;
 use crate::retry::RetryPolicy;
-use crate::tracing_utils::add_tracing_metadata;
 
 pub struct Client {
     workflow_client: WorkflowServiceClient<Channel>,
@@ -58,10 +57,10 @@ impl Client {
         schedule_id: &str,
         namespace_id: Option<&str>,
     ) -> anyhow::Result<Option<WorkflowSchedule>> {
-        let request = add_tracing_metadata(Request::new(GetWorkflowScheduleRequest {
+        let request = Request::new(GetWorkflowScheduleRequest {
             schedule_id: schedule_id.to_string(),
             namespace_id: namespace_id.unwrap_or("default").to_string(),
-        }));
+        });
 
         let resp = self
             .schedule_client
@@ -84,11 +83,11 @@ impl Client {
             include_total_count: false,
         });
 
-        let request = add_tracing_metadata(Request::new(ListWorkflowSchedulesRequest {
+        let request = Request::new(ListWorkflowSchedulesRequest {
             namespace_id: namespace_id.to_string(),
             task_queue: None,
             page: Some(page_request),
-        }));
+        });
 
         let resp = self
             .schedule_client
@@ -105,10 +104,10 @@ impl Client {
         schedule_id: &str,
         namespace_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        let request = add_tracing_metadata(Request::new(DeleteWorkflowScheduleRequest {
+        let request = Request::new(DeleteWorkflowScheduleRequest {
             schedule_id: schedule_id.to_string(),
             namespace_id: namespace_id.unwrap_or("default").to_string(),
-        }));
+        });
 
         self.schedule_client
             .delete_workflow_schedule(request)
@@ -177,7 +176,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
         let resp = self
             .client
             .workflow_client
-            .start_workflow(StartWorkflowRequest {
+            .start_workflow(Request::new(StartWorkflowRequest {
                 external_id: self
                     .external_id
                     .unwrap_or_else(|| Uuid::now_v7().to_string()),
@@ -190,7 +189,7 @@ impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
                 namespace_id: self.namespace_id,
                 version: self.version.unwrap_or_default(),
                 retry_policy: self.retry_policy.map(Into::into),
-            })
+            }))
             .await
             .map_err(map_grpc_error)?;
 
@@ -280,7 +279,7 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
         let resp = self
             .client
             .schedule_client
-            .create_workflow_schedule(add_tracing_metadata(Request::new(request)))
+            .create_workflow_schedule(Request::new(request))
             .await
             .map_err(map_grpc_error)?
             .into_inner()

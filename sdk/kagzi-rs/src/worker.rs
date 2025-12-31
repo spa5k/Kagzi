@@ -17,15 +17,12 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tonic::transport::Channel;
-use tracing::{error, info, instrument};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::BoxFuture;
 use crate::errors::{KagziError, WorkflowPaused, map_grpc_error};
 use crate::retry::RetryPolicy;
-use crate::tracing_utils::{
-    add_tracing_metadata, get_or_generate_correlation_id, get_or_generate_trace_id,
-};
 use crate::workflow_context::WorkflowContext;
 
 type WorkflowFn = Box<
@@ -222,12 +219,6 @@ impl Worker {
         self.shutdown.clone()
     }
 
-    #[instrument(skip(self), fields(
-        correlation_id = %get_or_generate_correlation_id(),
-        trace_id = %get_or_generate_trace_id(),
-        task_queue = %self.task_queue,
-        max_concurrent = %self.max_concurrent
-    ))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
         if self.workflows.is_empty() {
             anyhow::bail!("No workflows registered. Call register() before run()");
@@ -389,7 +380,7 @@ impl Worker {
                     let input: serde_json::Value = match serde_json::from_slice(&payload.data) {
                         Ok(v) => v,
                         Err(e) => {
-                            tracing::warn!(
+                            warn!(
                                 run_id = %task.run_id,
                                 error = %e,
                                 payload_len = payload.data.len(),
@@ -405,23 +396,14 @@ impl Worker {
 
                     tokio::spawn(async move {
                         let _permit = permit;
-                        let correlation_id = uuid::Uuid::now_v7().to_string();
-                        let trace_id = uuid::Uuid::now_v7().to_string();
-
-                        crate::tracing_utils::with_tracing_context(
-                            Some(correlation_id.clone()),
-                            Some(trace_id.clone()),
-                            execute_workflow(
-                                client,
-                                handler,
-                                run_id,
-                                input,
-                                correlation_id,
-                                trace_id,
-                                default_step_retry,
-                                completed_counter,
-                                failed_counter,
-                            ),
+                        execute_workflow(
+                            client,
+                            handler,
+                            run_id,
+                            input,
+                            default_step_retry,
+                            completed_counter,
+                            failed_counter,
                         )
                         .await;
                     });
@@ -446,8 +428,6 @@ async fn execute_workflow(
     handler: Arc<WorkflowFn>,
     run_id: String,
     input: serde_json::Value,
-    correlation_id: String,
-    trace_id: String,
     default_step_retry: Option<RetryPolicy>,
     completed_counter: Arc<AtomicI32>,
     failed_counter: Arc<AtomicI32>,
@@ -467,8 +447,6 @@ async fn execute_workflow(
         Ok(r) => r,
         Err(join_err) => {
             error!(
-                correlation_id = correlation_id,
-                trace_id = trace_id,
                 run_id = %run_id,
                 error = %join_err,
                 "Workflow panicked"
@@ -491,13 +469,13 @@ async fn execute_workflow(
                 }
             };
 
-            let complete_request = add_tracing_metadata(Request::new(CompleteWorkflowRequest {
+            let complete_request = Request::new(CompleteWorkflowRequest {
                 run_id,
                 output: Some(ProtoPayload {
                     data,
                     metadata: HashMap::new(),
                 }),
-            }));
+            });
 
             let _ = client.complete_workflow(complete_request).await;
             completed_counter.fetch_add(1, Ordering::Relaxed);
@@ -505,8 +483,6 @@ async fn execute_workflow(
         Err(e) => {
             if e.downcast_ref::<WorkflowPaused>().is_some() {
                 info!(
-                    correlation_id = correlation_id,
-                    trace_id = trace_id,
                     run_id = %run_id,
                     "Workflow paused (sleeping)"
                 );
@@ -514,8 +490,6 @@ async fn execute_workflow(
             }
 
             error!(
-                correlation_id = correlation_id,
-                trace_id = trace_id,
                 run_id = %run_id,
                 error = %e,
                 "Workflow failed"
@@ -526,10 +500,10 @@ async fn execute_workflow(
                 .cloned()
                 .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
 
-            let fail_request = add_tracing_metadata(Request::new(FailWorkflowRequest {
+            let fail_request = Request::new(FailWorkflowRequest {
                 run_id,
                 error: Some(kagzi_err.to_detail()),
-            }));
+            });
 
             let _ = client.fail_workflow(fail_request).await;
             failed_counter.fetch_add(1, Ordering::Relaxed);

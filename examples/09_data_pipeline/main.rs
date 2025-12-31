@@ -26,7 +26,6 @@ struct LargeOutput {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("transform");
 
@@ -60,7 +59,7 @@ async fn transform_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    tracing::info!(%run, "Started pass-through transform workflow");
+    println!("Started pass-through transform workflow: {}", run);
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(())
@@ -101,7 +100,10 @@ async fn large_payload_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         .workflow("large_payload", queue, LargeInput { content: big })
         .await?;
 
-    tracing::info!(%run, "Started large payload workflow (stores data in mock blob)");
+    println!(
+        "Started large payload workflow (stores data in mock blob): {}",
+        run
+    );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(6)).await;
     Ok(())
@@ -140,7 +142,7 @@ async fn enrich_payload(payload: serde_json::Value) -> anyhow::Result<serde_json
 async fn store_large(blob: common::InMemoryBlobStore, content: String) -> anyhow::Result<String> {
     let bytes = content.into_bytes();
     let key = blob.put(bytes).await;
-    tracing::info!(%key, "stored payload in blob store (mock)");
+    println!("stored payload in blob store (mock): {}", key);
     Ok(key)
 }
 
@@ -149,6 +151,6 @@ async fn load_large(blob: common::InMemoryBlobStore, key: String) -> anyhow::Res
         .get(&key)
         .await
         .ok_or_else(|| anyhow::anyhow!("missing key {key}"))?;
-    tracing::info!(%key, "loaded payload from blob store (mock)");
+    println!("loaded payload from blob store (mock): {}", key);
     String::from_utf8(data).map_err(|e| anyhow::anyhow!("invalid UTF-8 in blob {key}: {e}"))
 }

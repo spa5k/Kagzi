@@ -22,7 +22,6 @@ static EXPENSIVE_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("external");
 
@@ -68,10 +67,13 @@ async fn external_id_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         .id(external_id)
         .await?;
 
-    tracing::info!(%run1, %run2, "Both calls return the same run id due to idempotency");
+    println!(
+        "Both calls return the same run id due to idempotency: run1={}, run2={}",
+        run1, run2
+    );
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            tracing::error!(error = %e, "Worker error");
+            eprintln!("Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(Duration::from_secs(6)).await;
@@ -87,10 +89,13 @@ async fn memoization_demo(server: &str, queue: &str) -> anyhow::Result<()> {
         .workflow("memoized_workflow", queue, MemoInput { value: 5 })
         .await?;
 
-    tracing::info!(%run, "Started memoization workflow; expensive step should run once even if called twice");
+    println!(
+        "Started memoization workflow; expensive step should run once even if called twice: {}",
+        run
+    );
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            tracing::error!(error = %e, "Worker error");
+            eprintln!("Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(Duration::from_secs(6)).await;
@@ -101,7 +106,7 @@ async fn charge_payment(
     _ctx: WorkflowContext,
     input: PaymentInput,
 ) -> anyhow::Result<serde_json::Value> {
-    tracing::info!(order = %input.order_id, "processing payment");
+    println!("processing payment: order={}", input.order_id);
     tokio::time::sleep(Duration::from_secs(2)).await;
     Ok(serde_json::json!({"status": "charged", "order_id": input.order_id}))
 }
@@ -126,7 +131,7 @@ async fn memo_workflow(
 
 async fn expensive_calculation(value: i32) -> anyhow::Result<i32> {
     let count = EXPENSIVE_CALLS.fetch_add(1, Ordering::SeqCst) + 1;
-    tracing::info!(call = count, "expensive calculation running");
+    println!("expensive calculation running: call={}", count);
     tokio::time::sleep(Duration::from_secs(1)).await;
     Ok(value * value)
 }

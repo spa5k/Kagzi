@@ -81,7 +81,6 @@ async fn context_workflow(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("hello");
 
@@ -116,10 +115,10 @@ async fn run_hello(server: &str, queue: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    tracing::info!(%run_id, "Started hello workflow");
+    println!("Started hello workflow: {}", run_id);
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            tracing::error!(error = %e, "Worker error");
+            eprintln!("Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -141,10 +140,10 @@ async fn run_chain(server: &str, queue: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    tracing::info!(%run_id, "Started chained workflow");
+    println!("Started chained workflow: {}", run_id);
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            tracing::error!(error = %e, "Worker error");
+            eprintln!("Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -166,10 +165,10 @@ async fn run_context(server: &str, queue: &str) -> anyhow::Result<()> {
         )
         .await?;
 
-    tracing::info!(%run_id, "Started context workflow");
+    println!("Started context workflow: {}", run_id);
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            tracing::error!(error = %e, "Worker error");
+            eprintln!("Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;

@@ -19,7 +19,6 @@ struct Output {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    common::init_tracing()?;
     let args: Vec<String> = env::args().collect();
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("flaky");
 
@@ -67,7 +66,7 @@ async fn run_flaky(server: &str, queue: &str) -> anyhow::Result<()> {
             },
         )
         .await?;
-    tracing::info!(%run_id, "Started flaky workflow (should retry twice)");
+    println!("Started flaky workflow (should retry twice): {}", run_id);
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(12)).await;
     Ok(())
@@ -98,7 +97,10 @@ async fn run_fatal(server: &str, queue: &str) -> anyhow::Result<()> {
             },
         )
         .await?;
-    tracing::info!(%run_id, "Started fatal workflow (should fail immediately)");
+    println!(
+        "Started fatal workflow (should fail immediately): {}",
+        run_id
+    );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
     Ok(())
@@ -154,7 +156,7 @@ async fn run_override(server: &str, queue: &str) -> anyhow::Result<()> {
             },
         )
         .await?;
-    tracing::info!(%run_id, "Started workflow with per-step retry override");
+    println!("Started workflow with per-step retry override: {}", run_id);
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(15)).await;
     Ok(())

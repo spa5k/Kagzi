@@ -20,10 +20,6 @@ use crate::helpers::{
     bytes_to_payload, invalid_argument_error, map_store_error, not_found_error,
     payload_to_optional_bytes,
 };
-use crate::tracing_utils::{
-    extract_or_generate_correlation_id, extract_or_generate_trace_id, log_grpc_request,
-    log_grpc_response,
-};
 
 fn parse_cron_expr(expr: &str) -> Result<cron::Schedule, Status> {
     if expr.trim().is_empty() {
@@ -89,10 +85,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         &self,
         request: Request<CreateWorkflowScheduleRequest>,
     ) -> Result<Response<CreateWorkflowScheduleResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("CreateWorkflowSchedule", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         if req.task_queue.is_empty() {
@@ -151,14 +143,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 not_found_error("Schedule not found", "schedule", schedule_id.to_string())
             })?;
 
-        log_grpc_response(
-            "CreateWorkflowSchedule",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(CreateWorkflowScheduleResponse {
             schedule: Some(schedule),
         }))
@@ -168,10 +152,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         &self,
         request: Request<GetWorkflowScheduleRequest>,
     ) -> Result<Response<GetWorkflowScheduleResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("GetWorkflowSchedule", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
@@ -192,14 +172,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .transpose()?
             .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
 
-        log_grpc_response(
-            "GetWorkflowSchedule",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(GetWorkflowScheduleResponse {
             schedule: Some(schedule),
         }))
@@ -209,10 +181,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         &self,
         request: Request<ListWorkflowSchedulesRequest>,
     ) -> Result<Response<ListWorkflowSchedulesResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("ListWorkflowSchedules", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let namespace_id = if req.namespace_id.is_empty() {
             DEFAULT_NAMESPACE.to_string()
@@ -293,14 +261,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             })
             .unwrap_or_default();
 
-        log_grpc_response(
-            "ListWorkflowSchedules",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(ListWorkflowSchedulesResponse {
             schedules: proto_schedules,
             page: Some(PageInfo {
@@ -315,10 +275,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         &self,
         request: Request<UpdateWorkflowScheduleRequest>,
     ) -> Result<Response<UpdateWorkflowScheduleResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("UpdateWorkflowSchedule", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
 
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
@@ -407,14 +363,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 not_found_error("Schedule not found", "schedule", schedule_id.to_string())
             })?;
 
-        log_grpc_response(
-            "UpdateWorkflowSchedule",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
-
         Ok(Response::new(UpdateWorkflowScheduleResponse {
             schedule: Some(schedule),
         }))
@@ -424,10 +372,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         &self,
         request: Request<DeleteWorkflowScheduleRequest>,
     ) -> Result<Response<DeleteWorkflowScheduleResponse>, Status> {
-        let correlation_id = extract_or_generate_correlation_id(&request);
-        let trace_id = extract_or_generate_trace_id(&request);
-        log_grpc_request("DeleteWorkflowSchedule", &correlation_id, &trace_id, None);
-
         let req = request.into_inner();
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
@@ -452,14 +396,6 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 req.schedule_id,
             ));
         }
-
-        log_grpc_response(
-            "DeleteWorkflowSchedule",
-            &correlation_id,
-            &trace_id,
-            Status::code(&Status::ok("")),
-            None,
-        );
 
         Ok(Response::new(DeleteWorkflowScheduleResponse { deleted }))
     }

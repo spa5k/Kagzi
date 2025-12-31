@@ -361,10 +361,9 @@ Prioritize using time and word count for:
 **Naming:** `snake_case` for functions/variables, `PascalCase` for types/structs
 **Imports:** Group std imports, then external crates, then local modules
 **Error handling:** Use `anyhow::Result` for application errors, `thiserror` for custom error types
-**Async:** Use `tokio` runtime, `#[instrument]` for tracing with correlation/trace IDs
+**Async:** Use `tokio` runtime
 **Database:** PostgreSQL with `sqlx`, migrations in `migrations/` directory
 **Serialization:** `serde` with JSON, use `serde_json::Value` for dynamic payloads
-**Tracing:** Structured logging with `tracing`, include correlation_id and trace_id fields
 **gRPC:** Use `tonic` with prost for protobuf code generation
 
 ## Development Workflow
