@@ -188,6 +188,7 @@ pub struct Worker {
 }
 
 impl Worker {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(addr: &str) -> WorkerBuilder {
         WorkerBuilder::new(addr)
     }

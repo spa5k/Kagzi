@@ -598,14 +598,14 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        if let Some(locked_by) = workflow_check.locked_by {
-            if let Ok(worker_uuid) = Uuid::parse_str(&locked_by) {
-                let _ = self
-                    .store
-                    .workers()
-                    .update_active_count(worker_uuid, &namespace_id, -1)
-                    .await;
-            }
+        if let Some(locked_by) = workflow_check.locked_by
+            && let Ok(worker_uuid) = Uuid::parse_str(&locked_by)
+        {
+            let _ = self
+                .store
+                .workers()
+                .update_active_count(worker_uuid, &namespace_id, -1)
+                .await;
         }
 
         Ok(Response::new(CompleteWorkflowResponse {
@@ -657,14 +657,14 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .map_err(map_store_error)?;
 
         // Decrement active count for the worker that held the lock, if any.
-        if let Some(locked_by) = workflow_status.locked_by {
-            if let Ok(worker_uuid) = Uuid::parse_str(&locked_by) {
-                let _ = self
-                    .store
-                    .workers()
-                    .update_active_count(worker_uuid, &namespace_id, -1)
-                    .await;
-            }
+        if let Some(locked_by) = workflow_status.locked_by
+            && let Ok(worker_uuid) = Uuid::parse_str(&locked_by)
+        {
+            let _ = self
+                .store
+                .workers()
+                .update_active_count(worker_uuid, &namespace_id, -1)
+                .await;
         }
 
         Ok(Response::new(FailWorkflowResponse {
