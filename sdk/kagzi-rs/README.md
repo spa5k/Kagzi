@@ -59,7 +59,6 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 kagzi = { version = "0.1.0" }
-kagzi-macros = { version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
@@ -263,23 +262,6 @@ async fn delayed_workflow(
     }).await?;
 
     Ok(final_result)
-}
-```
-
-### Using Macros
-
-The `kagzi-macros` crate provides convenience macros for defining workflows:
-
-```rust
-use kagzi::prelude::*;
-
-#[kagzi_workflow]
-async fn my_workflow(
-    ctx: WorkflowContext,
-    input: MyInput,
-) -> anyhow::Result<MyOutput> {
-    // Your workflow logic
-    Ok(MyOutput {})
 }
 ```
 

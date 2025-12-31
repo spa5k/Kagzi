@@ -10,7 +10,6 @@ chrono = { workspace = true }
 futures = "0.3"
 hostname = "0.4.2"
 kagzi = { path = "../sdk/kagzi-rs" }
-kagzi-macros = { path = "../crates/kagzi-macros" }
 kagzi-proto = { path = "../crates/kagzi-proto" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -59,22 +58,6 @@ path = "09_data_pipeline/main.rs"
 [[example]]
 name = "10_multi_queue"
 path = "10_multi_queue/main.rs"
-
-[[example]]
-name = "11_macros"
-path = "11_macros/main.rs"
-
-[[example]]
-name = "12_kagzi_step_macro"
-path = "12_kagzi_step_macro/main.rs"
-
-[[example]]
-name = "13_kagzi_workflow_macro"
-path = "13_kagzi_workflow_macro/main.rs"
-
-[[example]]
-name = "14_macros_comprehensive"
-path = "14_macros_comprehensive/main.rs"
 
 [[example]]
 name = "worker_hub"
