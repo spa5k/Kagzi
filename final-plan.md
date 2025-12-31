@@ -889,7 +889,7 @@ Could simplify `RegisterRequest` and `StartWorkflowRequest` by removing `task_qu
 
 ```toml
 [dependencies]
-humantime = "2.1"  # Duration parsing
+humantime = "2.1" # Duration parsing
 ```
 
 ### Already Present (no changes)

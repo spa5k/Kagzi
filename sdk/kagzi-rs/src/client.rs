@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::future::{Future, IntoFuture};
-use std::pin::Pin;
 
 use anyhow::anyhow;
 use kagzi_proto::kagzi::workflow_schedule_service_client::WorkflowScheduleServiceClient;
@@ -16,14 +14,14 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 use crate::errors::map_grpc_error;
-use crate::retry::RetryPolicy;
 
-pub struct Client {
+/// Main client for interacting with Kagzi server
+pub struct Kagzi {
     workflow_client: WorkflowServiceClient<Channel>,
     schedule_client: WorkflowScheduleServiceClient<Channel>,
 }
 
-impl Client {
+impl Kagzi {
     pub async fn connect(addr: &str) -> anyhow::Result<Self> {
         let channel = Channel::from_shared(addr.to_string())?.connect().await?;
 
@@ -33,37 +31,42 @@ impl Client {
         })
     }
 
-    pub fn workflow<I: Serialize>(
-        &mut self,
-        workflow_type: &str,
-        task_queue: &str,
-        input: I,
-    ) -> WorkflowBuilder<'_, I> {
-        WorkflowBuilder::new(self, workflow_type, task_queue, input)
+    pub fn start(&self, workflow_type: &str) -> StartWorkflowBuilder<'_> {
+        StartWorkflowBuilder {
+            client: &self.workflow_client,
+            workflow_type: workflow_type.to_string(),
+            namespace: "default".to_string(),
+            input: None,
+            idempotency_key: None,
+        }
     }
 
-    pub fn workflow_schedule<I: Serialize>(
-        &mut self,
-        workflow_type: &str,
-        task_queue: &str,
-        cron_expr: &str,
-        input: I,
-    ) -> WorkflowScheduleBuilder<'_, I> {
-        WorkflowScheduleBuilder::new(self, workflow_type, task_queue, cron_expr, input)
+    pub fn schedule(&self, schedule_id: &str) -> ScheduleBuilder<'_> {
+        ScheduleBuilder {
+            client: &self.schedule_client,
+            _schedule_id: schedule_id.to_string(),
+            namespace: "default".to_string(),
+            workflow_type: None,
+            cron: None,
+            input: None,
+            max_catchup: 100,
+            enabled: true,
+        }
     }
 
+    // Schedule query methods
     pub async fn get_workflow_schedule(
-        &mut self,
+        &self,
         schedule_id: &str,
         namespace_id: Option<&str>,
     ) -> anyhow::Result<Option<WorkflowSchedule>> {
+        let mut client = self.schedule_client.clone();
         let request = Request::new(GetWorkflowScheduleRequest {
             schedule_id: schedule_id.to_string(),
             namespace_id: namespace_id.unwrap_or("default").to_string(),
         });
 
-        let resp = self
-            .schedule_client
+        let resp = client
             .get_workflow_schedule(request)
             .await
             .map_err(map_grpc_error)?
@@ -73,10 +76,11 @@ impl Client {
     }
 
     pub async fn list_workflow_schedules(
-        &mut self,
+        &self,
         namespace_id: &str,
         page: Option<PageRequest>,
     ) -> anyhow::Result<Vec<WorkflowSchedule>> {
+        let mut client = self.schedule_client.clone();
         let page_request = page.unwrap_or(PageRequest {
             page_size: 100,
             page_token: "".to_string(),
@@ -89,8 +93,7 @@ impl Client {
             page: Some(page_request),
         });
 
-        let resp = self
-            .schedule_client
+        let resp = client
             .list_workflow_schedules(request)
             .await
             .map_err(map_grpc_error)?
@@ -100,16 +103,17 @@ impl Client {
     }
 
     pub async fn delete_workflow_schedule(
-        &mut self,
+        &self,
         schedule_id: &str,
         namespace_id: Option<&str>,
     ) -> anyhow::Result<()> {
+        let mut client = self.schedule_client.clone();
         let request = Request::new(DeleteWorkflowScheduleRequest {
             schedule_id: schedule_id.to_string(),
             namespace_id: namespace_id.unwrap_or("default").to_string(),
         });
 
-        self.schedule_client
+        client
             .delete_workflow_schedule(request)
             .await
             .map_err(map_grpc_error)?;
@@ -118,167 +122,128 @@ impl Client {
     }
 }
 
-pub struct WorkflowBuilder<'a, I> {
-    client: &'a mut Client,
+pub struct StartWorkflowBuilder<'a> {
+    client: &'a WorkflowServiceClient<Channel>,
     workflow_type: String,
-    task_queue: String,
-    input: I,
-    namespace_id: String,
-    external_id: Option<String>,
-    version: Option<String>,
-    retry_policy: Option<RetryPolicy>,
+    namespace: String,
+    input: Option<Vec<u8>>,
+    idempotency_key: Option<String>,
 }
 
-impl<'a, I: Serialize> WorkflowBuilder<'a, I> {
-    fn new(client: &'a mut Client, workflow_type: &str, task_queue: &str, input: I) -> Self {
-        Self {
-            client,
-            workflow_type: workflow_type.to_string(),
-            task_queue: task_queue.to_string(),
-            input,
-            namespace_id: "default".to_string(),
-            external_id: None,
-            version: None,
-            retry_policy: None,
-        }
-    }
-
-    pub fn id(mut self, external_id: impl Into<String>) -> Self {
-        self.external_id = Some(external_id.into());
+impl<'a> StartWorkflowBuilder<'a> {
+    pub fn namespace(mut self, ns: &str) -> Self {
+        self.namespace = ns.to_string();
         self
     }
 
-    pub fn namespace(mut self, ns: impl Into<String>) -> Self {
-        self.namespace_id = ns.into();
+    pub fn input<T: Serialize>(mut self, input: T) -> Self {
+        self.input = Some(serde_json::to_vec(&input).expect("Failed to serialize input"));
         self
     }
 
-    pub fn version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(version.into());
+    /// Set idempotency key to prevent duplicate workflows
+    pub fn id(mut self, key: &str) -> Self {
+        self.idempotency_key = Some(key.to_string());
         self
     }
 
-    pub fn retry_policy(mut self, policy: RetryPolicy) -> Self {
-        self.retry_policy = Some(policy);
-        self
-    }
-
-    pub fn retries(mut self, max_attempts: i32) -> Self {
-        self.retry_policy
-            .get_or_insert_with(Default::default)
-            .maximum_attempts = Some(max_attempts);
-        self
-    }
-
-    async fn execute(self) -> anyhow::Result<String> {
-        let input_bytes = serde_json::to_vec(&self.input)?;
-
-        let resp = self
-            .client
-            .workflow_client
+    pub async fn r#await(self) -> anyhow::Result<WorkflowRun> {
+        let mut client = self.client.clone();
+        let resp = client
             .start_workflow(Request::new(StartWorkflowRequest {
                 external_id: self
-                    .external_id
+                    .idempotency_key
                     .unwrap_or_else(|| Uuid::now_v7().to_string()),
-                task_queue: self.task_queue,
+                task_queue: self.workflow_type.clone(), // Queue = workflow type
                 workflow_type: self.workflow_type,
-                input: Some(ProtoPayload {
-                    data: input_bytes,
+                input: self.input.map(|data| ProtoPayload {
+                    data,
                     metadata: HashMap::new(),
                 }),
-                namespace_id: self.namespace_id,
-                version: self.version.unwrap_or_default(),
-                retry_policy: self.retry_policy.map(Into::into),
+                namespace_id: self.namespace,
+                version: String::default(),
+                retry_policy: None,
             }))
             .await
             .map_err(map_grpc_error)?;
 
-        Ok(resp.into_inner().run_id)
+        Ok(WorkflowRun {
+            id: resp.into_inner().run_id,
+        })
     }
 }
 
-impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowBuilder<'a, I> {
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + 'a>>;
-    type Output = anyhow::Result<String>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.execute())
-    }
+#[derive(Debug)]
+pub struct WorkflowRun {
+    pub id: String,
 }
 
-pub struct WorkflowScheduleBuilder<'a, I> {
-    client: &'a mut Client,
-    workflow_type: String,
-    task_queue: String,
-    cron_expr: String,
-    input: I,
-    namespace_id: String,
-    enabled: Option<bool>,
-    max_catchup: Option<i32>,
-    version: Option<String>,
+pub struct ScheduleBuilder<'a> {
+    client: &'a WorkflowScheduleServiceClient<Channel>,
+    _schedule_id: String,
+    namespace: String,
+    workflow_type: Option<String>,
+    cron: Option<String>,
+    input: Option<Vec<u8>>,
+    max_catchup: i32,
+    enabled: bool,
 }
 
-impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
-    fn new(
-        client: &'a mut Client,
-        workflow_type: &str,
-        task_queue: &str,
-        cron_expr: &str,
-        input: I,
-    ) -> Self {
-        Self {
-            client,
-            workflow_type: workflow_type.to_string(),
-            task_queue: task_queue.to_string(),
-            cron_expr: cron_expr.to_string(),
-            input,
-            namespace_id: "default".to_string(),
-            enabled: None,
-            max_catchup: None,
-            version: None,
-        }
+impl<'a> ScheduleBuilder<'a> {
+    pub fn namespace(mut self, ns: &str) -> Self {
+        self.namespace = ns.to_string();
+        self
     }
 
-    pub fn namespace(mut self, ns: impl Into<String>) -> Self {
-        self.namespace_id = ns.into();
+    pub fn workflow(mut self, workflow_type: &str) -> Self {
+        self.workflow_type = Some(workflow_type.to_string());
+        self
+    }
+
+    pub fn cron(mut self, cron_expr: &str) -> Self {
+        self.cron = Some(cron_expr.to_string());
+        self
+    }
+
+    pub fn input<T: Serialize>(mut self, input: T) -> Self {
+        self.input = Some(serde_json::to_vec(&input).expect("Failed to serialize input"));
+        self
+    }
+
+    pub fn catchup(mut self, max: i32) -> Self {
+        self.max_catchup = max;
         self
     }
 
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = Some(enabled);
+        self.enabled = enabled;
         self
     }
 
-    pub fn max_catchup(mut self, max_catchup: i32) -> Self {
-        self.max_catchup = Some(max_catchup);
-        self
-    }
-
-    pub fn version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(version.into());
-        self
-    }
-
-    async fn create(self) -> anyhow::Result<WorkflowSchedule> {
-        let input_bytes = serde_json::to_vec(&self.input)?;
+    pub async fn r#await(self) -> anyhow::Result<WorkflowSchedule> {
+        let workflow_type = self
+            .workflow_type
+            .ok_or_else(|| anyhow!("workflow_type is required"))?;
+        let cron = self
+            .cron
+            .ok_or_else(|| anyhow!("cron expression is required"))?;
 
         let request = CreateWorkflowScheduleRequest {
-            namespace_id: self.namespace_id,
-            task_queue: self.task_queue,
-            workflow_type: self.workflow_type,
-            cron_expr: self.cron_expr,
-            input: Some(ProtoPayload {
-                data: input_bytes,
+            namespace_id: self.namespace,
+            task_queue: workflow_type.clone(), // Queue = workflow type
+            workflow_type,
+            cron_expr: cron,
+            input: self.input.map(|data| ProtoPayload {
+                data,
                 metadata: HashMap::new(),
             }),
-            enabled: self.enabled,
-            max_catchup: self.max_catchup,
-            version: self.version,
+            enabled: Some(self.enabled),
+            max_catchup: Some(self.max_catchup),
+            version: None,
         };
 
-        let resp = self
-            .client
-            .schedule_client
+        let mut client = self.client.clone();
+        let resp = client
             .create_workflow_schedule(Request::new(request))
             .await
             .map_err(map_grpc_error)?
@@ -287,14 +252,5 @@ impl<'a, I: Serialize> WorkflowScheduleBuilder<'a, I> {
             .ok_or_else(|| anyhow!("Workflow schedule not returned by server"))?;
 
         Ok(resp)
-    }
-}
-
-impl<'a, I: Serialize + Send + 'a> IntoFuture for WorkflowScheduleBuilder<'a, I> {
-    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + Send + 'a>>;
-    type Output = anyhow::Result<WorkflowSchedule>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.create())
     }
 }

@@ -10,6 +10,7 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 futures = "0.3"
 hostname = "0.4.2"
+humantime = "2.1"
 kagzi-proto = { path = "../../crates/kagzi-proto" }
 prost = { workspace = true }
 prost-types = { workspace = true }

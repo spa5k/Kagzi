@@ -2,7 +2,7 @@ use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::{Context, Kagzi, Worker};
 use serde::{Deserialize, Serialize};
 
 #[path = "../common.rs"]
@@ -26,11 +26,11 @@ async fn main() -> anyhow::Result<()> {
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("external");
 
     let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
-    let queue = env::var("KAGZI_TASK_QUEUE").unwrap_or_else(|_| "idempotency".into());
+    let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "idempotency".into());
 
     match variant {
-        "external" => external_id_demo(&server, &queue).await?,
-        "memo" => memoization_demo(&server, &queue).await?,
+        "external" => external_id_demo(&server, &namespace).await?,
+        "memo" => memoization_demo(&server, &namespace).await?,
         _ => {
             eprintln!("Usage: cargo run -p kagzi --example 07_idempotency -- [external|memo]");
             std::process::exit(1);
@@ -40,36 +40,37 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn external_id_demo(server: &str, queue: &str) -> anyhow::Result<()> {
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("charge_payment", charge_payment);
+async fn external_id_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("charge_payment", charge_payment)])
+        .build()
+        .await?;
 
-    let mut client = common::connect_client(server).await?;
+    let client = Kagzi::connect(server).await?;
     let external_id = "order-123";
     let run1 = client
-        .workflow(
-            "charge_payment",
-            queue,
-            PaymentInput {
-                order_id: external_id.into(),
-            },
-        )
+        .start("charge_payment")
+        .namespace(namespace)
+        .input(PaymentInput {
+            order_id: external_id.into(),
+        })
         .id(external_id)
+        .r#await()
         .await?;
     let run2 = client
-        .workflow(
-            "charge_payment",
-            queue,
-            PaymentInput {
-                order_id: external_id.into(),
-            },
-        )
+        .start("charge_payment")
+        .namespace(namespace)
+        .input(PaymentInput {
+            order_id: external_id.into(),
+        })
         .id(external_id)
+        .r#await()
         .await?;
 
     println!(
         "Both calls return the same run id due to idempotency: run1={}, run2={}",
-        run1, run2
+        run1.id, run2.id
     );
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
@@ -80,18 +81,24 @@ async fn external_id_demo(server: &str, queue: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn memoization_demo(server: &str, queue: &str) -> anyhow::Result<()> {
-    let mut worker = common::build_worker(server, queue).await?;
-    worker.register("memoized_workflow", memo_workflow);
+async fn memoization_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("memoized_workflow", memo_workflow)])
+        .build()
+        .await?;
 
-    let mut client = common::connect_client(server).await?;
+    let client = Kagzi::connect(server).await?;
     let run = client
-        .workflow("memoized_workflow", queue, MemoInput { value: 5 })
+        .start("memoized_workflow")
+        .namespace(namespace)
+        .input(MemoInput { value: 5 })
+        .r#await()
         .await?;
 
     println!(
         "Started memoization workflow; expensive step should run once even if called twice: {}",
-        run
+        run.id
     );
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
@@ -102,24 +109,20 @@ async fn memoization_demo(server: &str, queue: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn charge_payment(
-    _ctx: WorkflowContext,
-    input: PaymentInput,
-) -> anyhow::Result<serde_json::Value> {
+async fn charge_payment(_ctx: Context, input: PaymentInput) -> anyhow::Result<serde_json::Value> {
     println!("processing payment: order={}", input.order_id);
     tokio::time::sleep(Duration::from_secs(2)).await;
     Ok(serde_json::json!({"status": "charged", "order_id": input.order_id}))
 }
 
-async fn memo_workflow(
-    mut ctx: WorkflowContext,
-    input: MemoInput,
-) -> anyhow::Result<serde_json::Value> {
+async fn memo_workflow(mut ctx: Context, input: MemoInput) -> anyhow::Result<serde_json::Value> {
     let first = ctx
-        .run_with_input("expensive", &input, expensive_calculation(input.value))
+        .step("expensive")
+        .run(|| expensive_calculation(input.value))
         .await?;
     let second = ctx
-        .run_with_input("expensive", &input, expensive_calculation(input.value))
+        .step("expensive")
+        .run(|| expensive_calculation(input.value))
         .await?;
 
     Ok(serde_json::json!({
