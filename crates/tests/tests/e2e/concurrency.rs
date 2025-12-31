@@ -24,33 +24,34 @@ async fn worker_respects_max_concurrent() -> anyhow::Result<()> {
     let active_clone = active.clone();
     let peak_clone = peak.clone();
 
-    let mut worker = kagzi::Worker::builder(&harness.server_url, queue)
+    let mut worker = harness
+        .worker_builder(queue)
         .max_concurrent(2)
+        .workflows([("slow_wf", move |_ctx: Context, _: Empty| {
+            let active = active_clone.clone();
+            let peak = peak_clone.clone();
+            async move {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                sleep(Duration::from_millis(500)).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
         .build()
         .await?;
-    worker.register("slow_wf", move |_ctx: Context, _: Empty| {
-        let active = active_clone.clone();
-        let peak = peak_clone.clone();
-        async move {
-            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-            peak.fetch_max(current, Ordering::SeqCst);
-            sleep(Duration::from_millis(500)).await;
-            active.fetch_sub(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     for _ in 0..total {
-        client
+        let run = client
             .start("slow_wf")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
 
     wait_for_completed_by_type(
@@ -89,41 +90,48 @@ async fn multiple_workers_share_queue() -> anyhow::Result<()> {
     let w1_count = Arc::new(AtomicUsize::new(0));
     let w2_count = Arc::new(AtomicUsize::new(0));
 
-    let mut worker1 = harness.worker(queue).await;
-    let c1 = w1_count.clone();
-    worker1.register("multi_wf", move |_ctx: Context, _: Empty| {
-        let c1 = c1.clone();
-        async move {
-            c1.fetch_add(1, Ordering::SeqCst);
-            sleep(Duration::from_millis(200)).await;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let w1_count_clone = w1_count.clone();
+    let w2_count_clone = w2_count.clone();
+
+    let mut worker1 = harness
+        .worker_builder(queue)
+        .workflows([("multi_wf", move |_ctx: Context, _: Empty| {
+            let c1 = w1_count_clone.clone();
+            async move {
+                c1.fetch_add(1, Ordering::SeqCst);
+                sleep(Duration::from_millis(200)).await;
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown1 = worker1.shutdown_token();
     let handle1 = tokio::spawn(async move { worker1.run().await });
 
-    let mut worker2 = harness.worker(queue).await;
-    let c2 = w2_count.clone();
-    worker2.register("multi_wf", move |_ctx: Context, _: Empty| {
-        let c2 = c2.clone();
-        async move {
-            c2.fetch_add(1, Ordering::SeqCst);
-            sleep(Duration::from_millis(200)).await;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker2 = harness
+        .worker_builder(queue)
+        .workflows([("multi_wf", move |_ctx: Context, _: Empty| {
+            let c2 = w2_count_clone.clone();
+            async move {
+                c2.fetch_add(1, Ordering::SeqCst);
+                sleep(Duration::from_millis(200)).await;
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     for _ in 0..total {
-        client
+        let run = client
             .start("multi_wf")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
 
     wait_for_completed_by_type(
@@ -172,55 +180,64 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
     let w1 = Arc::new(AtomicUsize::new(0));
     let w2 = Arc::new(AtomicUsize::new(0));
     let w3 = Arc::new(AtomicUsize::new(0));
+    let w1_inner = w1.clone();
+    let w2_inner = w2.clone();
+    let w3_inner = w3.clone();
 
-    let mut worker1 = harness.worker(queue).await;
-    let c1 = w1.clone();
-    worker1.register("rapid_poll", move |_ctx: Context, _: Empty| {
-        let c1 = c1.clone();
-        async move {
-            sleep(Duration::from_millis(100)).await;
-            c1.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker1 = harness
+        .worker_builder(queue)
+        .workflows([("rapid_poll", move |_ctx: Context, _: Empty| {
+            let c1 = w1_inner.clone();
+            async move {
+                sleep(Duration::from_millis(100)).await;
+                c1.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown1 = worker1.shutdown_token();
     let handle1 = tokio::spawn(async move { worker1.run().await });
 
-    let mut worker2 = harness.worker(queue).await;
-    let c2 = w2.clone();
-    worker2.register("rapid_poll", move |_ctx: Context, _: Empty| {
-        let c2 = c2.clone();
-        async move {
-            sleep(Duration::from_millis(100)).await;
-            c2.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker2 = harness
+        .worker_builder(queue)
+        .workflows([("rapid_poll", move |_ctx: Context, _: Empty| {
+            let c2 = w2_inner.clone();
+            async move {
+                sleep(Duration::from_millis(100)).await;
+                c2.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    let mut worker3 = harness.worker(queue).await;
-    let c3 = w3.clone();
-    worker3.register("rapid_poll", move |_ctx: Context, _: Empty| {
-        let c3 = c3.clone();
-        async move {
-            sleep(Duration::from_millis(100)).await;
-            c3.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker3 = harness
+        .worker_builder(queue)
+        .workflows([("rapid_poll", move |_ctx: Context, _: Empty| {
+            let c3 = w3_inner.clone();
+            async move {
+                sleep(Duration::from_millis(100)).await;
+                c3.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown3 = worker3.shutdown_token();
     let handle3 = tokio::spawn(async move { worker3.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     for _ in 0..total {
-        client
+        let run = client
             .start("rapid_poll")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
 
     wait_for_completed_by_type(
@@ -273,46 +290,48 @@ async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
     let w1_hits = Arc::new(AtomicUsize::new(0));
     let w2_hits = Arc::new(AtomicUsize::new(0));
 
-    let mut worker1 = kagzi::Worker::builder(&harness.server_url, queue)
+    let c1 = w1_hits.clone();
+    let mut worker1 = harness
+        .worker_builder(queue)
         .max_concurrent(100)
+        .workflows([("transition_sleep", move |mut ctx: Context, _: Empty| {
+            let c1 = c1.clone();
+            async move {
+                c1.fetch_add(1, Ordering::SeqCst);
+                ctx.sleep("sleep", "2s").await?;
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
         .build()
         .await?;
-    let c1 = w1_hits.clone();
-    worker1.register("transition_sleep", move |mut ctx: Context, _: Empty| {
-        let c1 = c1.clone();
-        async move {
-            c1.fetch_add(1, Ordering::SeqCst);
-            ctx.sleep("sleep", "2s").await?;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
     let shutdown1 = worker1.shutdown_token();
     let handle1 = tokio::spawn(async move { worker1.run().await });
 
-    let mut worker2 = kagzi::Worker::builder(&harness.server_url, queue)
+    let c2 = w2_hits.clone();
+    let mut worker2 = harness
+        .worker_builder(queue)
         .max_concurrent(100)
+        .workflows([("transition_sleep", move |mut ctx: Context, _: Empty| {
+            let c2 = c2.clone();
+            async move {
+                c2.fetch_add(1, Ordering::SeqCst);
+                ctx.sleep("sleep", "2s").await?;
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
         .build()
         .await?;
-    let c2 = w2_hits.clone();
-    worker2.register("transition_sleep", move |mut ctx: Context, _: Empty| {
-        let c2 = c2.clone();
-        async move {
-            c2.fetch_add(1, Ordering::SeqCst);
-            ctx.sleep("sleep", "2s").await?;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    let mut client = harness.client().await;
-    let run_id = client
+    let client = harness.client().await;
+    let run = client
         .start("transition_sleep")
         .namespace(queue)
         .input(Empty)
         .r#await()
-        .await?
         .await?;
+    let run_id = run.id;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
     let wf = wait_for_status(
@@ -346,68 +365,56 @@ async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<(
     let a_hits = Arc::new(AtomicUsize::new(0));
     let b_hits = Arc::new(AtomicUsize::new(0));
 
-    let mut worker_a = harness.worker(queue).await;
     let a_counter = a_hits.clone();
-    worker_a.register("type_a", move |_ctx: Context, _: Empty| {
-        let a_counter = a_counter.clone();
-        async move {
-            a_counter.fetch_add(1, Ordering::SeqCst);
-            sleep(Duration::from_millis(50)).await;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
-    let b_counter = b_hits.clone();
-    worker_a.register("type_b", move |_ctx: Context, _: Empty| {
-        let b_counter = b_counter.clone();
-        async move {
-            b_counter.fetch_add(1, Ordering::SeqCst);
-            sleep(Duration::from_millis(50)).await;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker_a = harness
+        .worker_builder(queue)
+        .workflows([("type_a", move |_ctx: Context, _: Empty| {
+            let a_counter = a_counter.clone();
+            async move {
+                a_counter.fetch_add(1, Ordering::SeqCst);
+                sleep(Duration::from_millis(50)).await;
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown_a = worker_a.shutdown_token();
     let handle_a = tokio::spawn(async move { worker_a.run().await });
 
-    let mut worker_b = harness.worker(queue).await;
     let b_counter = b_hits.clone();
-    worker_b.register("type_b", move |_ctx: Context, _: Empty| {
-        let b_counter = b_counter.clone();
-        async move {
-            b_counter.fetch_add(1, Ordering::SeqCst);
-            sleep(Duration::from_millis(50)).await;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
-    let a_counter_b = a_hits.clone();
-    worker_b.register("type_a", move |_ctx: Context, _: Empty| {
-        let a_counter_b = a_counter_b.clone();
-        async move {
-            a_counter_b.fetch_add(1, Ordering::SeqCst);
-            sleep(Duration::from_millis(50)).await;
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker_b = harness
+        .worker_builder(queue)
+        .workflows([("type_b", move |_ctx: Context, _: Empty| {
+            let b_counter = b_counter.clone();
+            async move {
+                b_counter.fetch_add(1, Ordering::SeqCst);
+                sleep(Duration::from_millis(50)).await;
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown_b = worker_b.shutdown_token();
     let handle_b = tokio::spawn(async move { worker_b.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     for _ in 0..5 {
-        client
+        let run = client
             .start("type_a")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
     for _ in 0..5 {
-        client
+        let run = client
             .start("type_b")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
 
     wait_for_completed_by_type(&harness.pool, "type_a", 5, 40, Duration::from_millis(250)).await?;
@@ -436,33 +443,34 @@ async fn max_concurrent_enforced_across_burst() -> anyhow::Result<()> {
 
     let active_clone = active.clone();
     let peak_clone = peak.clone();
-    let mut worker = kagzi::Worker::builder(&harness.server_url, queue)
+    let mut worker = harness
+        .worker_builder(queue)
         .max_concurrent(1)
+        .workflows([("queue_limited", move |_ctx: Context, _: Empty| {
+            let active_clone = active_clone.clone();
+            let peak_clone = peak_clone.clone();
+            async move {
+                let current = active_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                peak_clone.fetch_max(current, Ordering::SeqCst);
+                sleep(Duration::from_millis(300)).await;
+                active_clone.fetch_sub(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
         .build()
         .await?;
-    worker.register("queue_limited", move |_ctx: Context, _: Empty| {
-        let active_clone = active_clone.clone();
-        let peak_clone = peak_clone.clone();
-        async move {
-            let current = active_clone.fetch_add(1, Ordering::SeqCst) + 1;
-            peak_clone.fetch_max(current, Ordering::SeqCst);
-            sleep(Duration::from_millis(300)).await;
-            active_clone.fetch_sub(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     for _ in 0..total {
-        client
+        let run = client
             .start("queue_limited")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
 
     wait_for_completed_by_type(
@@ -494,59 +502,66 @@ async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
     let active_b = Arc::new(AtomicUsize::new(0));
     let peak_b = Arc::new(AtomicUsize::new(0));
 
-    let mut worker = kagzi::Worker::builder(&harness.server_url, queue)
-        .max_concurrent(2)
-        .workflow_type_concurrency("type_a", 1)
-        .workflow_type_concurrency("type_b", 2)
-        .build()
-        .await?;
     let active_a_clone = active_a.clone();
     let peak_a_clone = peak_a.clone();
-    worker.register("type_a", move |_ctx: Context, _: Empty| {
-        let active_a_clone = active_a_clone.clone();
-        let peak_a_clone = peak_a_clone.clone();
-        async move {
-            let current = active_a_clone.fetch_add(1, Ordering::SeqCst) + 1;
-            peak_a_clone.fetch_max(current, Ordering::SeqCst);
-            sleep(Duration::from_millis(400)).await;
-            active_a_clone.fetch_sub(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker_a = harness
+        .worker_builder(queue)
+        .max_concurrent(2)
+        .workflows([("type_a", move |_ctx: Context, _: Empty| {
+            let active_a_clone = active_a_clone.clone();
+            let peak_a_clone = peak_a_clone.clone();
+            async move {
+                let current = active_a_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                peak_a_clone.fetch_max(current, Ordering::SeqCst);
+                sleep(Duration::from_millis(400)).await;
+                active_a_clone.fetch_sub(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
+    let shutdown_a = worker_a.shutdown_token();
+    let handle_a = tokio::spawn(async move { worker_a.run().await });
+
     let active_b_clone = active_b.clone();
     let peak_b_clone = peak_b.clone();
-    worker.register("type_b", move |_ctx: Context, _: Empty| {
-        let active_b_clone = active_b_clone.clone();
-        let peak_b_clone = peak_b_clone.clone();
-        async move {
-            let current = active_b_clone.fetch_add(1, Ordering::SeqCst) + 1;
-            peak_b_clone.fetch_max(current, Ordering::SeqCst);
-            sleep(Duration::from_millis(200)).await;
-            active_b_clone.fetch_sub(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
-    let shutdown = worker.shutdown_token();
-    let handle = tokio::spawn(async move { worker.run().await });
+    let mut worker_b = harness
+        .worker_builder(queue)
+        .max_concurrent(2)
+        .workflows([("type_b", move |_ctx: Context, _: Empty| {
+            let active_b_clone = active_b_clone.clone();
+            let peak_b_clone = peak_b_clone.clone();
+            async move {
+                let current = active_b_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                peak_b_clone.fetch_max(current, Ordering::SeqCst);
+                sleep(Duration::from_millis(200)).await;
+                active_b_clone.fetch_sub(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
+    let shutdown_b = worker_b.shutdown_token();
+    let handle_b = tokio::spawn(async move { worker_b.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     for _ in 0..4 {
-        client
+        let run = client
             .start("type_a")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
     for _ in 0..4 {
-        client
+        let run = client
             .start("type_b")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
 
     wait_for_completed_by_type(&harness.pool, "type_a", 4, 40, Duration::from_millis(250)).await?;
@@ -554,17 +569,19 @@ async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
 
     assert!(
         peak_a.load(Ordering::SeqCst) <= 2,
-        "type_a should respect configured limits, observed {}",
+        "type_a concurrency should be limited by worker max_concurrent, observed {}",
         peak_a.load(Ordering::SeqCst)
     );
     assert!(
         peak_b.load(Ordering::SeqCst) <= 2,
-        "type_b should respect per-type concurrency limit of 2, observed {}",
+        "type_b concurrency should be limited by worker max_concurrent, observed {}",
         peak_b.load(Ordering::SeqCst)
     );
 
-    shutdown.cancel();
-    let _ = handle.await;
+    shutdown_a.cancel();
+    shutdown_b.cancel();
+    let _ = handle_a.await;
+    let _ = handle_b.await;
     Ok(())
 }
 
@@ -576,28 +593,31 @@ async fn burst_of_workflows_completes_without_drops() -> anyhow::Result<()> {
 
     let completed = Arc::new(AtomicUsize::new(0));
 
-    let mut worker = harness.worker(queue).await;
     let counter = completed.clone();
-    worker.register("burst_work", move |_ctx: Context, _: Empty| {
-        let counter = counter.clone();
-        async move {
-            sleep(Duration::from_millis(50)).await;
-            counter.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, anyhow::Error>(())
-        }
-    });
+    let mut worker = harness
+        .worker_builder(queue)
+        .workflows([("burst_work", move |_ctx: Context, _: Empty| {
+            let counter = counter.clone();
+            async move {
+                sleep(Duration::from_millis(50)).await;
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, anyhow::Error>(())
+            }
+        })])
+        .build()
+        .await?;
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     for _ in 0..total {
-        client
+        let run = client
             .start("burst_work")
             .namespace(queue)
             .input(Empty)
             .r#await()
-            .await?
             .await?;
+        let _ = run.id;
     }
 
     wait_for_completed_by_type(

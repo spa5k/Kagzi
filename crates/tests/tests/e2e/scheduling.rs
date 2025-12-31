@@ -14,16 +14,23 @@ async fn scheduler_fires_workflow_on_cron() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-scheduling-cron";
 
-    let mut worker = harness.worker(queue).await;
-    worker.register("cron_wf", |_ctx: Context, _input: Empty| async move {
-        Ok::<_, anyhow::Error>(())
-    });
+    let mut worker = harness
+        .worker_builder(queue)
+        .workflows([("cron_wf", |_ctx: Context, _input: Empty| async move {
+            Ok::<_, anyhow::Error>(())
+        })])
+        .build()
+        .await?;
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     let _schedule = client
-        .workflow_schedule("cron_wf", queue, "*/1 * * * * *", Empty)
+        .schedule("cron_wf")
+        .namespace(queue)
+        .cron("*/1 * * * * *")
+        .input(Empty)
+        .r#await()
         .await?;
 
     sleep(Duration::from_secs(3)).await;
@@ -62,16 +69,23 @@ async fn scheduler_catchup_fires_missed_runs() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-scheduling-catchup";
 
-    let mut worker = harness.worker(queue).await;
-    worker.register("catchup_wf", |_ctx: Context, _input: Empty| async move {
-        Ok::<_, anyhow::Error>(())
-    });
+    let mut worker = harness
+        .worker_builder(queue)
+        .workflows([("catchup_wf", |_ctx: Context, _input: Empty| async move {
+            Ok::<_, anyhow::Error>(())
+        })])
+        .build()
+        .await?;
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     let schedule = client
-        .workflow_schedule("catchup_wf", queue, "*/1 * * * * *", Empty)
+        .schedule("catchup_wf")
+        .namespace(queue)
+        .cron("*/1 * * * * *")
+        .input(Empty)
+        .r#await()
         .await?;
     let schedule_id = Uuid::parse_str(&schedule.schedule_id)?;
 
@@ -122,17 +136,24 @@ async fn disabled_schedule_does_not_fire() -> anyhow::Result<()> {
     let harness = TestHarness::new().await;
     let queue = "e2e-scheduling-disabled";
 
-    let mut worker = harness.worker(queue).await;
-    worker.register("disabled_wf", |_ctx: Context, _input: Empty| async move {
-        Ok::<_, anyhow::Error>(())
-    });
+    let mut worker = harness
+        .worker_builder(queue)
+        .workflows([("disabled_wf", |_ctx: Context, _input: Empty| async move {
+            Ok::<_, anyhow::Error>(())
+        })])
+        .build()
+        .await?;
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
-    let mut client = harness.client().await;
+    let client = harness.client().await;
     let schedule = client
-        .workflow_schedule("disabled_wf", queue, "*/1 * * * * *", Empty)
+        .schedule("disabled_wf")
+        .namespace(queue)
+        .cron("*/1 * * * * *")
+        .input(Empty)
         .enabled(false)
+        .r#await()
         .await?;
     let schedule_id = Uuid::parse_str(&schedule.schedule_id)?;
     let initial_next = schedule

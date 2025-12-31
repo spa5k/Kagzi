@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
-use kagzi::{Kagzi, Worker};
+use kagzi::{Kagzi, Worker, WorkerBuilder};
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
 use kagzi_queue::QueueNotifier;
@@ -210,13 +210,9 @@ impl TestHarness {
             .expect("Failed to connect Kagzi client")
     }
 
-    /// Build a worker configured for the harness server.
-    pub async fn worker(&self, namespace: &str) -> Worker {
-        Worker::new(&self.server_url)
-            .namespace(namespace)
-            .build()
-            .await
-            .expect("Failed to build worker")
+    /// Build a worker builder configured for the harness server (call workflows() then build()).
+    pub fn worker_builder(&self, namespace: &str) -> WorkerBuilder {
+        Worker::new(&self.server_url).namespace(namespace)
     }
 
     /// Expose the bound server address for diagnostics.
