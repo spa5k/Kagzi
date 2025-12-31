@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::Context;
 use serde::{Deserialize, Serialize};
 use tests::common::TestHarness;
 use tokio::time::sleep;
@@ -15,10 +15,9 @@ async fn scheduler_fires_workflow_on_cron() -> anyhow::Result<()> {
     let queue = "e2e-scheduling-cron";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
-        "cron_wf",
-        |_ctx: WorkflowContext, _input: Empty| async move { Ok::<_, anyhow::Error>(()) },
-    );
+    worker.register("cron_wf", |_ctx: Context, _input: Empty| async move {
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
@@ -64,10 +63,9 @@ async fn scheduler_catchup_fires_missed_runs() -> anyhow::Result<()> {
     let queue = "e2e-scheduling-catchup";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
-        "catchup_wf",
-        |_ctx: WorkflowContext, _input: Empty| async move { Ok::<_, anyhow::Error>(()) },
-    );
+    worker.register("catchup_wf", |_ctx: Context, _input: Empty| async move {
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
@@ -125,10 +123,9 @@ async fn disabled_schedule_does_not_fire() -> anyhow::Result<()> {
     let queue = "e2e-scheduling-disabled";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
-        "disabled_wf",
-        |_ctx: WorkflowContext, _input: Empty| async move { Ok::<_, anyhow::Error>(()) },
-    );
+    worker.register("disabled_wf", |_ctx: Context, _input: Empty| async move {
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 

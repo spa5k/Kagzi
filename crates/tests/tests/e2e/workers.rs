@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
+use kagzi::Context;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{DeregisterRequest, PollTaskRequest, RegisterRequest, WorkflowStatus};
 use serde::{Deserialize, Serialize};
@@ -215,16 +215,28 @@ async fn worker_drain_mode_completes_active_before_stopping() -> anyhow::Result<
         .max_concurrent(1)
         .build()
         .await?;
-    worker.register("slow", |_ctx: WorkflowContext, _input: Empty| async move {
+    worker.workflows([("slow", |_ctx: Context, _input: Empty| async move {
         sleep(Duration::from_millis(800)).await;
         Ok::<_, anyhow::Error>(())
-    });
+    })]);
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
     let mut client = harness.client().await;
-    let run1 = client.workflow("slow", queue, Empty).await?;
-    let run2 = client.workflow("slow", queue, Empty).await?;
+    let run1 = client
+        .start("slow")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
+    let run2 = client
+        .start("slow")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
     let run1_uuid = Uuid::parse_str(&run1)?;
     let run2_uuid = Uuid::parse_str(&run2)?;
 
@@ -245,7 +257,13 @@ async fn worker_drain_mode_completes_active_before_stopping() -> anyhow::Result<
         .await?;
 
     // The in-flight workflow should finish.
-    wait_for_status(&harness.server_url, &run1, WorkflowStatus::Completed, 40).await?;
+    wait_for_status(
+        &harness.server_url,
+        &run1,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
 
     // The second workflow should remain pending because the worker drained.
     harness
@@ -268,9 +286,9 @@ async fn worker_offline_after_missed_heartbeats() -> anyhow::Result<()> {
     let queue = "e2e-worker-heartbeat-missed";
 
     let mut worker = harness.worker(queue).await;
-    worker.register("noop", |_ctx: WorkflowContext, _input: Empty| async move {
+    worker.workflows([("noop", |_ctx: Context, _input: Empty| async move {
         Ok::<_, anyhow::Error>(())
-    });
+    })]);
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
@@ -302,9 +320,9 @@ async fn worker_heartbeat_extends_active_status() -> anyhow::Result<()> {
     let queue = "e2e-worker-heartbeat-active";
 
     let mut worker = harness.worker(queue).await;
-    worker.register("noop", |_ctx: WorkflowContext, _input: Empty| async move {
+    worker.workflows([("noop", |_ctx: Context, _input: Empty| async move {
         Ok::<_, anyhow::Error>(())
-    });
+    })]);
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
@@ -336,19 +354,28 @@ async fn worker_heartbeat_updates_active_count() -> anyhow::Result<()> {
         .max_concurrent(2)
         .build()
         .await?;
-    worker.register(
-        "slow_active",
-        |_ctx: WorkflowContext, _input: Empty| async move {
-            sleep(Duration::from_millis(800)).await;
-            Ok::<_, anyhow::Error>(())
-        },
-    );
+    worker.register("slow_active", |_ctx: Context, _input: Empty| async move {
+        sleep(Duration::from_millis(800)).await;
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
     let mut client = harness.client().await;
-    let run_a = client.workflow("slow_active", queue, Empty).await?;
-    let run_b = client.workflow("slow_active", queue, Empty).await?;
+    let run_a = client
+        .start("slow_active")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
+    let run_b = client
+        .start("slow_active")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
     let run_a_uuid = Uuid::parse_str(&run_a)?;
     let run_b_uuid = Uuid::parse_str(&run_b)?;
 
@@ -380,8 +407,20 @@ async fn worker_heartbeat_updates_active_count() -> anyhow::Result<()> {
         "active_count should reflect running workflows"
     );
 
-    wait_for_status(&harness.server_url, &run_a, WorkflowStatus::Completed, 40).await?;
-    wait_for_status(&harness.server_url, &run_b, WorkflowStatus::Completed, 40).await?;
+    wait_for_status(
+        &harness.server_url,
+        &run_a,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
+    wait_for_status(
+        &harness.server_url,
+        &run_b,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
 
     shutdown.cancel();
     let _ = handle.await;
@@ -402,9 +441,9 @@ async fn stale_worker_detected_by_watchdog() -> anyhow::Result<()> {
         .max_concurrent(1)
         .build()
         .await?;
-    worker.register("noop", |_ctx: WorkflowContext, _input: Empty| async move {
+    worker.workflows([("noop", |_ctx: Context, _input: Empty| async move {
         Ok::<_, anyhow::Error>(())
-    });
+    })]);
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
@@ -435,18 +474,21 @@ async fn stale_worker_workflows_rescheduled() -> anyhow::Result<()> {
     let queue = "e2e-worker-stale-reschedule";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
-        "long_running",
-        |_ctx: WorkflowContext, _input: Empty| async move {
-            sleep(Duration::from_secs(10)).await;
-            Ok::<_, anyhow::Error>(())
-        },
-    );
+    worker.register("long_running", |_ctx: Context, _input: Empty| async move {
+        sleep(Duration::from_secs(10)).await;
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
     let mut client = harness.client().await;
-    let run_id = client.workflow("long_running", queue, Empty).await?;
+    let run_id = client
+        .start("long_running")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
     harness
@@ -470,14 +512,19 @@ async fn stale_worker_workflows_rescheduled() -> anyhow::Result<()> {
 
     // Bring up a new worker to finish the workflow.
     let mut worker2 = harness.worker(queue).await;
-    worker2.register(
-        "long_running",
-        |_ctx: WorkflowContext, _input: Empty| async move { Ok::<_, anyhow::Error>(()) },
-    );
+    worker2.register("long_running", |_ctx: Context, _input: Empty| async move {
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
+    wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
 
     shutdown2.cancel();
     let _ = handle2.await;
@@ -497,7 +544,7 @@ async fn worker_with_different_workflow_types_only_receives_matching() -> anyhow
         .build()
         .await?;
     let a_counter = a_count.clone();
-    worker_a.register("alpha", move |_ctx: WorkflowContext, _input: Empty| {
+    worker_a.register("alpha", move |_ctx: Context, _input: Empty| {
         let a_counter = a_counter.clone();
         async move {
             a_counter.fetch_add(1, Ordering::SeqCst);
@@ -512,7 +559,7 @@ async fn worker_with_different_workflow_types_only_receives_matching() -> anyhow
         .build()
         .await?;
     let b_counter = b_count.clone();
-    worker_b.register("beta", move |_ctx: WorkflowContext, _input: Empty| {
+    worker_b.register("beta", move |_ctx: Context, _input: Empty| {
         let b_counter = b_counter.clone();
         async move {
             b_counter.fetch_add(1, Ordering::SeqCst);
@@ -526,20 +573,32 @@ async fn worker_with_different_workflow_types_only_receives_matching() -> anyhow
     wait_for_worker_count(&harness.pool, queue, 2).await?;
 
     let mut client = harness.client().await;
-    let alpha_run = client.workflow("alpha", queue, Empty).await?;
-    let beta_run = client.workflow("beta", queue, Empty).await?;
+    let alpha_run = client
+        .start("alpha")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
+    let beta_run = client
+        .start("beta")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
 
     wait_for_status(
         &harness.server_url,
         &alpha_run,
-        WorkflowStatus::Completed,
+        ProtoWorkflowStatus::Completed,
         40,
     )
     .await?;
     wait_for_status(
         &harness.server_url,
         &beta_run,
-        WorkflowStatus::Completed,
+        ProtoWorkflowStatus::Completed,
         40,
     )
     .await?;
@@ -568,31 +627,42 @@ async fn worker_concurrency_limit_respected() -> anyhow::Result<()> {
         .await?;
     let active_clone = active.clone();
     let peak_clone = peak.clone();
-    worker.register(
-        "queue_limited",
-        move |_ctx: WorkflowContext, _input: Empty| {
-            let active_clone = active_clone.clone();
-            let peak_clone = peak_clone.clone();
-            async move {
-                let current = active_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                peak_clone.fetch_max(current, Ordering::SeqCst);
-                sleep(Duration::from_millis(400)).await;
-                active_clone.fetch_sub(1, Ordering::SeqCst);
-                Ok::<_, anyhow::Error>(())
-            }
-        },
-    );
+    worker.register("queue_limited", move |_ctx: Context, _input: Empty| {
+        let active_clone = active_clone.clone();
+        let peak_clone = peak_clone.clone();
+        async move {
+            let current = active_clone.fetch_add(1, Ordering::SeqCst) + 1;
+            peak_clone.fetch_max(current, Ordering::SeqCst);
+            sleep(Duration::from_millis(400)).await;
+            active_clone.fetch_sub(1, Ordering::SeqCst);
+            Ok::<_, anyhow::Error>(())
+        }
+    });
     let shutdown = worker.shutdown_token();
     let handle = tokio::spawn(async move { worker.run().await });
 
     let mut client = harness.client().await;
     let mut run_ids = Vec::new();
     for _ in 0..4 {
-        run_ids.push(client.workflow("queue_limited", queue, Empty).await?);
+        run_ids.push(
+            client
+                .start("queue_limited")
+                .namespace(queue)
+                .input(Empty)
+                .r#await()
+                .await?
+                .await?,
+        );
     }
 
     for run_id in &run_ids {
-        wait_for_status(&harness.server_url, run_id, WorkflowStatus::Completed, 40).await?;
+        wait_for_status(
+            &harness.server_url,
+            run_id,
+            ProtoWorkflowStatus::Completed,
+            40,
+        )
+        .await?;
     }
 
     shutdown.cancel();
@@ -622,7 +692,7 @@ async fn workflow_type_concurrency_limit_per_worker() -> anyhow::Result<()> {
         .await?;
     let active_clone = active.clone();
     let peak_clone = peak.clone();
-    worker.register("limited", move |_ctx: WorkflowContext, _input: Empty| {
+    worker.register("limited", move |_ctx: Context, _input: Empty| {
         let active_clone = active_clone.clone();
         let peak_clone = peak_clone.clone();
         async move {
@@ -639,11 +709,25 @@ async fn workflow_type_concurrency_limit_per_worker() -> anyhow::Result<()> {
     let mut client = harness.client().await;
     let mut run_ids = Vec::new();
     for _ in 0..3 {
-        run_ids.push(client.workflow("limited", queue, Empty).await?);
+        run_ids.push(
+            client
+                .start("limited")
+                .namespace(queue)
+                .input(Empty)
+                .r#await()
+                .await?
+                .await?,
+        );
     }
 
     for run_id in &run_ids {
-        wait_for_status(&harness.server_url, run_id, WorkflowStatus::Completed, 50).await?;
+        wait_for_status(
+            &harness.server_url,
+            run_id,
+            ProtoWorkflowStatus::Completed,
+            50,
+        )
+        .await?;
     }
 
     shutdown.cancel();

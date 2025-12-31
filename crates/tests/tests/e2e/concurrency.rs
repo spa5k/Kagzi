@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kagzi::WorkflowContext;
-use kagzi_proto::kagzi::WorkflowStatus;
+use kagzi::Context;
+use kagzi_proto::kagzi::WorkflowStatus as ProtoWorkflowStatus;
 use serde::{Deserialize, Serialize};
 use tests::common::{TestConfig, TestHarness, wait_for_completed_by_type, wait_for_status};
 use tokio::time::sleep;
@@ -28,7 +28,7 @@ async fn worker_respects_max_concurrent() -> anyhow::Result<()> {
         .max_concurrent(2)
         .build()
         .await?;
-    worker.register("slow_wf", move |_ctx: WorkflowContext, _: Empty| {
+    worker.register("slow_wf", move |_ctx: Context, _: Empty| {
         let active = active_clone.clone();
         let peak = peak_clone.clone();
         async move {
@@ -44,7 +44,13 @@ async fn worker_respects_max_concurrent() -> anyhow::Result<()> {
 
     let mut client = harness.client().await;
     for _ in 0..total {
-        client.workflow("slow_wf", queue, Empty).await?;
+        client
+            .start("slow_wf")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
 
     wait_for_completed_by_type(
@@ -85,7 +91,7 @@ async fn multiple_workers_share_queue() -> anyhow::Result<()> {
 
     let mut worker1 = harness.worker(queue).await;
     let c1 = w1_count.clone();
-    worker1.register("multi_wf", move |_ctx: WorkflowContext, _: Empty| {
+    worker1.register("multi_wf", move |_ctx: Context, _: Empty| {
         let c1 = c1.clone();
         async move {
             c1.fetch_add(1, Ordering::SeqCst);
@@ -98,7 +104,7 @@ async fn multiple_workers_share_queue() -> anyhow::Result<()> {
 
     let mut worker2 = harness.worker(queue).await;
     let c2 = w2_count.clone();
-    worker2.register("multi_wf", move |_ctx: WorkflowContext, _: Empty| {
+    worker2.register("multi_wf", move |_ctx: Context, _: Empty| {
         let c2 = c2.clone();
         async move {
             c2.fetch_add(1, Ordering::SeqCst);
@@ -111,7 +117,13 @@ async fn multiple_workers_share_queue() -> anyhow::Result<()> {
 
     let mut client = harness.client().await;
     for _ in 0..total {
-        client.workflow("multi_wf", queue, Empty).await?;
+        client
+            .start("multi_wf")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
 
     wait_for_completed_by_type(
@@ -163,7 +175,7 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
 
     let mut worker1 = harness.worker(queue).await;
     let c1 = w1.clone();
-    worker1.register("rapid_poll", move |_ctx: WorkflowContext, _: Empty| {
+    worker1.register("rapid_poll", move |_ctx: Context, _: Empty| {
         let c1 = c1.clone();
         async move {
             sleep(Duration::from_millis(100)).await;
@@ -176,7 +188,7 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
 
     let mut worker2 = harness.worker(queue).await;
     let c2 = w2.clone();
-    worker2.register("rapid_poll", move |_ctx: WorkflowContext, _: Empty| {
+    worker2.register("rapid_poll", move |_ctx: Context, _: Empty| {
         let c2 = c2.clone();
         async move {
             sleep(Duration::from_millis(100)).await;
@@ -189,7 +201,7 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
 
     let mut worker3 = harness.worker(queue).await;
     let c3 = w3.clone();
-    worker3.register("rapid_poll", move |_ctx: WorkflowContext, _: Empty| {
+    worker3.register("rapid_poll", move |_ctx: Context, _: Empty| {
         let c3 = c3.clone();
         async move {
             sleep(Duration::from_millis(100)).await;
@@ -202,7 +214,13 @@ async fn rapid_poll_burst_no_duplicate_claims() -> anyhow::Result<()> {
 
     let mut client = harness.client().await;
     for _ in 0..total {
-        client.workflow("rapid_poll", queue, Empty).await?;
+        client
+            .start("rapid_poll")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
 
     wait_for_completed_by_type(
@@ -260,17 +278,14 @@ async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
         .build()
         .await?;
     let c1 = w1_hits.clone();
-    worker1.register(
-        "transition_sleep",
-        move |mut ctx: WorkflowContext, _: Empty| {
-            let c1 = c1.clone();
-            async move {
-                c1.fetch_add(1, Ordering::SeqCst);
-                ctx.sleep(Duration::from_secs(2)).await?;
-                Ok::<_, anyhow::Error>(())
-            }
-        },
-    );
+    worker1.register("transition_sleep", move |mut ctx: Context, _: Empty| {
+        let c1 = c1.clone();
+        async move {
+            c1.fetch_add(1, Ordering::SeqCst);
+            ctx.sleep("sleep", "2s").await?;
+            Ok::<_, anyhow::Error>(())
+        }
+    });
     let shutdown1 = worker1.shutdown_token();
     let handle1 = tokio::spawn(async move { worker1.run().await });
 
@@ -279,26 +294,35 @@ async fn claim_during_status_transition_handled() -> anyhow::Result<()> {
         .build()
         .await?;
     let c2 = w2_hits.clone();
-    worker2.register(
-        "transition_sleep",
-        move |mut ctx: WorkflowContext, _: Empty| {
-            let c2 = c2.clone();
-            async move {
-                c2.fetch_add(1, Ordering::SeqCst);
-                ctx.sleep(Duration::from_secs(2)).await?;
-                Ok::<_, anyhow::Error>(())
-            }
-        },
-    );
+    worker2.register("transition_sleep", move |mut ctx: Context, _: Empty| {
+        let c2 = c2.clone();
+        async move {
+            c2.fetch_add(1, Ordering::SeqCst);
+            ctx.sleep("sleep", "2s").await?;
+            Ok::<_, anyhow::Error>(())
+        }
+    });
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
     let mut client = harness.client().await;
-    let run_id = client.workflow("transition_sleep", queue, Empty).await?;
+    let run_id = client
+        .start("transition_sleep")
+        .namespace(queue)
+        .input(Empty)
+        .r#await()
+        .await?
+        .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     let attempts = harness.db_workflow_attempts(&run_uuid).await?;
     assert!(
@@ -324,7 +348,7 @@ async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<(
 
     let mut worker_a = harness.worker(queue).await;
     let a_counter = a_hits.clone();
-    worker_a.register("type_a", move |_ctx: WorkflowContext, _: Empty| {
+    worker_a.register("type_a", move |_ctx: Context, _: Empty| {
         let a_counter = a_counter.clone();
         async move {
             a_counter.fetch_add(1, Ordering::SeqCst);
@@ -333,7 +357,7 @@ async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<(
         }
     });
     let b_counter = b_hits.clone();
-    worker_a.register("type_b", move |_ctx: WorkflowContext, _: Empty| {
+    worker_a.register("type_b", move |_ctx: Context, _: Empty| {
         let b_counter = b_counter.clone();
         async move {
             b_counter.fetch_add(1, Ordering::SeqCst);
@@ -346,7 +370,7 @@ async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<(
 
     let mut worker_b = harness.worker(queue).await;
     let b_counter = b_hits.clone();
-    worker_b.register("type_b", move |_ctx: WorkflowContext, _: Empty| {
+    worker_b.register("type_b", move |_ctx: Context, _: Empty| {
         let b_counter = b_counter.clone();
         async move {
             b_counter.fetch_add(1, Ordering::SeqCst);
@@ -355,7 +379,7 @@ async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<(
         }
     });
     let a_counter_b = a_hits.clone();
-    worker_b.register("type_a", move |_ctx: WorkflowContext, _: Empty| {
+    worker_b.register("type_a", move |_ctx: Context, _: Empty| {
         let a_counter_b = a_counter_b.clone();
         async move {
             a_counter_b.fetch_add(1, Ordering::SeqCst);
@@ -368,10 +392,22 @@ async fn multi_worker_type_filtering_distributes_correctly() -> anyhow::Result<(
 
     let mut client = harness.client().await;
     for _ in 0..5 {
-        client.workflow("type_a", queue, Empty).await?;
+        client
+            .start("type_a")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
     for _ in 0..5 {
-        client.workflow("type_b", queue, Empty).await?;
+        client
+            .start("type_b")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
 
     wait_for_completed_by_type(&harness.pool, "type_a", 5, 40, Duration::from_millis(250)).await?;
@@ -404,7 +440,7 @@ async fn max_concurrent_enforced_across_burst() -> anyhow::Result<()> {
         .max_concurrent(1)
         .build()
         .await?;
-    worker.register("queue_limited", move |_ctx: WorkflowContext, _: Empty| {
+    worker.register("queue_limited", move |_ctx: Context, _: Empty| {
         let active_clone = active_clone.clone();
         let peak_clone = peak_clone.clone();
         async move {
@@ -420,7 +456,13 @@ async fn max_concurrent_enforced_across_burst() -> anyhow::Result<()> {
 
     let mut client = harness.client().await;
     for _ in 0..total {
-        client.workflow("queue_limited", queue, Empty).await?;
+        client
+            .start("queue_limited")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
 
     wait_for_completed_by_type(
@@ -460,7 +502,7 @@ async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
         .await?;
     let active_a_clone = active_a.clone();
     let peak_a_clone = peak_a.clone();
-    worker.register("type_a", move |_ctx: WorkflowContext, _: Empty| {
+    worker.register("type_a", move |_ctx: Context, _: Empty| {
         let active_a_clone = active_a_clone.clone();
         let peak_a_clone = peak_a_clone.clone();
         async move {
@@ -473,7 +515,7 @@ async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
     });
     let active_b_clone = active_b.clone();
     let peak_b_clone = peak_b.clone();
-    worker.register("type_b", move |_ctx: WorkflowContext, _: Empty| {
+    worker.register("type_b", move |_ctx: Context, _: Empty| {
         let active_b_clone = active_b_clone.clone();
         let peak_b_clone = peak_b_clone.clone();
         async move {
@@ -489,10 +531,22 @@ async fn per_type_concurrency_limits_enforced() -> anyhow::Result<()> {
 
     let mut client = harness.client().await;
     for _ in 0..4 {
-        client.workflow("type_a", queue, Empty).await?;
+        client
+            .start("type_a")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
     for _ in 0..4 {
-        client.workflow("type_b", queue, Empty).await?;
+        client
+            .start("type_b")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
 
     wait_for_completed_by_type(&harness.pool, "type_a", 4, 40, Duration::from_millis(250)).await?;
@@ -524,7 +578,7 @@ async fn burst_of_workflows_completes_without_drops() -> anyhow::Result<()> {
 
     let mut worker = harness.worker(queue).await;
     let counter = completed.clone();
-    worker.register("burst_work", move |_ctx: WorkflowContext, _: Empty| {
+    worker.register("burst_work", move |_ctx: Context, _: Empty| {
         let counter = counter.clone();
         async move {
             sleep(Duration::from_millis(50)).await;
@@ -537,7 +591,13 @@ async fn burst_of_workflows_completes_without_drops() -> anyhow::Result<()> {
 
     let mut client = harness.client().await;
     for _ in 0..total {
-        client.workflow("burst_work", queue, Empty).await?;
+        client
+            .start("burst_work")
+            .namespace(queue)
+            .input(Empty)
+            .r#await()
+            .await?
+            .await?;
     }
 
     wait_for_completed_by_type(

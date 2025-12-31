@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kagzi::{RetryPolicy, WorkflowContext};
-use kagzi_proto::kagzi::WorkflowStatus;
+use kagzi::{Context, Retry, RetryPolicy};
+use kagzi_proto::kagzi::WorkflowStatus as ProtoWorkflowStatus;
 use serde::{Deserialize, Serialize};
 use tests::common::{TestConfig, TestHarness, wait_for_status};
 use tokio::time::sleep;
@@ -27,8 +27,8 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
     let mut worker1 = harness.worker(queue).await;
     worker1.register(
         "simple_sleep",
-        |mut ctx: WorkflowContext, _input: SleepInput| async move {
-            ctx.sleep(Duration::from_secs(2)).await?;
+        |mut ctx: Context, _input: SleepInput| async move {
+            ctx.sleep("sleep", "2s").await?;
             Ok::<_, anyhow::Error>(())
         },
     );
@@ -66,9 +66,9 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
     let mut worker2 = harness.worker(queue).await;
     worker2.register(
         "simple_sleep",
-        |mut ctx: WorkflowContext, _input: SleepInput| async move {
+        |mut ctx: Context, _input: SleepInput| async move {
             // Must match worker1's sleep duration for deterministic replay
-            ctx.sleep(Duration::from_secs(2)).await?;
+            ctx.sleep("sleep", "2s").await?;
             Ok::<_, anyhow::Error>(())
         },
     );
@@ -76,8 +76,14 @@ async fn workflow_survives_worker_restart_during_sleep() -> anyhow::Result<()> {
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
     // Workflow should complete after worker2 picks it up and replays the sleep step
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 30).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        30,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     shutdown2.cancel();
     let _ = handle2.await;
@@ -95,13 +101,10 @@ async fn orphaned_workflow_recovered_after_worker_death() -> anyhow::Result<()> 
     let queue = "e2e-resilience-orphan";
 
     let mut worker1 = harness.worker(queue).await;
-    worker1.register(
-        "long_run",
-        |_ctx: WorkflowContext, _input: SleepInput| async move {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            Ok::<_, anyhow::Error>(())
-        },
-    );
+    worker1.register("long_run", |_ctx: Context, _input: SleepInput| async move {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown1 = worker1.shutdown_token();
     let handle1 = tokio::spawn(async move { worker1.run().await });
 
@@ -119,15 +122,20 @@ async fn orphaned_workflow_recovered_after_worker_death() -> anyhow::Result<()> 
     tokio::time::sleep(Duration::from_secs(6)).await;
 
     let mut worker2 = harness.worker(queue).await;
-    worker2.register(
-        "long_run",
-        |_ctx: WorkflowContext, _input: SleepInput| async move { Ok::<_, anyhow::Error>(()) },
-    );
+    worker2.register("long_run", |_ctx: Context, _input: SleepInput| async move {
+        Ok::<_, anyhow::Error>(())
+    });
     let shutdown2 = worker2.shutdown_token();
     let handle2 = tokio::spawn(async move { worker2.run().await });
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 30).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        30,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     // Locked_by should be cleared after recovery.
     let locked_by = harness.db_workflow_locked_by(&run_uuid).await?;
@@ -158,7 +166,7 @@ async fn single_worker_claims_workflow_under_race() -> anyhow::Result<()> {
 
     let mut worker1 = harness.worker(queue).await;
     let c1 = w1_hits.clone();
-    worker1.register("racey", move |_ctx: WorkflowContext, _input: SleepInput| {
+    worker1.register("racey", move |_ctx: Context, _input: SleepInput| {
         let c1 = c1.clone();
         async move {
             c1.fetch_add(1, Ordering::SeqCst);
@@ -171,7 +179,7 @@ async fn single_worker_claims_workflow_under_race() -> anyhow::Result<()> {
 
     let mut worker2 = harness.worker(queue).await;
     let c2 = w2_hits.clone();
-    worker2.register("racey", move |_ctx: WorkflowContext, _input: SleepInput| {
+    worker2.register("racey", move |_ctx: Context, _input: SleepInput| {
         let c2 = c2.clone();
         async move {
             c2.fetch_add(1, Ordering::SeqCst);
@@ -189,8 +197,14 @@ async fn single_worker_claims_workflow_under_race() -> anyhow::Result<()> {
     let run_uuid = Uuid::parse_str(&run_id)?;
 
     // Complete should happen exactly once despite two workers polling.
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 30).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        30,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     // Only one worker should have executed the workflow.
     let total_hits = w1_hits.load(Ordering::SeqCst) + w2_hits.load(Ordering::SeqCst);
@@ -228,13 +242,10 @@ async fn orphaned_workflow_detected_by_watchdog() -> anyhow::Result<()> {
     let queue = "e2e-resilience-orphan-detect";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
-        "stuck",
-        |_ctx: WorkflowContext, _input: SleepInput| async move {
-            tokio::time::sleep(Duration::from_secs(20)).await;
-            Ok::<_, anyhow::Error>(())
-        },
-    );
+    worker.register("stuck", |_ctx: Context, _input: SleepInput| async move {
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        Ok::<_, anyhow::Error>(())
+    });
     let handle = tokio::spawn(async move { worker.run().await });
 
     let mut client = harness.client().await;
@@ -286,7 +297,7 @@ async fn orphaned_workflow_rescheduled_with_backoff() -> anyhow::Result<()> {
     let mut worker = harness.worker(queue).await;
     worker.register(
         "backoff_wf",
-        |_ctx: WorkflowContext, _input: SleepInput| async move {
+        |_ctx: Context, _input: SleepInput| async move {
             tokio::time::sleep(Duration::from_secs(30)).await;
             Ok::<_, anyhow::Error>(())
         },
@@ -400,7 +411,7 @@ async fn orphan_recovery_increments_attempt() -> anyhow::Result<()> {
     let mut worker = harness.worker(queue).await;
     worker.register(
         "attempt_wf",
-        |_ctx: WorkflowContext, _input: SleepInput| async move {
+        |_ctx: Context, _input: SleepInput| async move {
             tokio::time::sleep(Duration::from_secs(20)).await;
             Ok::<_, anyhow::Error>(())
         },
@@ -462,7 +473,7 @@ async fn orphan_with_exhausted_retries_fails() -> anyhow::Result<()> {
     let mut worker = harness.worker(queue).await;
     worker.register(
         "exhausted_wf",
-        |_ctx: WorkflowContext, _input: SleepInput| async move {
+        |_ctx: Context, _input: SleepInput| async move {
             tokio::time::sleep(Duration::from_secs(30)).await;
             Ok::<_, anyhow::Error>(())
         },
@@ -520,7 +531,7 @@ async fn workflow_timeout_triggers_failure() -> anyhow::Result<()> {
     let mut worker = harness.worker(queue).await;
     worker.register(
         "timeout_wf",
-        |_ctx: WorkflowContext, _input: SleepInput| async move {
+        |_ctx: Context, _input: SleepInput| async move {
             // Block forever so the workflow stays RUNNING while the worker is killed.
             pending::<()>().await;
             #[allow(unreachable_code)]
@@ -550,8 +561,14 @@ async fn workflow_timeout_triggers_failure() -> anyhow::Result<()> {
     shutdown.cancel();
     handle.abort();
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 160).await?;
-    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Failed,
+        160,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Failed as i32);
     let error = wf.error.unwrap_or_default();
     assert!(
         error.message.contains("exhausted") || error.message.contains("stale"),

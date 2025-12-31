@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use kagzi::{RetryPolicy, WorkflowContext};
-use kagzi_proto::kagzi::WorkflowStatus;
+use kagzi::{Context, Retry, WorkflowStatus};
+use kagzi_proto::kagzi::WorkflowStatus as ProtoWorkflowStatus;
 use serde::{Deserialize, Serialize};
 use tests::common::{TestConfig, TestHarness, wait_for_status};
 use tonic::Request;
@@ -27,11 +27,10 @@ async fn happy_path_workflow_execution() -> anyhow::Result<()> {
     let mut worker = harness.worker(queue).await;
     worker.register(
         "hello_world",
-        |mut ctx: WorkflowContext, input: GreetingInput| async move {
+        |mut ctx: Context, input: GreetingInput| async move {
             let step = ctx
-                .run("make_greeting", async move {
-                    Ok(format!("Hello, {}!", input.name))
-                })
+                .step("make_greeting")
+                .run(|| async move { Ok(format!("Hello, {}!", input.name)) })
                 .await?;
             Ok(GreetingOutput { greeting: step })
         },
@@ -51,7 +50,13 @@ async fn happy_path_workflow_execution() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
     let output: GreetingOutput =
         serde_json::from_slice(&wf.output.unwrap().data).expect("output should decode");
     assert_eq!(
@@ -74,18 +79,20 @@ async fn workflow_with_multiple_steps() -> anyhow::Result<()> {
     let queue = "e2e-workflow-multistep";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
+    worker.workflows([(
         "multi_step",
-        |mut ctx: WorkflowContext, input: GreetingInput| async move {
+        |mut ctx: Context, input: GreetingInput| async move {
             let first = ctx
-                .run("upper", async move { Ok(input.name.to_uppercase()) })
+                .step("upper")
+                .run(|| async move { Ok(input.name.to_uppercase()) })
                 .await?;
             let second = ctx
-                .run("suffix", async move { Ok(format!("{}-suffix", first)) })
+                .step("suffix")
+                .run(|| async move { Ok(format!("{}-suffix", first)) })
                 .await?;
             Ok(GreetingOutput { greeting: second })
         },
-    );
+    )]);
     let shutdown = worker.shutdown_token();
     let worker_handle = tokio::spawn(async move { worker.run().await });
 
@@ -101,7 +108,13 @@ async fn workflow_with_multiple_steps() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
     let output: GreetingOutput = serde_json::from_slice(&wf.output.unwrap().data)?;
     assert_eq!(
         output.greeting, "CHAIN-suffix",
@@ -123,7 +136,7 @@ async fn workflow_failure_propagates_error() -> anyhow::Result<()> {
     let mut worker = harness.worker(queue).await;
     worker.register(
         "failer",
-        |_ctx: WorkflowContext, _input: GreetingInput| async move {
+        |_ctx: Context, _input: GreetingInput| async move {
             Err::<(), anyhow::Error>(anyhow::anyhow!("boom"))
         },
     );
@@ -136,8 +149,14 @@ async fn workflow_failure_propagates_error() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 40).await?;
-    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Failed,
+        40,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Failed as i32);
     let detail = wf.error.unwrap_or_default();
     let message = detail.message;
     assert!(
@@ -168,21 +187,22 @@ async fn workflow_panic_treated_as_failure() -> anyhow::Result<()> {
     };
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
+    worker.workflows([(
         "panic_workflow",
-        |mut ctx: WorkflowContext, _input: GreetingInput| async move {
+        |mut ctx: Context, _input: GreetingInput| async move {
             // Simulate a panic-like failure but surface it as an error so the worker can
             // mark the workflow failed without crashing the runtime.
-            ctx.run("panic_step", async move {
-                Err::<(), anyhow::Error>(anyhow::anyhow!("panic: simulated panic in workflow"))
-            })
-            .await?;
+            ctx.step("panic_step")
+                .run(|| async move {
+                    Err::<(), anyhow::Error>(anyhow::anyhow!("panic: simulated panic in workflow"))
+                })
+                .await?;
 
             Ok::<_, anyhow::Error>(GreetingOutput {
                 greeting: "unreachable".into(),
             })
         },
-    );
+    )]);
     let shutdown = worker.shutdown_token();
     let worker_handle = tokio::spawn(async move { worker.run().await });
 
@@ -204,8 +224,14 @@ async fn workflow_panic_treated_as_failure() -> anyhow::Result<()> {
         .wait_for_db_status(&run_uuid, "FAILED", 80, Duration::from_millis(250))
         .await?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 160).await?;
-    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Failed,
+        160,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Failed as i32);
     let error = wf.error.unwrap_or_default();
     let message = error.message;
     assert!(
@@ -239,12 +265,13 @@ async fn workflow_retries_until_success() -> anyhow::Result<()> {
     let attempt_counter = attempts.clone();
     worker.register(
         "flaky_then_ok",
-        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+        move |mut ctx: Context, _input: GreetingInput| {
             let attempt_counter = attempt_counter.clone();
             async move {
                 let attempt = attempt_counter.fetch_add(1, Ordering::SeqCst) + 1;
                 let final_attempt = ctx
-                    .run("flaky_step", async move {
+                    .step("flaky_step")
+                    .run(|| async move {
                         if attempt < 3 {
                             anyhow::bail!("attempt {attempt} failed");
                         }
@@ -272,8 +299,14 @@ async fn workflow_retries_until_success() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 50).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        50,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     let output: GreetingOutput = serde_json::from_slice(&wf.output.unwrap().data)?;
     assert_eq!(output.greeting, "done-3", "should succeed on third attempt");
@@ -315,7 +348,7 @@ async fn cancel_running_workflow_interrupts_execution() -> anyhow::Result<()> {
     let started_flag = started.clone();
     worker.register(
         "cancellable",
-        move |_ctx: WorkflowContext, _input: GreetingInput| {
+        move |_ctx: Context, _input: GreetingInput| {
             let started_flag = started_flag.clone();
             async move {
                 started_flag.fetch_add(1, Ordering::SeqCst);
@@ -360,8 +393,14 @@ async fn cancel_running_workflow_interrupts_execution() -> anyhow::Result<()> {
         }))
         .await?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Cancelled, 30).await?;
-    assert_eq!(wf.status, WorkflowStatus::Cancelled as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Cancelled,
+        30,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Cancelled as i32);
 
     // The workflow should not be retried or completed after cancellation.
     let attempts = harness.db_workflow_attempts(&run_uuid).await?;
@@ -409,8 +448,14 @@ async fn cancel_pending_workflow_succeeds() -> anyhow::Result<()> {
         }))
         .await?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Cancelled, 20).await?;
-    assert_eq!(wf.status, WorkflowStatus::Cancelled as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Cancelled,
+        20,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Cancelled as i32);
     Ok(())
 }
 
@@ -427,15 +472,15 @@ async fn cancel_sleeping_workflow_succeeds() -> anyhow::Result<()> {
     let queue = "e2e-workflow-cancel-sleeping";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
+    worker.workflows([(
         "sleep_then_cancel",
-        |mut ctx: WorkflowContext, _input: GreetingInput| async move {
-            ctx.sleep(Duration::from_secs(5)).await?;
+        |mut ctx: Context, _input: GreetingInput| async move {
+            ctx.sleep("sleep", "5s").await?;
             Ok::<_, anyhow::Error>(GreetingOutput {
                 greeting: "never".into(),
             })
         },
-    );
+    )]);
     let shutdown = worker.shutdown_token();
     let worker_handle = tokio::spawn(async move { worker.run().await });
 
@@ -463,8 +508,14 @@ async fn cancel_sleeping_workflow_succeeds() -> anyhow::Result<()> {
         }))
         .await?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Cancelled, 30).await?;
-    assert_eq!(wf.status, WorkflowStatus::Cancelled as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Cancelled,
+        30,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Cancelled as i32);
 
     shutdown.cancel();
     let _ = worker_handle.await;
@@ -480,14 +531,14 @@ async fn cancel_completed_workflow_fails() -> anyhow::Result<()> {
     let queue = "e2e-workflow-cancel-completed";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
+    worker.workflows([(
         "already_done",
-        |_ctx: WorkflowContext, _input: GreetingInput| async move {
+        |_ctx: Context, _input: GreetingInput| async move {
             Ok::<_, anyhow::Error>(GreetingOutput {
                 greeting: "done".into(),
             })
         },
-    );
+    )]);
     let shutdown = worker.shutdown_token();
     let worker_handle = tokio::spawn(async move { worker.run().await });
 
@@ -502,8 +553,14 @@ async fn cancel_completed_workflow_fails() -> anyhow::Result<()> {
         )
         .await?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 20).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        20,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     let mut workflow_client = WorkflowServiceClient::connect(harness.server_url.clone()).await?;
     let cancel_result = workflow_client
@@ -517,9 +574,14 @@ async fn cancel_completed_workflow_fails() -> anyhow::Result<()> {
         "cancel on completed workflow should fail"
     );
 
-    let wf_after =
-        wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 20).await?;
-    assert_eq!(wf_after.status, WorkflowStatus::Completed as i32);
+    let wf_after = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        20,
+    )
+    .await?;
+    assert_eq!(wf_after.status, ProtoWorkflowStatus::Completed as i32);
 
     shutdown.cancel();
     let _ = worker_handle.await;
@@ -539,15 +601,15 @@ async fn cancel_idempotent_on_same_workflow() -> anyhow::Result<()> {
     let queue = "e2e-workflow-cancel-idempotent";
 
     let mut worker = harness.worker(queue).await;
-    worker.register(
+    worker.workflows([(
         "cancel_twice",
-        |_ctx: WorkflowContext, _input: GreetingInput| async move {
+        |_ctx: Context, _input: GreetingInput| async move {
             tokio::time::sleep(Duration::from_secs(5)).await;
             Ok::<_, anyhow::Error>(GreetingOutput {
                 greeting: "never".into(),
             })
         },
-    );
+    )]);
     let shutdown = worker.shutdown_token();
     let worker_handle = tokio::spawn(async move { worker.run().await });
 
@@ -572,8 +634,14 @@ async fn cancel_idempotent_on_same_workflow() -> anyhow::Result<()> {
             .await;
     }
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Cancelled, 20).await?;
-    assert_eq!(wf.status, WorkflowStatus::Cancelled as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Cancelled,
+        20,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Cancelled as i32);
 
     shutdown.cancel();
     let _ = worker_handle.await;
@@ -594,17 +662,18 @@ async fn workflow_retry_policy_applied_on_failure() -> anyhow::Result<()> {
     let counter = attempts.clone();
     worker.register(
         "policy_retry",
-        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+        move |mut ctx: Context, _input: GreetingInput| {
             let counter = counter.clone();
             async move {
                 let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
-                ctx.run("policy_step", async move {
-                    if attempt < 3 {
-                        anyhow::bail!("attempt {attempt} failed");
-                    }
-                    Ok::<_, anyhow::Error>(())
-                })
-                .await?;
+                ctx.step("policy_step")
+                    .run(|| async move {
+                        if attempt < 3 {
+                            anyhow::bail!("attempt {attempt} failed");
+                        }
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .await?;
                 Ok(GreetingOutput {
                     greeting: format!("ok-{attempt}"),
                 })
@@ -635,8 +704,14 @@ async fn workflow_retry_policy_applied_on_failure() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 50).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        50,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     assert_eq!(
         attempts.load(Ordering::SeqCst),
@@ -665,7 +740,7 @@ async fn workflow_retry_exhausted_marks_failed() -> anyhow::Result<()> {
     let mut worker = harness.worker(queue).await;
     worker.register(
         "retry_exhaust",
-        |_ctx: WorkflowContext, _input: GreetingInput| async move {
+        |_ctx: Context, _input: GreetingInput| async move {
             Err::<GreetingOutput, _>(anyhow::anyhow!("permanent failure"))
         },
     );
@@ -687,8 +762,14 @@ async fn workflow_retry_exhausted_marks_failed() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 40).await?;
-    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Failed,
+        40,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Failed as i32);
 
     let step_attempts = harness
         .db_step_attempt_count(&run_uuid, "retry_exhaust")
@@ -717,17 +798,18 @@ async fn workflow_retry_delay_respected() -> anyhow::Result<()> {
     let counter = attempts.clone();
     worker.register(
         "retry_delay",
-        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+        move |mut ctx: Context, _input: GreetingInput| {
             let counter = counter.clone();
             async move {
                 let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
-                ctx.run("delay_step", async move {
-                    if attempt == 1 {
-                        anyhow::bail!("first attempt fails");
-                    }
-                    Ok::<_, anyhow::Error>(())
-                })
-                .await?;
+                ctx.step("delay_step")
+                    .run(|| async move {
+                        if attempt == 1 {
+                            anyhow::bail!("first attempt fails");
+                        }
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .await?;
                 Ok(GreetingOutput {
                     greeting: format!("attempt-{attempt}"),
                 })
@@ -758,8 +840,14 @@ async fn workflow_retry_delay_respected() -> anyhow::Result<()> {
         .retry_policy(policy)
         .await?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     let elapsed = start.elapsed();
     assert!(
@@ -801,17 +889,18 @@ async fn step_retry_respects_backoff_policy() -> anyhow::Result<()> {
     let counter = attempts.clone();
     worker.register(
         "step_backoff",
-        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+        move |mut ctx: Context, _input: GreetingInput| {
             let counter = counter.clone();
             async move {
                 let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
-                ctx.run("backoff_step", async move {
-                    if attempt < 3 {
-                        anyhow::bail!("step attempt {attempt} failed");
-                    }
-                    Ok::<_, anyhow::Error>(attempt)
-                })
-                .await?;
+                ctx.step("backoff_step")
+                    .run(|| async move {
+                        if attempt < 3 {
+                            anyhow::bail!("step attempt {attempt} failed");
+                        }
+                        Ok::<_, anyhow::Error>(attempt)
+                    })
+                    .await?;
                 Ok(GreetingOutput {
                     greeting: format!("done-{attempt}"),
                 })
@@ -834,8 +923,14 @@ async fn step_retry_respects_backoff_policy() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 50).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        50,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     let elapsed = start.elapsed();
     assert!(
@@ -872,10 +967,10 @@ async fn step_retry_non_retryable_error_stops_immediately() -> anyhow::Result<()
         })
         .build()
         .await?;
-    worker.register(
+    worker.workflows([(
         "non_retryable",
-        |mut ctx: WorkflowContext, _input: GreetingInput| async move {
-            ctx.run("non_retryable_step", async move {
+        |mut ctx: Context, _input: GreetingInput| async move {
+            ctx.step("non_retryable_step").run(|| async move {
                 Err::<(), anyhow::Error>(anyhow::anyhow!("fatal: do not retry"))
             })
             .await?;
@@ -883,7 +978,7 @@ async fn step_retry_non_retryable_error_stops_immediately() -> anyhow::Result<()
                 greeting: "should-not-complete".into(),
             })
         },
-    );
+    )]);
     let shutdown = worker.shutdown_token();
     let worker_handle = tokio::spawn(async move { worker.run().await });
 
@@ -899,8 +994,14 @@ async fn step_retry_non_retryable_error_stops_immediately() -> anyhow::Result<()
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Failed, 30).await?;
-    assert_eq!(wf.status, WorkflowStatus::Failed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Failed,
+        30,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Failed as i32);
 
     let step_attempts = harness
         .db_step_attempt_count(&run_uuid, "non_retryable_step")
@@ -938,17 +1039,18 @@ async fn step_retry_at_honored_before_reexecution() -> anyhow::Result<()> {
     let counter = attempts.clone();
     worker.register(
         "retry_at",
-        move |mut ctx: WorkflowContext, _input: GreetingInput| {
+        move |mut ctx: Context, _input: GreetingInput| {
             let counter = counter.clone();
             async move {
                 let attempt = counter.fetch_add(1, Ordering::SeqCst) + 1;
-                ctx.run("retry_at_step", async move {
-                    if attempt == 1 {
-                        anyhow::bail!("wait for retry_at")
-                    }
-                    Ok::<_, anyhow::Error>(attempt)
-                })
-                .await?;
+                ctx.step("retry_at_step")
+                    .run(|| async move {
+                        if attempt == 1 {
+                            anyhow::bail!("wait for retry_at")
+                        }
+                        Ok::<_, anyhow::Error>(attempt)
+                    })
+                    .await?;
                 Ok(GreetingOutput {
                     greeting: format!("attempt-{attempt}"),
                 })
@@ -971,8 +1073,14 @@ async fn step_retry_at_honored_before_reexecution() -> anyhow::Result<()> {
         .await?;
     let run_uuid = Uuid::parse_str(&run_id)?;
 
-    let wf = wait_for_status(&harness.server_url, &run_id, WorkflowStatus::Completed, 40).await?;
-    assert_eq!(wf.status, WorkflowStatus::Completed as i32);
+    let wf = wait_for_status(
+        &harness.server_url,
+        &run_id,
+        ProtoWorkflowStatus::Completed,
+        40,
+    )
+    .await?;
+    assert_eq!(wf.status, ProtoWorkflowStatus::Completed as i32);
 
     let elapsed = start.elapsed();
     assert!(
