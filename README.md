@@ -202,44 +202,6 @@ client.schedule(
 .await?;
 ```
 
-## Macros for Reduced Boilerplate
-
-Kagzi provides procedural macros to reduce boilerplate and improve observability:
-
-```rust
-use kagzi_macros::{kagzi_step, kagzi_workflow};
-use kagzi::WorkflowContext;
-
-// Step function with automatic tracing and logging
-#[kagzi_step]
-async fn validate_order(
-    ctx: WorkflowContext,
-    input: OrderRequest,
-) -> anyhow::Result<ValidationResult> {
-    // Your implementation here
-}
-
-// Workflow with clean syntax and run! helper
-kagzi_workflow! {
-    pub async fn process_order(
-        mut ctx: WorkflowContext,
-        input: OrderRequest,
-    ) -> anyhow::Result<OrderResult> {
-        let validated = run!("validate", validate_order(&input));
-        let inventory = run!("reserve", reserve_inventory(&validated));
-        let payment = run!("pay", process_payment(&validated));
-        Ok(OrderResult { /* ... */ })
-    }
-}
-```
-
-The macros provide:
-
-- **Automatic tracing spans** with step/workflow names
-- **Input/output logging** at debug level
-- **Error context enrichment** for better debugging
-- **Clean syntax** with `run!` helper for step execution
-
 ## Examples
 
 ```bash
@@ -247,12 +209,6 @@ cargo run -p kagzi --example simple              # Basic workflow
 cargo run -p kagzi --example scheduling          # Cron jobs
 cargo run -p kagzi --example saga                # Compensation pattern
 cargo run -p kagzi --example fanout              # Parallel processing
-
-# Macro Examples
-cargo run -p kagzi --example 11_macros           # Overview of both macros
-cargo run -p kagzi --example 12_kagzi_step_macro # Step macro demo
-cargo run -p kagzi --example 13_kagzi_workflow_macro # Workflow macro demo
-cargo run -p kagzi --example 14_macros_comprehensive # Complete e-commerce example
 ```
 
 ## Configuration

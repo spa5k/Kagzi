@@ -17,8 +17,6 @@ pub use workflow_context::WorkflowContext;
 
 /// A prelude module for convenient imports
 pub mod prelude {
-    pub use kagzi_macros::{kagzi_step, kagzi_workflow};
-
     pub use crate::{Client, KagziError, RetryPolicy, Worker, WorkerBuilder, WorkflowContext};
 }
 

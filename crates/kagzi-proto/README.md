@@ -811,7 +811,6 @@ The crate uses `kagzi.v1` package naming to support future versions:
 
 - `kagzi`: Main client library
 - `kagzi-server`: Server implementation
-- `kagzi-macros`: Procedural macros for workflow definition
 
 ## License
 
