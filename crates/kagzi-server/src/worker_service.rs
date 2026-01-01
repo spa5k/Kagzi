@@ -18,6 +18,8 @@ use kagzi_store::{
 };
 use rand::Rng;
 use tonic::{Request, Response, Status};
+use tracing::instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use crate::config::WorkerSettings;
@@ -27,6 +29,7 @@ use crate::helpers::{
     payload_to_optional_bytes, precondition_failed_error,
 };
 use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
+use crate::telemetry::extract_context;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
@@ -65,6 +68,7 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
 
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
+    #[instrument(skip(self, request), fields(task_queue = %request.get_ref().task_queue))]
     async fn register(
         &self,
         request: Request<RegisterRequest>,
@@ -125,6 +129,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(worker_id = %request.get_ref().worker_id))]
     async fn heartbeat(
         &self,
         request: Request<HeartbeatRequest>,
@@ -180,6 +185,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(worker_id = %request.get_ref().worker_id))]
     async fn deregister(
         &self,
         request: Request<DeregisterRequest>,
@@ -215,6 +221,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         Ok(Response::new(()))
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            worker_id = %request.get_ref().worker_id,
+            task_queue = %request.get_ref().task_queue,
+        )
+    )]
     async fn poll_task(
         &self,
         request: Request<PollTaskRequest>,
@@ -334,10 +347,21 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            run_id = %request.get_ref().run_id,
+            step_name = %request.get_ref().step_name,
+        )
+    )]
     async fn begin_step(
         &self,
         request: Request<BeginStepRequest>,
     ) -> Result<Response<BeginStepResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -417,10 +441,21 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            run_id = %request.get_ref().run_id,
+            step_id = %request.get_ref().step_id,
+        )
+    )]
     async fn complete_step(
         &self,
         request: Request<CompleteStepRequest>,
     ) -> Result<Response<CompleteStepResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -467,10 +502,21 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         Ok(Response::new(CompleteStepResponse { step: Some(step) }))
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            run_id = %request.get_ref().run_id,
+            step_id = %request.get_ref().step_id,
+        )
+    )]
     async fn fail_step(
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<FailStepResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -522,10 +568,15 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn complete_workflow(
         &self,
         request: Request<CompleteWorkflowRequest>,
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -577,10 +628,15 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn fail_workflow(
         &self,
         request: Request<FailWorkflowRequest>,
     ) -> Result<Response<FailWorkflowResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -625,7 +681,12 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 
         let req = request.into_inner();

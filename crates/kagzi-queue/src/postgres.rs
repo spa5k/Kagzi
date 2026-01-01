@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::error::QueueError;
 use crate::traits::QueueNotifier;
@@ -64,8 +64,10 @@ impl PostgresNotifier {
 
 #[async_trait]
 impl QueueNotifier for PostgresNotifier {
+    #[instrument(skip(self), fields(queue_key))]
     async fn notify(&self, namespace: &str, task_queue: &str) -> Result<(), QueueError> {
         let key = Self::queue_key(namespace, task_queue);
+        tracing::Span::current().record("queue_key", &key);
 
         sqlx::query("SELECT pg_notify('kagzi_work', $1)")
             .bind(&key)

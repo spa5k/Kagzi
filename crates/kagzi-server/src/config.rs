@@ -9,6 +9,8 @@ pub struct Settings {
     pub worker: WorkerSettings,
     pub payload: PayloadSettings,
     pub queue: QueueSettings,
+    #[serde(default)]
+    pub telemetry: TelemetrySettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,10 +80,28 @@ pub struct QueueSettings {
     pub max_reconnect_secs: u64,
 }
 
+/// Settings for telemetry (tracing, logs, metrics).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TelemetrySettings {
+    /// Whether OpenTelemetry exporters are enabled (default: false)
+    /// When false, only tracing logs are emitted (cleaner for development)
+    /// When true, OpenTelemetry spans/metrics are exported to stdout
+    #[serde(default = "default_telemetry_enabled")]
+    pub enabled: bool,
+    /// Service name for telemetry (default: "kagzi-server")
+    #[serde(default = "default_telemetry_service_name")]
+    pub service_name: String,
+    /// Log level filter (default: "info")
+    #[serde(default = "default_telemetry_log_level")]
+    pub log_level: String,
+    /// Log format: "pretty" or "json" (default: "pretty")
+    #[serde(default = "default_telemetry_log_format")]
+    pub log_format: String,
+}
+
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
         let mut builder = Config::builder()
-            // Built-in defaults to avoid missing-section errors
             .set_default("server.host", default_host())?
             .set_default("server.port", default_port() as i64)?
             .set_default(
@@ -136,7 +156,10 @@ impl Settings {
                 "queue.max_reconnect_secs",
                 default_queue_max_reconnect_secs() as i64,
             )?
-            // Single canonical source: KAGZI_* (flat, single underscore)
+            .set_default("telemetry.enabled", default_telemetry_enabled())?
+            .set_default("telemetry.service_name", default_telemetry_service_name())?
+            .set_default("telemetry.log_level", default_telemetry_log_level())?
+            .set_default("telemetry.log_format", default_telemetry_log_format())?
             .add_source(Environment::with_prefix("KAGZI").separator("_"));
 
         if let Ok(db_url) = std::env::var("KAGZI_DB_URL") {
@@ -245,4 +268,31 @@ fn default_queue_poll_jitter_ms() -> u64 {
 
 fn default_queue_max_reconnect_secs() -> u64 {
     300 // 5 minutes max reconnection attempts
+}
+
+fn default_telemetry_enabled() -> bool {
+    false
+}
+
+fn default_telemetry_service_name() -> String {
+    "kagzi-server".to_string()
+}
+
+fn default_telemetry_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_telemetry_log_format() -> String {
+    "pretty".to_string()
+}
+
+impl Default for TelemetrySettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_telemetry_enabled(),
+            service_name: default_telemetry_service_name(),
+            log_level: default_telemetry_log_level(),
+            log_format: default_telemetry_log_format(),
+        }
+    }
 }

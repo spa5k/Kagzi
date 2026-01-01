@@ -307,4 +307,20 @@ impl WorkerRepository for PgWorkerRepository {
 
         Ok(row.count.unwrap_or(0))
     }
+
+    #[instrument(skip(self))]
+    async fn list_distinct_namespaces(&self) -> Result<Vec<String>, StoreError> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT DISTINCT namespace_id
+            FROM kagzi.workers
+            WHERE status != 'OFFLINE'
+            ORDER BY namespace_id
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| r.namespace_id).collect())
+    }
 }

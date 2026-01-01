@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use kagzi_proto::kagzi::admin_service_server::AdminServiceServer;
 use kagzi_proto::kagzi::worker_service_server::WorkerServiceServer;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServiceServer;
@@ -8,25 +10,21 @@ use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
     coordinator,
 };
-use kagzi_store::PgStore;
+use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     let settings = Settings::new().map_err(|e| {
         eprintln!("Failed to load configuration: {:?}", e);
         e
     })?;
+
+    // Initialize telemetry (tracing + OpenTelemetry)
+    // Keep the guard alive for the duration of the program
+    let _telemetry_guard = kagzi_server::telemetry::init_telemetry(&settings.telemetry)?;
 
     let db_pool = PgPoolOptions::new()
         .max_connections(settings.server.db_max_connections)
@@ -80,13 +78,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
     });
 
+    // Start the status reporter
+    let status_store = store.clone();
+    let status_token = shutdown_token.child_token();
+    tokio::spawn(async move {
+        status_reporter(status_store, status_token).await;
+    });
+
     let addr = format!("{}:{}", settings.server.host, settings.server.port).parse()?;
     let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
     let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
     let admin_service = AdminServiceImpl::new(store.clone());
     let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
-    println!("Kagzi Server listening on {}", addr);
+    tracing::info!("Kagzi Server listening on {}", addr);
 
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
@@ -106,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::select! {
         res = server => res?,
         _ = tokio::signal::ctrl_c() => {
-            println!("Received shutdown signal");
+            tracing::info!("Received shutdown signal");
             shutdown_token.cancel();
         }
     }
@@ -126,4 +131,61 @@ async fn run_migrations(
         })?;
 
     Ok(())
+}
+
+async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
+    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            _ = interval.tick() => {
+                let namespaces = match store.workers().list_distinct_namespaces().await {
+                    Ok(namespaces) => {
+                        if namespaces.is_empty() {
+                            tracing::debug!("No active workers found, skipping status report");
+                            continue;
+                        }
+                        namespaces
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to fetch namespaces from workers, skipping status report");
+                        continue;
+                    }
+                };
+
+                let mut total_workers = 0;
+                let mut total_pending = 0;
+                let mut total_running = 0;
+
+                for namespace in &namespaces {
+                    match store.workers().count(namespace, None, None).await {
+                        Ok(count) => total_workers += count,
+                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count workers"),
+                    }
+
+                    match store.workflows().count(namespace, Some("PENDING")).await {
+                        Ok(count) => total_pending += count,
+                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count pending workflows"),
+                    }
+                    match store.workflows().count(namespace, Some("RUNNING")).await {
+                        Ok(count) => total_running += count,
+                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count running workflows"),
+                    }
+                }
+
+                if total_workers > 0 || total_pending > 0 || total_running > 0 {
+                    tracing::info!(
+                        workers = total_workers,
+                        workflows.pending = total_pending,
+                        workflows.running = total_running,
+                        "Server status"
+                    );
+                }
+            }
+        }
+    }
 }
