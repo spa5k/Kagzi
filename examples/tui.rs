@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Duration;
+use std::{fs, thread};
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
 use crossterm::execute;
@@ -19,19 +21,15 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 
-#[derive(Clone, Copy)]
-enum ExampleVariant {
-    Multiple(&'static [&'static str]),
-}
-
+#[derive(Clone, Debug)]
 struct Example {
-    name: &'static str,
-    description: &'static str,
-    variants: ExampleVariant,
+    name: String,
+    description: String,
+    variants: Vec<String>,
 }
 
 impl Example {
-    const fn new(name: &'static str, description: &'static str, variants: ExampleVariant) -> Self {
+    fn new(name: String, description: String, variants: Vec<String>) -> Self {
         Self {
             name,
             description,
@@ -39,65 +37,88 @@ impl Example {
         }
     }
 
-    fn variants(&self) -> &'static [&'static str] {
-        match self.variants {
-            ExampleVariant::Multiple(v) => v,
-        }
+    fn variants(&self) -> &[String] {
+        &self.variants
     }
 }
 
-const EXAMPLES: &[Example] = &[
-    Example::new(
-        "01_basics",
-        "Basic workflow execution (hello, chain, context, sleep)",
-        ExampleVariant::Multiple(&["hello", "chain", "context", "sleep"]),
-    ),
-    Example::new(
-        "02_error_handling",
-        "Error handling strategies (flaky, fatal, override)",
-        ExampleVariant::Multiple(&["flaky", "fatal", "override"]),
-    ),
-    Example::new(
-        "03_scheduling",
-        "Time-based scheduling (cron, sleep, catchup)",
-        ExampleVariant::Multiple(&["cron", "sleep", "catchup"]),
-    ),
-    Example::new(
-        "04_concurrency",
-        "Concurrency control (local, multi-worker)",
-        ExampleVariant::Multiple(&["local", "multi"]),
-    ),
-    Example::new(
-        "05_fan_out_in",
-        "Parallel execution patterns (static fan-out, map-reduce)",
-        ExampleVariant::Multiple(&["static", "mapreduce"]),
-    ),
-    Example::new(
-        "06_long_running",
-        "Long-running workflows (polling, timeout)",
-        ExampleVariant::Multiple(&["poll", "timeout"]),
-    ),
-    Example::new(
-        "07_idempotency",
-        "Idempotency guarantees (external ID, memoization)",
-        ExampleVariant::Multiple(&["external", "memo"]),
-    ),
-    Example::new(
-        "08_saga_pattern",
-        "Compensating transactions (saga, partial)",
-        ExampleVariant::Multiple(&["saga", "partial"]),
-    ),
-    Example::new(
-        "09_data_pipeline",
-        "Data processing (transform, large payloads)",
-        ExampleVariant::Multiple(&["transform", "large"]),
-    ),
-    Example::new(
-        "10_multi_queue",
-        "Multi-queue patterns (priority, namespace)",
-        ExampleVariant::Multiple(&["priority", "namespace"]),
-    ),
-];
+fn discover_examples() -> Vec<Example> {
+    let examples_dir = Path::new(file!()).parent().expect("examples directory");
+    let mut examples = BTreeMap::new();
+
+    let entries = fs::read_dir(examples_dir)
+        .unwrap_or_else(|e| panic!("Failed to read examples directory: {}", e));
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+        // Only process directories matching pattern NN_name
+        if !path.is_dir() || !name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            continue;
+        }
+
+        let main_rs = path.join("main.rs");
+        if !main_rs.exists() {
+            continue;
+        }
+
+        // Extract variants from main.rs
+        let variants = extract_variants(&main_rs);
+        let description = extract_description(&main_rs).unwrap_or_else(|| {
+            name.split_once('_')
+                .map(|(_, desc)| desc.replace('_', " "))
+                .unwrap_or_else(|| name.to_string())
+        });
+
+        examples.insert(
+            name.to_string(),
+            Example::new(name.to_string(), description, variants),
+        );
+    }
+
+    examples.into_values().collect()
+}
+
+fn extract_variants(main_rs: &Path) -> Vec<String> {
+    let content = fs::read_to_string(main_rs).unwrap_or_default();
+    let mut variants = Vec::new();
+
+    // Look for match statements with variant strings
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('"') && line.ends_with('"') {
+            if let Some(_variant) = line.trim_matches('"').strip_prefix("=>") {
+                continue;
+            }
+            if let Some(variant) = line.split('"').nth(1)
+                && !variant.is_empty()
+                && variant.len() < 30
+            {
+                variants.push(variant.to_string());
+            }
+        }
+    }
+
+    // If no variants found, default to empty
+    if variants.is_empty() {
+        return vec![];
+    }
+
+    // Remove duplicates while preserving order
+    let mut seen = std::collections::HashSet::new();
+    variants.retain(|v| seen.insert(v.clone()));
+
+    variants
+}
+
+fn extract_description(main_rs: &Path) -> Option<String> {
+    let content = fs::read_to_string(main_rs).ok()?;
+    content.lines().find_map(|line| {
+        line.strip_prefix("//")
+            .map(|stripped| stripped.trim().to_string())
+    })
+}
 
 enum AppState {
     ExampleList,
@@ -106,6 +127,7 @@ enum AppState {
 }
 
 struct App {
+    examples: Vec<Example>,
     state: AppState,
     selected_example: usize,
     selected_variant: usize,
@@ -116,7 +138,9 @@ struct App {
 
 impl App {
     fn new() -> Self {
+        let examples = discover_examples();
         Self {
+            examples,
             state: AppState::ExampleList,
             selected_example: 0,
             selected_variant: 0,
@@ -126,8 +150,8 @@ impl App {
         }
     }
 
-    fn current_variants(&self) -> &'static [&'static str] {
-        EXAMPLES[self.selected_example].variants()
+    fn current_variants(&self) -> &[String] {
+        self.examples[self.selected_example].variants()
     }
 
     fn is_running(&self) -> bool {
@@ -148,9 +172,12 @@ impl App {
 
     fn select_variant(&mut self) {
         if let AppState::VariantList { example_index } = self.state {
-            let example = &EXAMPLES[example_index];
-            let variant = example.variants()[self.selected_variant];
-            self.run_example(example.name, variant);
+            let (name, variant) = {
+                let example = &self.examples[example_index];
+                let variant = example.variants()[self.selected_variant].clone();
+                (example.name.clone(), variant)
+            };
+            self.run_example(&name, &variant);
         }
     }
 
@@ -159,7 +186,7 @@ impl App {
         self.status_message = "Use ↑↓ to navigate, Enter to select, 'q' to quit".to_string();
     }
 
-    fn run_example(&mut self, name: &'static str, variant: &str) {
+    fn run_example(&mut self, name: &str, variant: &str) {
         self.state = AppState::Running { is_running: true };
         self.status_message = format!("Running {} {}... (Press any key to stop)", name, variant);
         *self.log_output.lock().unwrap() = String::new();
@@ -258,17 +285,18 @@ fn draw_example_list(f: &mut Frame, app: &App) {
 
     draw_header("Kagzi Examples Runner", f, chunks[0]);
 
-    let items: Vec<ListItem> = EXAMPLES
+    let items: Vec<ListItem> = app
+        .examples
         .iter()
         .enumerate()
         .map(|(i, example)| {
             ListItem::new(vec![
                 Line::from(Span::styled(
-                    example.name,
+                    &example.name,
                     selected_style(i == app.selected_example),
                 )),
                 Line::from(Span::styled(
-                    example.description,
+                    &example.description,
                     Style::default().fg(Color::Gray),
                 )),
             ])
@@ -287,7 +315,7 @@ fn draw_variant_list(f: &mut Frame, app: &App) {
     let chunks = layout_chunks(f.area());
 
     if let AppState::VariantList { example_index } = app.state {
-        let example = &EXAMPLES[example_index];
+        let example = &app.examples[example_index];
 
         draw_header(&format!("Variants for: {}", example.name), f, chunks[0]);
 
@@ -297,7 +325,7 @@ fn draw_variant_list(f: &mut Frame, app: &App) {
             .enumerate()
             .map(|(i, variant)| {
                 ListItem::new(Span::styled(
-                    *variant,
+                    variant.as_str(),
                     selected_style(i == app.selected_variant),
                 ))
             })
@@ -407,10 +435,10 @@ fn handle_input_example_list(app: &mut App, key: KeyCode) -> bool {
     match key {
         KeyCode::Char('q') => return true,
         KeyCode::Down | KeyCode::Char('j') => {
-            app.selected_example = app.navigate_list(1, EXAMPLES.len(), app.selected_example)
+            app.selected_example = app.navigate_list(1, app.examples.len(), app.selected_example)
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            app.selected_example = app.navigate_list(-1, EXAMPLES.len(), app.selected_example)
+            app.selected_example = app.navigate_list(-1, app.examples.len(), app.selected_example)
         }
         KeyCode::Enter => app.select_example(),
         _ => {}
