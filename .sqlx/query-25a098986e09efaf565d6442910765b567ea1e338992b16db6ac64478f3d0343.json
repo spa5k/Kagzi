@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                attempt_id as \"attempt_id!\",\n                run_id as \"run_id!\",\n                step_id as \"step_id!\",\n                namespace_id as \"namespace_id!\",\n                step_kind,\n                attempt_number,\n                status,\n                input,\n                output,\n                error,\n                child_workflow_run_id,\n                created_at,\n                started_at,\n                finished_at,\n                retry_at,\n                retry_policy\n            FROM kagzi.step_runs\n            WHERE attempt_id = $1\n            ",
+  "query": "\n            SELECT\n                attempt_id as \"attempt_id!\",\n                run_id as \"run_id!\",\n                step_id as \"step_id!\",\n                namespace_id as \"namespace_id!\",\n                step_kind,\n                attempt_number,\n                status,\n                input,\n                output,\n                error,\n                child_workflow_run_id,\n                created_at,\n                started_at,\n                finished_at,\n                retry_policy\n            FROM kagzi.step_runs\n            WHERE attempt_id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -75,11 +75,6 @@
       },
       {
         "ordinal": 14,
-        "name": "retry_at",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 15,
         "name": "retry_policy",
         "type_info": "Jsonb"
       }
@@ -104,9 +99,8 @@
       true,
       true,
       true,
-      true,
       true
     ]
   },
-  "hash": "42c31dd5584e16f3e6958136a421a67c2eecf957cae5ee411b8b9b2f7a78768b"
+  "hash": "25a098986e09efaf565d6442910765b567ea1e338992b16db6ac64478f3d0343"
 }

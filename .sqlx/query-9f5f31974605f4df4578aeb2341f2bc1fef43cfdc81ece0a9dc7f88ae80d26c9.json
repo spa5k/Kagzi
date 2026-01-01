@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT run_id FROM kagzi.workflow_runs\n        WHERE namespace_id = $1\n          AND external_id = $2\n          AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9f5f31974605f4df4578aeb2341f2bc1fef43cfdc81ece0a9dc7f88ae80d26c9"
+}
