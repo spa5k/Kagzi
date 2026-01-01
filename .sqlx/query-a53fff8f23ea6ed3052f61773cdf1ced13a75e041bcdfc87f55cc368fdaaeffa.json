@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            w.run_id,\n            w.namespace_id,\n            w.external_id,\n            w.task_queue,\n            w.workflow_type,\n            w.status,\n            p.input,\n            p.output,\n            w.locked_by,\n            w.attempts,\n            w.error,\n            w.created_at,\n            w.started_at,\n            w.finished_at,\n            w.available_at,\n            w.version,\n            w.parent_step_attempt_id,\n            w.retry_policy,\n            w.cron_expr,\n            w.schedule_id\n        FROM kagzi.workflow_runs w\n        JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id\n        WHERE w.namespace_id = $1\n          AND w.status = 'SCHEDULED'\n          AND w.available_at <= $2\n        ORDER BY w.available_at ASC\n        LIMIT $3\n        ",
+  "query": "\n            SELECT\n                w.run_id,\n                w.namespace_id,\n                w.external_id,\n                w.task_queue,\n                w.workflow_type,\n                w.status,\n                p.input,\n                p.output,\n                w.locked_by,\n                w.attempts,\n                w.error,\n                w.created_at,\n                w.started_at,\n                w.finished_at,\n                w.available_at,\n                w.version,\n                w.parent_step_attempt_id,\n                w.retry_policy,\n                w.cron_expr,\n                w.schedule_id\n            FROM kagzi.workflow_runs w\n            JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id\n            WHERE w.namespace_id = $1\n              AND w.status = 'SCHEDULED'\n              AND w.available_at <= $2\n            ORDER BY w.available_at ASC\n            LIMIT $3\n            ",
   "describe": {
     "columns": [
       {
@@ -134,5 +134,5 @@
       true
     ]
   },
-  "hash": "6b39c6a78b17c03fde92de24760d833c9806f049affe5202813f38494ac54674"
+  "hash": "a53fff8f23ea6ed3052f61773cdf1ced13a75e041bcdfc87f55cc368fdaaeffa"
 }
