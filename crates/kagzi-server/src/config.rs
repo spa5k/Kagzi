@@ -20,11 +20,8 @@ pub struct Settings {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerSettings {
-    #[serde(default)]
     pub host: String,
-    #[serde(default)]
     pub port: u16,
-    #[serde(default)]
     pub db_max_connections: u32,
 }
 
@@ -46,13 +43,10 @@ impl Default for ServerSettings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CoordinatorSettings {
     /// Interval between coordinator ticks in seconds
-    #[serde(default)]
     pub interval_secs: u64,
     /// Maximum number of cron schedules to fire per tick
-    #[serde(default)]
     pub batch_size: i32,
     /// How long a worker can go without heartbeat before being marked offline
-    #[serde(default)]
     pub worker_stale_threshold_secs: i64,
 }
 
@@ -69,18 +63,14 @@ impl Default for CoordinatorSettings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerSettings {
     /// How long to wait for work before returning empty from poll
-    #[serde(default)]
     pub poll_timeout_secs: u64,
     /// How often workers should send heartbeats
-    #[serde(default)]
     pub heartbeat_interval_secs: u32,
     /// Initial visibility timeout when claiming a workflow.
     /// Workflows become available to other workers after this time unless extended.
-    #[serde(default)]
     pub visibility_timeout_secs: i64,
     /// How many seconds to extend visibility on each heartbeat.
     /// Should be greater than heartbeat_interval to allow buffer for network delays.
-    #[serde(default)]
     pub heartbeat_extension_secs: i64,
 }
 
@@ -97,9 +87,7 @@ impl Default for WorkerSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PayloadSettings {
-    #[serde(default)]
     pub warn_threshold_bytes: usize,
-    #[serde(default)]
     pub max_size_bytes: usize,
 }
 
@@ -115,13 +103,10 @@ impl Default for PayloadSettings {
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueueSettings {
     /// Interval in seconds for cleaning up stale notification channels
-    #[serde(default)]
     pub cleanup_interval_secs: u64,
     /// Maximum jitter in milliseconds to add when workers wake from notifications
-    #[serde(default)]
     pub poll_jitter_ms: u64,
     /// Maximum time in seconds to retry reconnecting the queue listener before giving up
-    #[serde(default)]
     pub max_reconnect_secs: u64,
 }
 
@@ -141,16 +126,12 @@ pub struct TelemetrySettings {
     /// Whether OpenTelemetry exporters are enabled (default: false)
     /// When false, only tracing logs are emitted (cleaner for development)
     /// When true, OpenTelemetry spans/metrics are exported to stdout
-    #[serde(default)]
     pub enabled: bool,
     /// Service name for telemetry (default: "kagzi-server")
-    #[serde(default)]
     pub service_name: String,
     /// Log level filter (default: "info")
-    #[serde(default)]
     pub log_level: String,
     /// Log format: "pretty" or "json" (default: "pretty")
-    #[serde(default)]
     pub log_format: String,
 }
 

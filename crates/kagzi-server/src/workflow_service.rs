@@ -52,7 +52,6 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let req = request.into_inner();
         tracing::Span::current().record("workflow_type", &req.workflow_type);
         tracing::Span::current().record("external_id", &req.external_id);
-        tracing::Span::current().record("namespace_id", &req.namespace_id);
 
         if req.external_id.is_empty() {
             return Err(invalid_argument_error("external_id is required"));
@@ -70,6 +69,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             return Err(invalid_argument_error("namespace_id is required"));
         }
         let namespace_id = req.namespace_id;
+        tracing::Span::current().record("namespace_id", &namespace_id);
 
         let version = if req.version.is_empty() {
             DEFAULT_VERSION.to_string()
