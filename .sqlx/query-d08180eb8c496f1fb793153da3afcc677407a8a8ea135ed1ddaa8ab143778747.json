@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_runs\n        SET available_at = GREATEST(available_at, NOW()) + ($2 * INTERVAL '1 second')\n        WHERE locked_by = $1 AND status = 'RUNNING'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d08180eb8c496f1fb793153da3afcc677407a8a8ea135ed1ddaa8ab143778747"
+}

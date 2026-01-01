@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict gCugLrfgfP9E1SnBfQ8MLkOURb1lOe6SE7sQKCtKXfzsux218DwY1m1GigxT78p
+\restrict zKQeTxHh3jpZU4T5cjCa9NPNfpbSzaRFbl6cg196zyEOJPno6gxgRDEu0dn3zcu
 
 -- Dumped from database version 18.0
 -- Dumped by pg_dump version 18.0
@@ -294,5 +294,5 @@ ALTER TABLE ONLY kagzi.workflow_payloads
 -- PostgreSQL database dump complete
 --
 
-\unrestrict gCugLrfgfP9E1SnBfQ8MLkOURb1lOe6SE7sQKCtKXfzsux218DwY1m1GigxT78p
+\unrestrict zKQeTxHh3jpZU4T5cjCa9NPNfpbSzaRFbl6cg196zyEOJPno6gxgRDEu0dn3zcu
 

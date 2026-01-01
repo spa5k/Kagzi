@@ -13,7 +13,6 @@ use kagzi_store::{
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
-use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{invalid_argument_error, map_store_error, not_found_error};
 use crate::proto_convert::{step_to_proto, worker_to_proto};
 
@@ -50,11 +49,10 @@ impl AdminService for AdminServiceImpl {
         let req = request.into_inner();
         let page = req.page.unwrap_or_default();
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let page_size = if page.page_size <= 0 {
             20
@@ -185,15 +183,14 @@ impl AdminService for AdminServiceImpl {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let workflow = self
+        // Discover namespace from run_id to ensure proper isolation
+        let namespace_id = self
             .store
             .workflows()
-            .find_by_id(run_id, DEFAULT_NAMESPACE) // Try default first
+            .get_namespace(run_id)
             .await
-            .map_err(map_store_error)?;
-        let namespace_id = workflow
-            .map(|w| w.namespace_id)
-            .unwrap_or_else(|| "default".to_string());
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
 
         let page = req.page.unwrap_or_default();
         let page_size = if page.page_size <= 0 {

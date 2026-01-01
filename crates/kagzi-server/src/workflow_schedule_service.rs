@@ -13,7 +13,6 @@ use kagzi_store::{CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowReposito
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
-use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{
     bytes_to_payload, invalid_argument_error, map_store_error, not_found_error,
     payload_to_optional_bytes,
@@ -121,11 +120,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             return Err(invalid_argument_error("cron_expr is required"));
         }
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
 
@@ -183,11 +181,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let schedule = self
             .store
@@ -209,11 +206,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         request: Request<ListWorkflowSchedulesRequest>,
     ) -> Result<Response<ListWorkflowSchedulesResponse>, Status> {
         let req = request.into_inner();
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let page_size = req
             .page
@@ -305,11 +301,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let current = self
             .store
@@ -389,11 +384,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let result = self
             .store
