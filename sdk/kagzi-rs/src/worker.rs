@@ -325,11 +325,11 @@ impl Worker {
                                 // (e.g., due to missed heartbeats during network partition).
                                 // Trigger shutdown to prevent double execution when server assigns
                                 // our tasks to other workers.
-                                if e.code() == tonic::Code::NotFound 
-                                    || e.code() == tonic::Code::FailedPrecondition 
+                                if e.code() == tonic::Code::NotFound
+                                    || e.code() == tonic::Code::FailedPrecondition
                                 {
                                     error!(
-                                        "Worker rejected by server (offline), triggering shutdown: {:?}", 
+                                        "Worker rejected by server (offline), triggering shutdown: {:?}",
                                         e
                                     );
                                     shutdown.cancel();

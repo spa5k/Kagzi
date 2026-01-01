@@ -11,15 +11,6 @@ use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 ///
 /// Uses W3C Trace Context format (`traceparent`, `tracestate` headers).
 /// Returns a new Context with the extracted span context, or the current context if none found.
-///
-/// # Example
-/// ```no_run
-/// async fn my_grpc_method(&self, request: Request<MyRequest>) -> Result<Response<MyResponse>, Status> {
-///     let parent_cx = extract_context(request.metadata());
-///     let _guard = parent_cx.attach();
-///     // ... handle request, spans created here will be children of the extracted context
-/// }
-/// ```
 pub fn extract_context(metadata: &MetadataMap) -> Context {
     global::get_text_map_propagator(|propagator| propagator.extract(&MetadataExtractor(metadata)))
 }
@@ -28,13 +19,6 @@ pub fn extract_context(metadata: &MetadataMap) -> Context {
 ///
 /// Uses W3C Trace Context format (`traceparent`, `tracestate` headers).
 /// Call this before making outgoing gRPC calls to propagate the trace.
-///
-/// # Example
-/// ```no_run
-/// let mut request = tonic::Request::new(my_request);
-/// inject_context(request.metadata_mut());
-/// let response = client.some_method(request).await?;
-/// ```
 pub fn inject_context(metadata: &mut MetadataMap) {
     let cx = Context::current();
     global::get_text_map_propagator(|propagator| {
