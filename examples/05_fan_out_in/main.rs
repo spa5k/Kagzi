@@ -65,7 +65,7 @@ async fn static_fanout(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(StaticInput {
             user_id: "user-123".into(),
         })
-        .r#await()
+        .send()
         .await?;
     println!("Started static fan-out workflow: {}", run.id);
 
@@ -88,7 +88,7 @@ async fn dynamic_mapreduce(server: &str, namespace: &str) -> anyhow::Result<()> 
         .input(NumbersInput {
             values: vec![1, 2, 3, 4],
         })
-        .r#await()
+        .send()
         .await?;
     println!("Started dynamic map-reduce workflow: {}", run.id);
 

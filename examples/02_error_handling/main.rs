@@ -62,7 +62,7 @@ async fn run_flaky(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(Input {
             label: "sometimes fails".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started flaky workflow (should retry twice): {}", run.id);
@@ -93,7 +93,7 @@ async fn run_fatal(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(Input {
             label: "bad-key".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!(
@@ -134,7 +134,7 @@ async fn run_override(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(Input {
             label: "override".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started workflow with per-step retry override: {}", run.id);

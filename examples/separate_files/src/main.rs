@@ -38,7 +38,7 @@ async fn welcome_user_route(user_id: String, user_email: String) -> anyhow::Resu
             user_id: user_id.clone(),
             user_email,
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started welcome email workflow: {}", run.id);

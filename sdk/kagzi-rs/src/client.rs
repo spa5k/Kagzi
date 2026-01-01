@@ -147,7 +147,8 @@ impl<'a> StartWorkflowBuilder<'a> {
         self
     }
 
-    pub async fn r#await(self) -> anyhow::Result<WorkflowRun> {
+    /// Send the workflow start request and wait for the run to be created
+    pub async fn send(self) -> anyhow::Result<WorkflowRun> {
         let mut client = self.client.clone();
         let resp = client
             .start_workflow(Request::new(StartWorkflowRequest {
@@ -220,7 +221,8 @@ impl<'a> ScheduleBuilder<'a> {
         self
     }
 
-    pub async fn r#await(self) -> anyhow::Result<WorkflowSchedule> {
+    /// Send the schedule creation request and wait for the schedule to be created
+    pub async fn send(self) -> anyhow::Result<WorkflowSchedule> {
         let workflow_type = self
             .workflow_type
             .ok_or_else(|| anyhow!("workflow_type is required"))?;

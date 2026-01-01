@@ -47,7 +47,7 @@ async fn cron_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(CleanupInput {
             table: "sessions".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Created schedule: schedule_id={}", schedule.schedule_id);
@@ -80,7 +80,7 @@ async fn durable_sleep_demo(server: &str, namespace: &str) -> anyhow::Result<()>
         .input(SleepInput {
             step: "wait-and-resume".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!(
@@ -103,7 +103,7 @@ async fn catchup_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
             table: "audit_logs".into(),
         })
         .catchup(10)
-        .r#await()
+        .send()
         .await?;
 
     println!(

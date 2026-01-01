@@ -166,7 +166,7 @@ async fn run_hello(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(HelloInput {
             name: "Kagzi".to_string(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started hello workflow: {}", run.id);
@@ -194,7 +194,7 @@ async fn run_chain(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(ChainInput {
             name: "pipeline".to_string(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started chained workflow: {}", run.id);
@@ -222,7 +222,7 @@ async fn run_context(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(ContextAwareInput {
             name: "context".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started context workflow: {}", run.id);
@@ -250,7 +250,7 @@ async fn run_sleep(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(SleepInput {
             name: "sleeper".to_string(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started sleep workflow: {}", run.id);

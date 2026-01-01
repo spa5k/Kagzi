@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
             user_id: "123".to_string(),
             user_email: "alice@example.com".to_string(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("✅ Started welcome email workflow: {}", run.id);

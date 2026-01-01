@@ -58,7 +58,7 @@ async fn transform_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(TransformInput {
             payload: serde_json::json!({ "name": "kagzi", "version": 1 }),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started pass-through transform workflow: {}", run.id);
@@ -103,7 +103,7 @@ async fn large_payload_demo(server: &str, namespace: &str) -> anyhow::Result<()>
         .start("large_payload")
         .namespace(namespace)
         .input(LargeInput { content: big })
-        .r#await()
+        .send()
         .await?;
 
     println!(
