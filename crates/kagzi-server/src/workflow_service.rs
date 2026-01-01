@@ -12,7 +12,7 @@ use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
-use crate::constants::{DEFAULT_NAMESPACE, DEFAULT_VERSION};
+use crate::constants::DEFAULT_VERSION;
 use crate::helpers::{
     invalid_argument_error, map_store_error, merge_proto_policy, not_found_error, payload_to_bytes,
     precondition_failed_error,
@@ -52,14 +52,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let req = request.into_inner();
         tracing::Span::current().record("workflow_type", &req.workflow_type);
         tracing::Span::current().record("external_id", &req.external_id);
-        tracing::Span::current().record(
-            "namespace_id",
-            if req.namespace_id.is_empty() {
-                DEFAULT_NAMESPACE
-            } else {
-                &req.namespace_id
-            },
-        );
+        tracing::Span::current().record("namespace_id", &req.namespace_id);
 
         if req.external_id.is_empty() {
             return Err(invalid_argument_error("external_id is required"));
@@ -73,11 +66,10 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let input_bytes = payload_to_bytes(req.input);
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let version = if req.version.is_empty() {
             DEFAULT_VERSION.to_string()
@@ -136,11 +128,10 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let workflow = self
             .store
@@ -176,11 +167,10 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let req = request.into_inner();
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         tracing::Span::current().record("namespace_id", &namespace_id);
 
@@ -286,11 +276,10 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let workflows = self.store.workflows();
 

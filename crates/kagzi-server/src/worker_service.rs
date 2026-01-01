@@ -23,7 +23,6 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use crate::config::WorkerSettings;
-use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{
     bytes_to_payload, invalid_argument_error, map_store_error, merge_proto_policy, not_found_error,
     payload_to_optional_bytes, precondition_failed_error,
@@ -79,11 +78,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let worker_id = self
             .store
@@ -241,11 +239,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        let namespace_id = if req.namespace_id.is_empty() {
-            DEFAULT_NAMESPACE.to_string()
-        } else {
-            req.namespace_id
-        };
+        if req.namespace_id.is_empty() {
+            return Err(invalid_argument_error("namespace_id is required"));
+        }
+        let namespace_id = req.namespace_id;
 
         let worker = self
             .store

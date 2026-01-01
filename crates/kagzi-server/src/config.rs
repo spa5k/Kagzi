@@ -106,8 +106,8 @@ pub struct PayloadSettings {
 impl Default for PayloadSettings {
     fn default() -> Self {
         Self {
-            warn_threshold_bytes: 1024 * 1024,      // 1 MB
-            max_size_bytes: 2 * 1024 * 1024,        // 2 MB
+            warn_threshold_bytes: 1024 * 1024, // 1 MB
+            max_size_bytes: 2 * 1024 * 1024,   // 2 MB
         }
     }
 }
