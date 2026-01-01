@@ -34,12 +34,17 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn priority_demo(server: &str) -> anyhow::Result<()> {
+    println!("🎯 Priority Queue Example - demonstrates namespace-based priority queues\n");
+
     // High and low priority queues handled by different workers in same process
     let mut high_worker = Worker::new(server)
         .namespace("high-priority")
         .workflows([
             ("priority_task", |_: Context, input: TaskInput| async move {
-                println!("handling priority task: queue=high, label={}", input.label);
+                println!(
+                    "⚡ handling priority task: queue=high, label={}",
+                    input.label
+                );
                 sleep(Duration::from_secs(1)).await;
                 Ok(serde_json::json!({"queue": "high", "label": input.label}))
             }),
@@ -51,13 +56,15 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
         .namespace("low-priority")
         .workflows([
             ("priority_task", |_: Context, input: TaskInput| async move {
-                println!("handling low task: queue=low, label={}", input.label);
+                println!("🐌 handling low task: queue=low, label={}", input.label);
                 sleep(Duration::from_secs(2)).await;
                 Ok(serde_json::json!({"queue": "low", "label": input.label}))
             }),
         ])
         .build()
         .await?;
+
+    println!("👷 Both workers started (high-priority and low-priority)");
 
     let client = Kagzi::connect(server).await?;
     let mut handles: Vec<JoinHandle<anyhow::Result<()>>> = Vec::new();
@@ -82,23 +89,26 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "High queue should finish first: high={}, low={}",
+        "🚀 High queue should finish first: high={}, low={}",
         high.id, low.id
     );
     tokio::time::sleep(Duration::from_secs(6)).await;
     for h in handles {
         h.abort();
     }
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn namespace_demo(server: &str) -> anyhow::Result<()> {
+    println!("🔐 Namespace Isolation Example - demonstrates tenant separation\n");
+
     // Simulate namespace isolation via separate namespaces
     let mut prod_worker = Worker::new(server)
         .namespace("production")
         .workflows([("ns_task", |_: Context, input: TaskInput| async move {
             println!(
-                "processing prod task: namespace=production, label={}",
+                "🏭 processing prod task: namespace=production, label={}",
                 input.label
             );
             Ok(serde_json::json!({"ns": "prod", "label": input.label}))
@@ -110,13 +120,15 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
         .namespace("staging")
         .workflows([("ns_task", |_: Context, input: TaskInput| async move {
             println!(
-                "processing staging task: namespace=staging, label={}",
+                "🧪 processing staging task: namespace=staging, label={}",
                 input.label
             );
             Ok(serde_json::json!({"ns": "staging", "label": input.label}))
         })])
         .build()
         .await?;
+
+    println!("👷 Both workers started (production and staging)");
 
     let client = Kagzi::connect(server).await?;
     let mut handles: Vec<JoinHandle<anyhow::Result<()>>> = Vec::new();
@@ -141,12 +153,13 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "Namespaces isolate tenants: prod_run={}, staging_run={}",
+        "🚀 Namespaces isolate tenants: prod_run={}, staging_run={}",
         prod_run.id, staging_run.id
     );
     tokio::time::sleep(Duration::from_secs(5)).await;
     for h in handles {
         h.abort();
     }
+    println!("✅ Example complete\n");
     Ok(())
 }

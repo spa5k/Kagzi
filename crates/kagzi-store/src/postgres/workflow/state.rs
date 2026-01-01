@@ -825,7 +825,6 @@ pub(super) async fn extend_visibility(
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
 

@@ -40,6 +40,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_flaky(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🔄 Flaky Retry Example - demonstrates automatic retry with exponential backoff\n");
+
     let flaky = common::FlakyStep::succeed_after(3);
 
     let mut worker = Worker::new(server)
@@ -55,6 +57,8 @@ async fn run_flaky(server: &str, namespace: &str) -> anyhow::Result<()> {
         .build()
         .await?;
 
+    println!("👷 Worker started");
+
     let client = Kagzi::connect(server).await?;
     let run = client
         .start("flaky_step")
@@ -65,13 +69,16 @@ async fn run_flaky(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started flaky workflow (should retry twice): {}", run.id);
+    println!("🚀 Started flaky workflow (should retry twice): {}", run.id);
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn run_fatal(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("💥 Fatal Error Example - demonstrates non-retryable error handling\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("fatal_step", |_ctx: Context, input: Input| async move {
@@ -86,6 +93,8 @@ async fn run_fatal(server: &str, namespace: &str) -> anyhow::Result<()> {
         .build()
         .await?;
 
+    println!("👷 Worker started");
+
     let client = Kagzi::connect(server).await?;
     let run = client
         .start("fatal_step")
@@ -97,15 +106,18 @@ async fn run_fatal(server: &str, namespace: &str) -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "Started fatal workflow (should fail immediately): {}",
+        "🚀 Started fatal workflow (should fail immediately): {}",
         run.id
     );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn run_override(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("⚙️  Retry Override Example - demonstrates per-step retry configuration\n");
+
     let flaky = common::FlakyStep::succeed_after(4);
     let step_retry = Retry::exponential(5).initial("200ms").max("3s");
 
@@ -127,6 +139,8 @@ async fn run_override(server: &str, namespace: &str) -> anyhow::Result<()> {
         .build()
         .await?;
 
+    println!("👷 Worker started");
+
     let client = Kagzi::connect(server).await?;
     let run = client
         .start("override_step")
@@ -137,8 +151,12 @@ async fn run_override(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started workflow with per-step retry override: {}", run.id);
+    println!(
+        "🚀 Started workflow with per-step retry override: {}",
+        run.id
+    );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }

@@ -569,7 +569,6 @@ impl StepRepository for PgStepRepository {
 }
 
 #[cfg(test)]
-
 mod tests {
     use sqlx::postgres::PgPoolOptions;
 

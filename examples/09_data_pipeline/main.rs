@@ -45,11 +45,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn transform_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🔧 Transform Example - demonstrates JSON payload transformation\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("json_transform", transform_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let run = client
@@ -61,13 +65,16 @@ async fn transform_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started pass-through transform workflow: {}", run.id);
+    println!("🚀 Started pass-through transform workflow: {}", run.id);
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn large_payload_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("📦 Large Payload Example - demonstrates blob storage for big data\n");
+
     let blob = common::InMemoryBlobStore::new();
     let mut worker = Worker::new(server)
         .namespace(namespace)
@@ -97,6 +104,8 @@ async fn large_payload_demo(server: &str, namespace: &str) -> anyhow::Result<()>
         .build()
         .await?;
 
+    println!("👷 Worker started");
+
     let client = Kagzi::connect(server).await?;
     let big = "x".repeat(1_200_000); // 1.2MB to trigger warning thresholds
     let run = client
@@ -107,11 +116,12 @@ async fn large_payload_demo(server: &str, namespace: &str) -> anyhow::Result<()>
         .await?;
 
     println!(
-        "Started large payload workflow (stores data in mock blob): {}",
+        "🚀 Started large payload workflow (stores data in mock blob): {}",
         run.id
     );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(6)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 

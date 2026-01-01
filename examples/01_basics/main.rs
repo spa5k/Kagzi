@@ -152,11 +152,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_hello(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("👋 Hello Example - demonstrates basic workflow execution\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("hello_workflow", hello_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
 
@@ -169,22 +173,27 @@ async fn run_hello(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started hello workflow: {}", run.id);
+    println!("🚀 Started hello workflow: {}", run.id);
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            eprintln!("Worker error: {:?}", e);
+            eprintln!("❌ Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn run_chain(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🔗 Chain Example - demonstrates sequential step execution\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("chain_workflow", chain_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
 
@@ -197,22 +206,27 @@ async fn run_chain(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started chained workflow: {}", run.id);
+    println!("🚀 Started chained workflow: {}", run.id);
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            eprintln!("Worker error: {:?}", e);
+            eprintln!("❌ Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn run_context(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🌐 Context Example - demonstrates workflow context awareness\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("context_workflow", context_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
 
@@ -225,22 +239,27 @@ async fn run_context(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started context workflow: {}", run.id);
+    println!("🚀 Started context workflow: {}", run.id);
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            eprintln!("Worker error: {:?}", e);
+            eprintln!("❌ Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn run_sleep(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("⏱️  Sleep Example - demonstrates durable sleep with step execution\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("sleep_workflow", sleep_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
 
@@ -253,13 +272,14 @@ async fn run_sleep(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started sleep workflow: {}", run.id);
-    println!("This workflow will take ~20 seconds to complete (3 steps with 5-10s sleeps)");
+    println!("🚀 Started sleep workflow: {}", run.id);
+    println!("⏰ This workflow will take ~20 seconds to complete (3 steps with 5-10s sleeps)");
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            eprintln!("Worker error: {:?}", e);
+            eprintln!("❌ Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(25)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }

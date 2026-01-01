@@ -71,6 +71,10 @@ setup: db-reset build
 
 # --- Examples ---
 
+# Launch TUI examples runner
+tui:
+    DATABASE_URL={{DATABASE_URL}} cargo run --example tui
+
 # Run a single examples crate binary with optional args (default variant if empty).
 example name args="":
     DATABASE_URL={{DATABASE_URL}} cargo run -p examples --example {{name}} -- {{args}}

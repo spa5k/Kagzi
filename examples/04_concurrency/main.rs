@@ -34,18 +34,22 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn local_concurrency(server: String, namespace: String) -> anyhow::Result<()> {
+    println!("⚡ Local Concurrency Example - demonstrates max concurrent workflow limit\n");
+
     let mut worker = Worker::new(&server)
         .namespace(&namespace)
         .max_concurrent(2) // Only 2 workflows run at a time on THIS worker
         .retry(common::default_retry())
         .workflows([("short_task", |_: Context, input: Input| async move {
-            println!("Starting short task id={}", input.id);
+            println!("▶️  Starting short task id={}", input.id);
             sleep(Duration::from_secs(2)).await;
-            println!("Finished short task id={}", input.id);
+            println!("✅ Finished short task id={}", input.id);
             Ok(serde_json::json!({"id": input.id}))
         })])
         .build()
         .await?;
+
+    println!("👷 Worker started with max_concurrent=2");
 
     let client = Kagzi::connect(&server).await?;
     for id in 0..10 {
@@ -55,10 +59,10 @@ async fn local_concurrency(server: String, namespace: String) -> anyhow::Result<
             .input(Input { id })
             .send()
             .await?;
-        println!("Queued short task run={} id={}", run.id, id);
+        println!("📝 Queued short task run={} id={}", run.id, id);
     }
 
-    println!("Watch the logs: only 2 tasks run at a time (2s each, 10 tasks = ~10s total)");
+    println!("⏱️  Watch the logs: only 2 tasks run at a time (2s each, 10 tasks = ~10s total)\n");
     worker.run().await
 }
 
@@ -72,9 +76,12 @@ async fn multi_worker_demo(server: String, namespace: String) -> anyhow::Result<
         .workflows([(
             "parallel_task",
             move |_: Context, input: Input| async move {
-                println!("Worker {} processing task id={}", worker_id, input.id);
+                println!(
+                    "👷 Worker {} ▶️  processing task id={}",
+                    worker_id, input.id
+                );
                 sleep(Duration::from_secs(3)).await;
-                println!("Worker {} task complete id={}", worker_id, input.id);
+                println!("👷 Worker {} ✅ task complete id={}", worker_id, input.id);
                 Ok(serde_json::json!({"worker": worker_id, "id": input.id}))
             },
         )])
@@ -84,7 +91,7 @@ async fn multi_worker_demo(server: String, namespace: String) -> anyhow::Result<
     // Only create tasks from the first worker (by convention, use arg)
     if std::env::args().any(|a| a == "--create") {
         let client = Kagzi::connect(&server).await?;
-        println!("Creating 20 tasks...");
+        println!("📝 Creating 20 tasks...");
         for id in 0..20 {
             client
                 .start("parallel_task")
@@ -94,12 +101,12 @@ async fn multi_worker_demo(server: String, namespace: String) -> anyhow::Result<
                 .await?;
         }
         println!(
-            "Tasks created. Start additional workers with: cargo run -p examples --example 04_concurrency -- multi"
+            "✅ Tasks created. Start additional workers with: cargo run -p examples --example 04_concurrency -- multi"
         );
     }
 
     println!(
-        "Worker {} started with max_concurrent=3. Run multiple instances to scale throughput.",
+        "🚀 Worker {} started with max_concurrent=3. Run multiple instances to scale throughput.\n",
         worker_id
     );
     worker.run().await

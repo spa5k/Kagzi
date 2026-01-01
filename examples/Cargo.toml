@@ -7,10 +7,12 @@ publish = false
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
+crossterm = "0.28"
 futures = "0.3"
 hostname = "0.4.2"
 kagzi = { path = "../sdk/kagzi-rs" }
 kagzi-proto = { path = "../crates/kagzi-proto" }
+ratatui = "0.29"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
@@ -64,3 +66,7 @@ path = "11_schedule_test/main.rs"
 [[example]]
 name = "worker_hub"
 path = "worker_hub.rs"
+
+[[example]]
+name = "tui"
+path = "tui.rs"
