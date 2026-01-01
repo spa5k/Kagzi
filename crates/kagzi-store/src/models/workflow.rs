@@ -100,7 +100,9 @@ pub struct WorkflowRun {
     pub created_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
-    pub wake_up_at: Option<DateTime<Utc>>,
+    /// When this workflow becomes available for claiming.
+    /// Used for scheduling sleep, retry backoff, and visibility timeout.
+    pub available_at: Option<DateTime<Utc>>,
     pub version: Option<String>,
     pub parent_step_attempt_id: Option<String>,
     pub retry_policy: Option<RetryPolicy>,
@@ -140,21 +142,6 @@ pub struct ClaimedWorkflow {
 }
 
 #[derive(Debug, Clone)]
-pub struct OrphanedWorkflow {
-    pub run_id: Uuid,
-    pub locked_by: Option<String>,
-    pub attempts: i32,
-    pub retry_policy: Option<RetryPolicy>,
-}
-
-#[derive(Debug, Clone)]
-pub struct WokenWorkflow {
-    pub run_id: Uuid,
-    pub task_queue: String,
-    pub namespace_id: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct WorkflowExistsResult {
     pub exists: bool,
     pub status: Option<WorkflowStatus>,
@@ -165,7 +152,7 @@ pub struct WorkflowExistsResult {
 pub struct WorkCandidate {
     pub run_id: Uuid,
     pub workflow_type: String,
-    pub wake_up_at: Option<DateTime<Utc>>,
+    pub available_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]

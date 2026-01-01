@@ -11,10 +11,10 @@ use kagzi::{Kagzi, Worker, WorkerBuilder};
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
 use kagzi_queue::QueueNotifier;
-use kagzi_server::config::{SchedulerSettings, WatchdogSettings, WorkerSettings};
+use kagzi_server::config::{CoordinatorSettings, WorkerSettings};
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    run_scheduler, watchdog,
+    coordinator,
 };
 use kagzi_store::{PgStore, StoreConfig};
 use sqlx::PgPool;
@@ -33,28 +33,26 @@ use uuid::Uuid;
 /// Configuration knobs for the test server to keep integration tests fast.
 #[derive(Clone, Debug)]
 pub struct TestConfig {
-    pub scheduler_interval_secs: u64,
-    pub scheduler_batch_size: i32,
-    pub scheduler_max_per_tick: i32,
-    pub watchdog_interval_secs: u64,
+    pub coordinator_interval_secs: u64,
+    pub coordinator_batch_size: i32,
     pub worker_stale_threshold_secs: i64,
     pub poll_timeout_secs: u64,
+    pub visibility_timeout_secs: i64,
 }
 
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
-            scheduler_interval_secs: 1,
-            scheduler_batch_size: 100,
-            scheduler_max_per_tick: 100,
-            watchdog_interval_secs: 1,
+            coordinator_interval_secs: 1,
+            coordinator_batch_size: 100,
             worker_stale_threshold_secs: 2,
             poll_timeout_secs: 2,
+            visibility_timeout_secs: 300,
         }
     }
 }
 
-/// End-to-end harness that runs Postgres + Kagzi server (gRPC) with scheduler and watchdog.
+/// End-to-end harness that runs Postgres + Kagzi server (gRPC) with coordinator.
 pub struct TestHarness {
     pub pool: PgPool,
     pub server_url: String,
@@ -105,18 +103,15 @@ impl TestHarness {
 
         let store = PgStore::new(pool.clone(), StoreConfig::default());
 
-        let scheduler_settings = SchedulerSettings {
-            interval_secs: config.scheduler_interval_secs,
-            batch_size: config.scheduler_batch_size,
-            max_workflows_per_tick: config.scheduler_max_per_tick,
-        };
-        let watchdog_settings = WatchdogSettings {
-            interval_secs: config.watchdog_interval_secs,
+        let coordinator_settings = CoordinatorSettings {
+            interval_secs: config.coordinator_interval_secs,
+            batch_size: config.coordinator_batch_size,
             worker_stale_threshold_secs: config.worker_stale_threshold_secs,
         };
         let worker_settings = WorkerSettings {
             poll_timeout_secs: config.poll_timeout_secs,
             heartbeat_interval_secs: 1, // Fast heartbeat for tests
+            visibility_timeout_secs: config.visibility_timeout_secs,
         };
 
         let shutdown = CancellationToken::new();
@@ -130,21 +125,16 @@ impl TestHarness {
             }
         });
 
-        watchdog::spawn(
-            store.clone(),
-            watchdog_settings.clone(),
-            shutdown.child_token(),
-        );
-
-        let scheduler_store = store.clone();
-        let scheduler_queue = queue.clone();
-        let scheduler_token = shutdown.child_token();
+        // Start coordinator (replaces scheduler + watchdog)
+        let coordinator_store = store.clone();
+        let coordinator_queue = queue.clone();
+        let coordinator_token = shutdown.child_token();
         tokio::spawn(async move {
-            run_scheduler(
-                scheduler_store,
-                scheduler_queue,
-                scheduler_settings,
-                scheduler_token,
+            coordinator::run(
+                coordinator_store,
+                coordinator_queue,
+                coordinator_settings,
+                coordinator_token,
             )
             .await;
         });

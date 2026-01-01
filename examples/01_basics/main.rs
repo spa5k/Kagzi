@@ -76,6 +76,57 @@ async fn context_workflow(
     })
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct SleepInput {
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SleepOutput {
+    message: String,
+    steps_completed: u32,
+}
+
+async fn step_process(step_num: u32, name: String) -> anyhow::Result<String> {
+    let result = format!("Step {} processing {}", step_num, name);
+    println!("  → {}", result);
+    Ok(result)
+}
+
+async fn sleep_workflow(mut ctx: Context, input: SleepInput) -> anyhow::Result<SleepOutput> {
+    println!("Starting sleep workflow for: {}", input.name);
+
+    // Step 1: Process and sleep
+    let step1 = ctx
+        .step("step_1")
+        .run(|| step_process(1, input.name.clone()))
+        .await?;
+    println!("  → Sleeping for 6 seconds...");
+    ctx.sleep("sleep_1", "6s").await?;
+
+    // Step 2: Process and sleep
+    let step2 = ctx
+        .step("step_2")
+        .run(|| step_process(2, input.name.clone()))
+        .await?;
+    println!("  → Sleeping for 7 seconds...");
+    ctx.sleep("sleep_2", "7s").await?;
+
+    // Step 3: Process and sleep
+    let step3 = ctx
+        .step("step_3")
+        .run(|| step_process(3, input.name.clone()))
+        .await?;
+    println!("  → Sleeping for 8 seconds...");
+    ctx.sleep("sleep_3", "8s").await?;
+
+    println!("All steps completed!");
+    Ok(SleepOutput {
+        message: format!("Completed: {} -> {} -> {}", step1, step2, step3),
+        steps_completed: 3,
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -88,8 +139,11 @@ async fn main() -> anyhow::Result<()> {
         "hello" => run_hello(&server, &namespace).await?,
         "chain" => run_chain(&server, &namespace).await?,
         "context" => run_context(&server, &namespace).await?,
+        "sleep" => run_sleep(&server, &namespace).await?,
         _ => {
-            eprintln!("Usage: cargo run -p kagzi --example 01_basics -- [hello|chain|context]");
+            eprintln!(
+                "Usage: cargo run -p kagzi --example 01_basics -- [hello|chain|context|sleep]"
+            );
             std::process::exit(1);
         }
     }
@@ -178,5 +232,34 @@ async fn run_context(server: &str, namespace: &str) -> anyhow::Result<()> {
         }
     });
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    Ok(())
+}
+
+async fn run_sleep(server: &str, namespace: &str) -> anyhow::Result<()> {
+    let mut worker = Worker::new(server)
+        .namespace(namespace)
+        .workflows([("sleep_workflow", sleep_workflow)])
+        .build()
+        .await?;
+
+    let client = Kagzi::connect(server).await?;
+
+    let run = client
+        .start("sleep_workflow")
+        .namespace(namespace)
+        .input(SleepInput {
+            name: "sleeper".to_string(),
+        })
+        .r#await()
+        .await?;
+
+    println!("Started sleep workflow: {}", run.id);
+    println!("This workflow will take ~20 seconds to complete (3 steps with 5-10s sleeps)");
+    tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            eprintln!("Worker error: {:?}", e);
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_secs(25)).await;
     Ok(())
 }

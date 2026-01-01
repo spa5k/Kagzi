@@ -5,8 +5,7 @@ use serde::Deserialize;
 pub struct Settings {
     pub database_url: String,
     pub server: ServerSettings,
-    pub scheduler: SchedulerSettings,
-    pub watchdog: WatchdogSettings,
+    pub coordinator: CoordinatorSettings,
     pub worker: WorkerSettings,
     pub payload: PayloadSettings,
     pub queue: QueueSettings,
@@ -22,30 +21,37 @@ pub struct ServerSettings {
     pub db_max_connections: u32,
 }
 
+/// Settings for the coordinator background task.
+///
+/// The coordinator handles:
+/// - Firing due cron schedules
+/// - Marking stale workers as offline
 #[derive(Debug, Clone, Deserialize)]
-pub struct SchedulerSettings {
-    #[serde(default = "default_scheduler_interval_secs")]
+pub struct CoordinatorSettings {
+    /// Interval between coordinator ticks in seconds
+    #[serde(default = "default_coordinator_interval_secs")]
     pub interval_secs: u64,
-    #[serde(default = "default_scheduler_batch_size")]
+    /// Maximum number of cron schedules to fire per tick
+    #[serde(default = "default_coordinator_batch_size")]
     pub batch_size: i32,
-    #[serde(default = "default_max_workflows_per_tick")]
-    pub max_workflows_per_tick: i32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct WatchdogSettings {
-    #[serde(default = "default_watchdog_interval_secs")]
-    pub interval_secs: u64,
+    /// How long a worker can go without heartbeat before being marked offline
     #[serde(default = "default_worker_stale_threshold_secs")]
     pub worker_stale_threshold_secs: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerSettings {
+    /// How long to wait for work before returning empty from poll
     #[serde(default = "default_poll_timeout_secs")]
     pub poll_timeout_secs: u64,
+    /// How often workers should send heartbeats
     #[serde(default = "default_heartbeat_interval_secs")]
     pub heartbeat_interval_secs: u32,
+    /// How long a worker has to complete work before it becomes available to others.
+    /// This is the visibility timeout - if a worker doesn't complete within this time,
+    /// the workflow is picked up by another worker for replay.
+    #[serde(default = "default_visibility_timeout_secs")]
+    pub visibility_timeout_secs: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -80,23 +86,15 @@ impl Settings {
                 default_db_max_connections() as i64,
             )?
             .set_default(
-                "scheduler.interval_secs",
-                default_scheduler_interval_secs() as i64,
+                "coordinator.interval_secs",
+                default_coordinator_interval_secs() as i64,
             )?
             .set_default(
-                "scheduler.batch_size",
-                default_scheduler_batch_size() as i64,
+                "coordinator.batch_size",
+                default_coordinator_batch_size() as i64,
             )?
             .set_default(
-                "scheduler.max_workflows_per_tick",
-                default_max_workflows_per_tick() as i64,
-            )?
-            .set_default(
-                "watchdog.interval_secs",
-                default_watchdog_interval_secs() as i64,
-            )?
-            .set_default(
-                "watchdog.worker_stale_threshold_secs",
+                "coordinator.worker_stale_threshold_secs",
                 default_worker_stale_threshold_secs(),
             )?
             .set_default(
@@ -106,6 +104,10 @@ impl Settings {
             .set_default(
                 "worker.heartbeat_interval_secs",
                 default_heartbeat_interval_secs() as i64,
+            )?
+            .set_default(
+                "worker.visibility_timeout_secs",
+                default_visibility_timeout_secs(),
             )?
             .set_default(
                 "payload.warn_threshold_bytes",
@@ -138,11 +140,22 @@ impl Settings {
     }
 }
 
+impl Default for CoordinatorSettings {
+    fn default() -> Self {
+        Self {
+            interval_secs: default_coordinator_interval_secs(),
+            batch_size: default_coordinator_batch_size(),
+            worker_stale_threshold_secs: default_worker_stale_threshold_secs(),
+        }
+    }
+}
+
 impl Default for WorkerSettings {
     fn default() -> Self {
         Self {
             poll_timeout_secs: default_poll_timeout_secs(),
             heartbeat_interval_secs: default_heartbeat_interval_secs(),
+            visibility_timeout_secs: default_visibility_timeout_secs(),
         }
     }
 }
@@ -178,20 +191,12 @@ fn default_db_max_connections() -> u32 {
     50
 }
 
-fn default_scheduler_interval_secs() -> u64 {
+fn default_coordinator_interval_secs() -> u64 {
     5
 }
 
-fn default_scheduler_batch_size() -> i32 {
+fn default_coordinator_batch_size() -> i32 {
     100
-}
-
-fn default_max_workflows_per_tick() -> i32 {
-    1000
-}
-
-fn default_watchdog_interval_secs() -> u64 {
-    1
 }
 
 fn default_worker_stale_threshold_secs() -> i64 {
@@ -204,6 +209,10 @@ fn default_poll_timeout_secs() -> u64 {
 
 fn default_heartbeat_interval_secs() -> u32 {
     10
+}
+
+fn default_visibility_timeout_secs() -> i64 {
+    300 // 5 minutes
 }
 
 fn default_payload_warn_threshold_bytes() -> usize {

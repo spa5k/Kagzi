@@ -6,7 +6,7 @@ use kagzi_queue::QueueNotifier;
 use kagzi_server::config::Settings;
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    run_scheduler, watchdog,
+    coordinator,
 };
 use kagzi_store::PgStore;
 use sqlx::postgres::PgPoolOptions;
@@ -39,8 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = PgStore::new(db_pool, store_config);
 
     let shutdown_token = CancellationToken::new();
-    let scheduler_settings = settings.scheduler.clone();
-    let watchdog_settings = settings.watchdog.clone();
+    let coordinator_settings = settings.coordinator.clone();
     let worker_settings = settings.worker.clone();
     let queue_settings = settings.queue.clone();
 
@@ -59,21 +58,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Start the background watchdog
-    let watchdog_store = store.clone();
-    let watchdog_token = shutdown_token.child_token();
-    watchdog::spawn(watchdog_store, watchdog_settings, watchdog_token);
-
-    // Start the scheduler loop
-    let scheduler_store = store.clone();
-    let scheduler_queue = queue.clone();
-    let scheduler_token = shutdown_token.child_token();
+    // Start the coordinator (replaces scheduler + watchdog)
+    let coordinator_store = store.clone();
+    let coordinator_queue = queue.clone();
+    let coordinator_token = shutdown_token.child_token();
     tokio::spawn(async move {
-        run_scheduler(
-            scheduler_store,
-            scheduler_queue,
-            scheduler_settings,
-            scheduler_token,
+        coordinator::run(
+            coordinator_store,
+            coordinator_queue,
+            coordinator_settings,
+            coordinator_token,
         )
         .await;
     });

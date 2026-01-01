@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.workflow_runs\n            SET status = 'FAILED',\n                error = $2,\n                finished_at = NOW(),\n                locked_by = NULL,\n                available_at = NULL,\n                attempts = attempts + 1\n            WHERE run_id = $1 AND status = 'RUNNING'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f7eee1f5614f6e5107cd521908f4f385b6c366d625a2a0849474e923897cbe5d"
+}
