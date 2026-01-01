@@ -203,6 +203,12 @@ impl<'a> StepBuilder<'a> {
                             error!("Workflow deleted during execution: {}", e);
                             return Err(map_grpc_error(e));
                         }
+                        Err(e) if e.code() == tonic::Code::FailedPrecondition => {
+                            // Step was already completed (likely our previous request succeeded
+                            // but we didn't receive the response). This is safe to treat as success.
+                            warn!("Step already completed (treating as success): {}", e);
+                            break;
+                        }
                         Err(e) => {
                             warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
                             tokio::time::sleep(backoff).await;

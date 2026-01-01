@@ -47,36 +47,28 @@ impl Drop for TelemetryGuard {
 /// Returns a guard that should be kept alive for the duration of the program.
 /// When dropped, it will flush and shutdown all telemetry providers.
 pub fn init_telemetry(settings: &TelemetrySettings) -> anyhow::Result<TelemetryGuard> {
-    // Build the resource with service info
     let resource = Resource::builder()
         .with_service_name(settings.service_name.clone())
         .with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
         .build();
 
-    // Set up the env filter
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&settings.log_level));
 
     if settings.enabled {
-        // Initialize W3C Trace Context propagator for distributed tracing
         let propagator =
             TextMapCompositePropagator::new(vec![Box::new(TraceContextPropagator::new())]);
         global::set_text_map_propagator(propagator);
 
-        // Initialize OpenTelemetry providers
         let (tracer_provider, meter_provider) = init_otel_providers(resource.clone());
 
-        // Get a tracer from the provider
         let tracer = tracer_provider.tracer("kagzi-server");
 
-        // Set global providers
         global::set_tracer_provider(tracer_provider.clone());
         global::set_meter_provider(meter_provider.clone());
 
-        // Create the OpenTelemetry layer for tracing
         let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-        // Build the subscriber with both fmt and OpenTelemetry layers
         match settings.log_format.as_str() {
             "json" => {
                 tracing_subscriber::registry()
@@ -105,7 +97,6 @@ pub fn init_telemetry(settings: &TelemetrySettings) -> anyhow::Result<TelemetryG
             meter_provider: Some(meter_provider),
         })
     } else {
-        // OTEL disabled - just use basic tracing subscriber
         match settings.log_format.as_str() {
             "json" => {
                 tracing_subscriber::registry()
@@ -134,14 +125,12 @@ pub fn init_telemetry(settings: &TelemetrySettings) -> anyhow::Result<TelemetryG
 }
 
 fn init_otel_providers(resource: Resource) -> (SdkTracerProvider, SdkMeterProvider) {
-    // Trace provider with stdout exporter (simple for development)
     let trace_exporter = opentelemetry_stdout::SpanExporter::default();
     let tracer_provider = SdkTracerProvider::builder()
         .with_resource(resource.clone())
         .with_simple_exporter(trace_exporter)
         .build();
 
-    // Metrics provider with stdout exporter
     let metrics_exporter = opentelemetry_stdout::MetricExporter::default();
     let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(metrics_exporter).build();
     let meter_provider = SdkMeterProvider::builder()

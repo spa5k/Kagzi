@@ -321,7 +321,21 @@ impl Worker {
                                 }
                             }
                             Err(e) => {
-                                error!("Heartbeat failed: {:?}", e);
+                                // If NotFound or FailedPrecondition, the server thinks we're offline
+                                // (e.g., due to missed heartbeats during network partition).
+                                // Trigger shutdown to prevent double execution when server assigns
+                                // our tasks to other workers.
+                                if e.code() == tonic::Code::NotFound 
+                                    || e.code() == tonic::Code::FailedPrecondition 
+                                {
+                                    error!(
+                                        "Worker rejected by server (offline), triggering shutdown: {:?}", 
+                                        e
+                                    );
+                                    shutdown.cancel();
+                                } else {
+                                    error!("Heartbeat failed: {:?}", e);
+                                }
                             }
                         }
                     }
@@ -336,15 +350,17 @@ impl Worker {
             Err(_) => return,
         };
 
-        let resp = self
-            .client
-            .poll_task(PollTaskRequest {
-                task_queue,
-                worker_id: self.worker_id.unwrap().to_string(),
-                namespace_id: self.namespace_id.clone(),
-                workflow_types: self.workflow_types.clone(),
-            })
-            .await;
+        // Add client-side timeout slightly longer than server hold time
+        // to ensure responsive shutdown during long-polling
+        let mut request = Request::new(PollTaskRequest {
+            task_queue,
+            worker_id: self.worker_id.unwrap().to_string(),
+            namespace_id: self.namespace_id.clone(),
+            workflow_types: self.workflow_types.clone(),
+        });
+        request.set_timeout(Duration::from_secs(65));
+
+        let resp = self.client.poll_task(request).await;
 
         match resp {
             Ok(r) => {

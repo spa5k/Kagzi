@@ -102,7 +102,6 @@ pub struct TelemetrySettings {
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
         let mut builder = Config::builder()
-            // Built-in defaults to avoid missing-section errors
             .set_default("server.host", default_host())?
             .set_default("server.port", default_port() as i64)?
             .set_default(
@@ -161,7 +160,6 @@ impl Settings {
             .set_default("telemetry.service_name", default_telemetry_service_name())?
             .set_default("telemetry.log_level", default_telemetry_log_level())?
             .set_default("telemetry.log_format", default_telemetry_log_format())?
-            // Single canonical source: KAGZI_* (flat, single underscore)
             .add_source(Environment::with_prefix("KAGZI").separator("_"));
 
         if let Ok(db_url) = std::env::var("KAGZI_DB_URL") {
