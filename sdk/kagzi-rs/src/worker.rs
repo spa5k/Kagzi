@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -163,8 +163,6 @@ impl WorkerBuilder {
             heartbeat_interval: Duration::from_secs(10),
             semaphore: Arc::new(Semaphore::new(self.max_concurrent)),
             shutdown: CancellationToken::new(),
-            completed_counter: Arc::new(AtomicI32::new(0)),
-            failed_counter: Arc::new(AtomicI32::new(0)),
             consecutive_poll_failures: Arc::new(AtomicU32::new(0)),
         })
     }
@@ -184,8 +182,6 @@ pub struct Worker {
     heartbeat_interval: Duration,
     semaphore: Arc<Semaphore>,
     shutdown: CancellationToken,
-    completed_counter: Arc<AtomicI32>,
-    failed_counter: Arc<AtomicI32>,
     consecutive_poll_failures: Arc<AtomicU32>,
 }
 
@@ -246,7 +242,6 @@ impl Worker {
                 }),
                 pid: std::process::id() as i32,
                 version: self.version.clone().unwrap_or_default(),
-                max_concurrent: self.max_concurrent as i32,
                 labels: self.labels.clone(),
                 queue_concurrency_limit: None,
                 workflow_type_concurrency: Vec::new(),
@@ -302,12 +297,8 @@ impl Worker {
     fn spawn_heartbeat_task(&self) -> tokio::task::JoinHandle<()> {
         let mut client = self.client.clone();
         let worker_id = self.worker_id.unwrap();
-        let semaphore = self.semaphore.clone();
-        let max = self.max_concurrent;
         let interval = self.heartbeat_interval;
         let shutdown = self.shutdown.clone();
-        let completed_counter = self.completed_counter.clone();
-        let failed_counter = self.failed_counter.clone();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -316,15 +307,8 @@ impl Worker {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
                     _ = ticker.tick() => {
-                        let active = (max - semaphore.available_permits()) as i32;
-                        let completed = completed_counter.swap(0, Ordering::Relaxed);
-                        let failed = failed_counter.swap(0, Ordering::Relaxed);
-
                         let resp = client.heartbeat(HeartbeatRequest {
                             worker_id: worker_id.to_string(),
-                            active_count: active,
-                            completed_delta: completed,
-                            failed_delta: failed,
                         }).await;
 
                         match resp {
@@ -392,21 +376,10 @@ impl Worker {
                     };
                     let run_id = task.run_id.clone();
                     let default_retry = self.default_retry.clone();
-                    let completed_counter = self.completed_counter.clone();
-                    let failed_counter = self.failed_counter.clone();
 
                     tokio::spawn(async move {
                         let _permit = permit;
-                        execute_workflow(
-                            client,
-                            handler,
-                            run_id,
-                            input,
-                            default_retry,
-                            completed_counter,
-                            failed_counter,
-                        )
-                        .await;
+                        execute_workflow(client, handler, run_id, input, default_retry).await;
                     });
                 } else {
                     error!("No handler for workflow type: {}", task.workflow_type);
@@ -430,15 +403,12 @@ impl Worker {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn execute_workflow(
     mut client: WorkerServiceClient<Channel>,
     handler: Arc<WorkflowFn>,
     run_id: String,
     input: serde_json::Value,
     default_retry: Option<Retry>,
-    completed_counter: Arc<AtomicI32>,
-    failed_counter: Arc<AtomicI32>,
 ) {
     let ctx = Context {
         client: client.clone(),
@@ -485,7 +455,6 @@ async fn execute_workflow(
             });
 
             let _ = client.complete_workflow(complete_request).await;
-            completed_counter.fetch_add(1, Ordering::Relaxed);
         }
         Err(e) => {
             if e.downcast_ref::<WorkflowPaused>().is_some() {
@@ -513,7 +482,6 @@ async fn execute_workflow(
             });
 
             let _ = client.fail_workflow(fail_request).await;
-            failed_counter.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

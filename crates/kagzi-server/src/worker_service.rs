@@ -99,7 +99,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 } else {
                     Some(req.version)
                 },
-                max_concurrent: req.max_concurrent.max(1),
                 labels: serde_json::to_value(&req.labels).unwrap_or_default(),
                 queue_concurrency_limit: req
                     .queue_concurrency_limit
@@ -137,10 +136,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let accepted = self
             .store
             .workers()
-            .heartbeat(WorkerHeartbeatParams {
-                worker_id,
-                active_count: req.active_count,
-            })
+            .heartbeat(WorkerHeartbeatParams { worker_id })
             .await
             .map_err(map_store_error)?;
 

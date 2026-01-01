@@ -62,8 +62,16 @@ async fn run_polling(server: &str, namespace: &str) -> anyhow::Result<()> {
         .await?;
 
     println!("🚀 Started polling workflow: {}", run.id);
-    tokio::spawn(async move { worker.run().await });
+    let worker_handle = tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            eprintln!("❌ Worker error: {}", e);
+        }
+    });
     tokio::time::sleep(Duration::from_secs(20)).await;
+
+    if worker_handle.is_finished() {
+        println!("⚠️  Worker stopped unexpectedly");
+    }
     println!("✅ Example complete\n");
     Ok(())
 }
@@ -94,8 +102,16 @@ async fn run_timeout(server: &str, namespace: &str) -> anyhow::Result<()> {
         "🚀 Started timeout workflow (expected to fail after limit): {}",
         run.id
     );
-    tokio::spawn(async move { worker.run().await });
+    let worker_handle = tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            eprintln!("❌ Worker error: {}", e);
+        }
+    });
     tokio::time::sleep(Duration::from_secs(20)).await;
+
+    if worker_handle.is_finished() {
+        println!("⚠️  Worker stopped unexpectedly");
+    }
     println!("✅ Example complete\n");
     Ok(())
 }

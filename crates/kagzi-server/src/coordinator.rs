@@ -77,9 +77,18 @@ async fn fire_due_schedules<Q: QueueNotifier>(
     let mut fired = 0;
 
     for template in templates {
+        let Some(fire_at) = template.available_at else {
+            warn!(run_id = %template.run_id, "Schedule template missing available_at");
+            continue;
+        };
+        let Some(ref cron_expr) = template.cron_expr else {
+            warn!(run_id = %template.run_id, "Schedule template missing cron_expr");
+            continue;
+        };
+
         if let Some(run_id) = store
             .workflows()
-            .create_schedule_instance(template.run_id, template.available_at.unwrap())
+            .create_schedule_instance(template.run_id, fire_at)
             .await?
         {
             info!(
@@ -96,12 +105,18 @@ async fn fire_due_schedules<Q: QueueNotifier>(
             fired += 1;
         }
 
-        let cron = cron::Schedule::from_str(template.cron_expr.as_ref().unwrap())
+        let cron = cron::Schedule::from_str(cron_expr)
             .map_err(|e| kagzi_store::StoreError::invalid_state(format!("Invalid cron: {}", e)))?;
-        let next_fire = cron
-            .after(&now)
-            .next()
-            .unwrap_or(now + chrono::Duration::days(365));
+        let next_fire = match cron.after(&now).next() {
+            Some(t) => t,
+            None => {
+                warn!(
+                    schedule_id = %template.run_id,
+                    "Cron expression has no future occurrences, defaulting to 365 days"
+                );
+                now + chrono::Duration::days(365)
+            }
+        };
 
         store
             .workflows()

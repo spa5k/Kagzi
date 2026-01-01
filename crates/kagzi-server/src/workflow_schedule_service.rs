@@ -342,9 +342,13 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         };
 
         let next_fire = if new_status == Some(kagzi_store::WorkflowStatus::Scheduled) {
-            let cron_expr = current.cron_expr.as_ref().unwrap();
+            let cron_expr = current.cron_expr.as_ref().ok_or_else(|| {
+                invalid_argument_error("Cannot enable schedule without cron expression")
+            })?;
             let cron = parse_cron_expr(cron_expr)?;
-            Some(cron.after(&Utc::now()).next().unwrap())
+            Some(cron.after(&Utc::now()).next().ok_or_else(|| {
+                invalid_argument_error("Cron expression has no future occurrences")
+            })?)
         } else {
             None
         };

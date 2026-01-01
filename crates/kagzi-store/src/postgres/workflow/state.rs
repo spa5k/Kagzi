@@ -812,7 +812,7 @@ pub(super) async fn extend_visibility(
     let result = sqlx::query!(
         r#"
         UPDATE kagzi.workflow_runs
-        SET available_at = NOW() + ($2 * INTERVAL '1 second')
+        SET available_at = GREATEST(available_at, NOW()) + ($2 * INTERVAL '1 second')
         WHERE locked_by = $1 AND status = 'RUNNING'
         "#,
         worker_id,

@@ -65,15 +65,11 @@ message Worker {
   int32 pid = 6;
   string version = 7;
   repeated string workflow_types = 8;
-  int32 max_concurrent = 9;
-  int32 active_count = 10;
-  int64 total_completed = 11;
-  int64 total_failed = 12;
-  google.protobuf.Timestamp registered_at = 13;
-  google.protobuf.Timestamp last_heartbeat_at = 14;
-  map<string, string> labels = 15;
-  optional int32 queue_concurrency_limit = 16;
-  repeated WorkflowTypeConcurrency workflow_type_concurrency = 17;
+  google.protobuf.Timestamp registered_at = 9;
+  google.protobuf.Timestamp last_heartbeat_at = 10;
+  map<string, string> labels = 11;
+  optional int32 queue_concurrency_limit = 12;
+  repeated WorkflowTypeConcurrency workflow_type_concurrency = 13;
 }
 
 message WorkflowTypeConcurrency {
@@ -107,10 +103,9 @@ message RegisterRequest {
   string hostname = 4;
   int32 pid = 5;
   string version = 6;
-  int32 max_concurrent = 7;
-  map<string, string> labels = 8;
-  optional int32 queue_concurrency_limit = 9;
-  repeated WorkflowTypeConcurrency workflow_type_concurrency = 10;
+  map<string, string> labels = 7;
+  optional int32 queue_concurrency_limit = 8;
+  repeated WorkflowTypeConcurrency workflow_type_concurrency = 9;
 }
 
 message RegisterResponse {
@@ -120,9 +115,6 @@ message RegisterResponse {
 
 message HeartbeatRequest {
   string worker_id = 1;
-  int32 active_count = 2;
-  int32 completed_delta = 3;
-  int32 failed_delta = 4;
 }
 
 message HeartbeatResponse {
