@@ -3,6 +3,7 @@ mod queue;
 mod state;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -153,5 +154,50 @@ impl WorkflowRepository for PgWorkflowRepository {
 
     async fn create_batch(&self, params: Vec<CreateWorkflow>) -> Result<Vec<Uuid>, StoreError> {
         state::create_batch(self, params).await
+    }
+
+    async fn find_due_schedules(
+        &self,
+        namespace_id: &str,
+        now: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>, StoreError> {
+        state::find_due_schedules(self, namespace_id, now, limit).await
+    }
+
+    async fn create_schedule_instance(
+        &self,
+        template_run_id: Uuid,
+        fire_at: DateTime<Utc>,
+    ) -> Result<Option<Uuid>, StoreError> {
+        state::create_schedule_instance(self, template_run_id, fire_at).await
+    }
+
+    async fn update_next_fire(
+        &self,
+        run_id: Uuid,
+        next_fire_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        state::update_next_fire(self, run_id, next_fire_at).await
+    }
+
+    async fn update(&self, run_id: Uuid, workflow: WorkflowRun) -> Result<(), StoreError> {
+        state::update(self, run_id, workflow).await
+    }
+
+    async fn delete(&self, run_id: Uuid) -> Result<(), StoreError> {
+        state::delete(self, run_id).await
+    }
+
+    async fn get_namespace(&self, run_id: Uuid) -> Result<Option<String>, StoreError> {
+        state::get_namespace(self, run_id).await
+    }
+
+    async fn extend_visibility(
+        &self,
+        worker_id: &str,
+        extension_secs: i64,
+    ) -> Result<u64, StoreError> {
+        state::extend_visibility(self, worker_id, extension_secs).await
     }
 }

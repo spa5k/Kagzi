@@ -49,11 +49,15 @@ async fn run_saga(
     fail_hotel: bool,
     fail_car: bool,
 ) -> anyhow::Result<()> {
+    println!("🔄 Saga Pattern Example - demonstrates compensating transactions\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("trip_booking", trip_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let run = client
@@ -68,11 +72,12 @@ async fn run_saga(
         .await?;
 
     println!(
-        "Started saga workflow: run={}, fail_car={}, fail_hotel={}",
+        "🚀 Started saga workflow: run={}, fail_car={}, fail_hotel={}",
         run.id, fail_car, fail_hotel
     );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(10)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 

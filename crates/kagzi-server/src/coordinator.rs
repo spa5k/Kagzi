@@ -4,11 +4,12 @@
 //! - Firing due cron schedules
 //! - Marking stale workers offline
 
+use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::Utc;
 use kagzi_queue::QueueNotifier;
-use kagzi_store::{PgStore, WorkerRepository, WorkflowScheduleRepository};
+use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -28,7 +29,6 @@ pub async fn run<Q: QueueNotifier>(
 ) {
     let interval = Duration::from_secs(settings.interval_secs);
     let mut ticker = tokio::time::interval(interval);
-    // Don't burst-fire catchup ticks on startup
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     info!(
@@ -45,12 +45,10 @@ pub async fn run<Q: QueueNotifier>(
                 break;
             }
             _ = ticker.tick() => {
-                // 1. Fire due cron schedules
                 if let Err(e) = fire_due_schedules(&store, &queue, &settings).await {
                     error!("Failed to fire schedules: {:?}", e);
                 }
 
-                // 2. Mark stale workers offline
                 if let Err(e) = mark_stale_workers(&store, settings.worker_stale_threshold_secs).await {
                     error!("Failed to mark stale workers: {:?}", e);
                 }
@@ -59,42 +57,77 @@ pub async fn run<Q: QueueNotifier>(
     }
 }
 
-/// Fire all cron schedules that are due.
 async fn fire_due_schedules<Q: QueueNotifier>(
     store: &PgStore,
     queue: &Q,
     settings: &CoordinatorSettings,
 ) -> Result<(), kagzi_store::StoreError> {
     let now = Utc::now();
-    let schedules = store
-        .schedules()
-        .due_schedules(now, settings.batch_size as i64)
+    let templates = store
+        .workflows()
+        .find_due_schedules("*", now, settings.batch_size as i64)
         .await?;
 
-    if schedules.is_empty() {
+    if templates.is_empty() {
         return Ok(());
     }
 
-    info!(count = schedules.len(), "Processing due schedules");
+    info!(count = templates.len(), "Processing due schedules");
 
-    for schedule in schedules {
-        // Notify queue that work may be available for this schedule's task queue
-        // The actual workflow creation happens through the schedule's next_fire logic
-        let _ = queue
-            .notify(&schedule.namespace_id, &schedule.task_queue)
-            .await;
+    let mut fired = 0;
 
-        info!(
-            schedule_id = %schedule.schedule_id,
-            task_queue = %schedule.task_queue,
-            "Notified queue for due schedule"
-        );
+    for template in templates {
+        let Some(fire_at) = template.available_at else {
+            warn!(run_id = %template.run_id, "Schedule template missing available_at");
+            continue;
+        };
+        let Some(ref cron_expr) = template.cron_expr else {
+            warn!(run_id = %template.run_id, "Schedule template missing cron_expr");
+            continue;
+        };
+
+        if let Some(run_id) = store
+            .workflows()
+            .create_schedule_instance(template.run_id, fire_at)
+            .await?
+        {
+            info!(
+                schedule_id = %template.run_id,
+                run_id = %run_id,
+                "Fired schedule"
+            );
+            if let Err(e) = queue
+                .notify(&template.namespace_id, &template.task_queue)
+                .await
+            {
+                warn!("Failed to notify queue: {:?}", e);
+            }
+            fired += 1;
+        }
+
+        let cron = cron::Schedule::from_str(cron_expr)
+            .map_err(|e| kagzi_store::StoreError::invalid_state(format!("Invalid cron: {}", e)))?;
+        let next_fire = match cron.after(&now).next() {
+            Some(t) => t,
+            None => {
+                warn!(
+                    schedule_id = %template.run_id,
+                    "Cron expression has no future occurrences, defaulting to 365 days"
+                );
+                now + chrono::Duration::days(365)
+            }
+        };
+
+        store
+            .workflows()
+            .update_next_fire(template.run_id, next_fire)
+            .await?;
     }
 
+    info!(fired, "Finished processing due schedules");
     Ok(())
 }
 
-/// Mark workers that haven't sent heartbeat as offline.
 async fn mark_stale_workers(
     store: &PgStore,
     threshold_secs: i64,

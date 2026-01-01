@@ -52,11 +52,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn static_fanout(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🌐 Static Fan-Out Example - demonstrates parallel data fetching\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("profile_aggregate", static_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let run = client
@@ -67,19 +71,24 @@ async fn static_fanout(server: &str, namespace: &str) -> anyhow::Result<()> {
         })
         .send()
         .await?;
-    println!("Started static fan-out workflow: {}", run.id);
+    println!("🚀 Started static fan-out workflow: {}", run.id);
 
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn dynamic_mapreduce(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🔢 Dynamic Map-Reduce Example - demonstrates parallel computation\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("square_and_sum", mapreduce_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let run = client
@@ -90,10 +99,11 @@ async fn dynamic_mapreduce(server: &str, namespace: &str) -> anyhow::Result<()> 
         })
         .send()
         .await?;
-    println!("Started dynamic map-reduce workflow: {}", run.id);
+    println!("🚀 Started dynamic map-reduce workflow: {}", run.id);
 
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(Duration::from_secs(5)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 

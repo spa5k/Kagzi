@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT \n                worker_id,\n                namespace_id,\n                task_queue,\n                status,\n                hostname,\n                pid,\n                version,\n                workflow_types,\n                max_concurrent,\n                active_count,\n                total_completed,\n                total_failed,\n                registered_at,\n                last_heartbeat_at,\n                deregistered_at,\n                labels\n            FROM kagzi.workers\n            WHERE worker_id = $1\n            ",
+  "query": "\n            SELECT\n                worker_id,\n                namespace_id,\n                task_queue,\n                status,\n                hostname,\n                pid,\n                version,\n                workflow_types,\n                registered_at,\n                last_heartbeat_at,\n                deregistered_at,\n                labels\n            FROM kagzi.workers\n            WHERE worker_id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -45,41 +45,21 @@
       },
       {
         "ordinal": 8,
-        "name": "max_concurrent",
-        "type_info": "Int4"
-      },
-      {
-        "ordinal": 9,
-        "name": "active_count",
-        "type_info": "Int4"
-      },
-      {
-        "ordinal": 10,
-        "name": "total_completed",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 11,
-        "name": "total_failed",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 12,
         "name": "registered_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 13,
+        "ordinal": 9,
         "name": "last_heartbeat_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 14,
+        "ordinal": 10,
         "name": "deregistered_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 15,
+        "ordinal": 11,
         "name": "labels",
         "type_info": "Jsonb"
       }
@@ -100,13 +80,9 @@
       false,
       false,
       false,
-      false,
-      false,
-      false,
-      false,
       true,
       true
     ]
   },
-  "hash": "9fe08f923dcc514c12c121c8f6695bbb41022807155208e6e31a1eacb240726e"
+  "hash": "91c3f521580d80d5acb4107f74cd2ebfeae300c9a37730548d83bccc78b0a6db"
 }

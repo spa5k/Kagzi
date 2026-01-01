@@ -99,7 +99,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 } else {
                     Some(req.version)
                 },
-                max_concurrent: req.max_concurrent.max(1),
                 labels: serde_json::to_value(&req.labels).unwrap_or_default(),
                 queue_concurrency_limit: req
                     .queue_concurrency_limit
@@ -137,12 +136,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let accepted = self
             .store
             .workers()
-            .heartbeat(WorkerHeartbeatParams {
-                worker_id,
-                active_count: req.active_count,
-                completed_delta: req.completed_delta,
-                failed_delta: req.failed_delta,
-            })
+            .heartbeat(WorkerHeartbeatParams { worker_id })
             .await
             .map_err(map_store_error)?;
 
@@ -150,12 +144,24 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(not_found_error(
                 "Worker not found or offline",
                 "worker",
-                req.worker_id,
+                req.worker_id.clone(),
             ));
         }
 
-        // No lock extension - workers must complete within visibility timeout
-        // If they don't, the workflow becomes available for other workers
+        // Extend visibility for all workflows locked by this worker
+        let extended = self
+            .store
+            .workflows()
+            .extend_visibility(
+                &req.worker_id,
+                self.worker_settings.heartbeat_extension_secs,
+            )
+            .await
+            .map_err(map_store_error)?;
+
+        if extended > 0 {
+            tracing::debug!(worker_id = %req.worker_id, count = extended, "Extended workflow visibility");
+        }
 
         let worker = self
             .store
@@ -289,12 +295,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             if let Some(work_item) = work_item {
                 let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 
-                let _ = self
-                    .store
-                    .workers()
-                    .update_active_count(worker_id, &worker.namespace_id, 1)
-                    .await;
-
                 let payload = bytes_to_payload(Some(work_item.input));
 
                 return Ok(Response::new(PollTaskResponse {
@@ -343,16 +343,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let workflow = self
+        let namespace_id = self
             .store
             .workflows()
-            .find_by_id(run_id, DEFAULT_NAMESPACE)
+            .get_namespace(run_id)
             .await
-            .map_err(map_store_error)?;
-        let namespace_id = workflow
-            .as_ref()
-            .map(|w| w.namespace_id.clone())
-            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
 
         // Validate workflow exists and is in a valid state for steps
         let workflow_check = self
@@ -429,15 +426,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let workflow = self
+        let namespace_id = self
             .store
             .workflows()
-            .find_by_id(run_id, DEFAULT_NAMESPACE)
+            .get_namespace(run_id)
             .await
-            .map_err(map_store_error)?;
-        let namespace_id = workflow
-            .map(|w| w.namespace_id)
-            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
 
         let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
@@ -536,16 +531,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let workflow = self
+        let namespace_id = self
             .store
             .workflows()
-            .find_by_id(run_id, DEFAULT_NAMESPACE)
+            .get_namespace(run_id)
             .await
-            .map_err(map_store_error)?;
-        let namespace_id = workflow
-            .as_ref()
-            .map(|w| w.namespace_id.clone())
-            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
 
         // Verify workflow exists and is in a completable state
         let workflow_check = self
@@ -580,16 +572,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        if let Some(locked_by) = workflow_check.locked_by
-            && let Ok(worker_uuid) = Uuid::parse_str(&locked_by)
-        {
-            let _ = self
-                .store
-                .workers()
-                .update_active_count(worker_uuid, &namespace_id, -1)
-                .await;
-        }
-
         Ok(Response::new(CompleteWorkflowResponse {
             status: kagzi_proto::kagzi::WorkflowStatus::Completed as i32,
         }))
@@ -604,16 +586,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let workflow = self
+        let namespace_id = self
             .store
             .workflows()
-            .find_by_id(run_id, DEFAULT_NAMESPACE)
+            .get_namespace(run_id)
             .await
-            .map_err(map_store_error)?;
-        let namespace_id = workflow
-            .as_ref()
-            .map(|w| w.namespace_id.clone())
-            .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
 
         let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
             code: ErrorCode::Unspecified as i32,
@@ -632,22 +611,14 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
+        // Silence unused variable warning - we verified workflow exists above
+        let _ = workflow_status;
+
         self.store
             .workflows()
             .fail(run_id, &error_detail.message)
             .await
             .map_err(map_store_error)?;
-
-        // Decrement active count for the worker that held the lock, if any.
-        if let Some(locked_by) = workflow_status.locked_by
-            && let Ok(worker_uuid) = Uuid::parse_str(&locked_by)
-        {
-            let _ = self
-                .store
-                .workers()
-                .update_active_count(worker_uuid, &namespace_id, -1)
-                .await;
-        }
 
         Ok(Response::new(FailWorkflowResponse {
             status: kagzi_proto::kagzi::WorkflowStatus::Failed as i32,
@@ -695,30 +666,12 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
 impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
     async fn complete_pending_sleep_steps(&self, run_id: Uuid) -> Result<(), Status> {
-        let steps = self
+        let _ = self
             .store
             .steps()
-            .list(kagzi_store::ListStepsParams {
-                run_id,
-                namespace_id: DEFAULT_NAMESPACE.to_string(),
-                step_id: None,
-                page_size: 100,
-                cursor: None,
-            })
+            .complete_pending_sleeps(run_id)
             .await
             .map_err(map_store_error)?;
-
-        for step in steps.items {
-            if step.step_kind == kagzi_store::StepKind::Sleep
-                && step.status == kagzi_store::StepStatus::Running
-            {
-                self.store
-                    .steps()
-                    .complete(run_id, &step.step_id, vec![])
-                    .await
-                    .map_err(map_store_error)?;
-            }
-        }
 
         Ok(())
     }

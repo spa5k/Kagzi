@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM kagzi.workflow_payloads WHERE run_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "024a71edfe45a379af0d83bde32444ca3d210419fd234275116f7cdc3f74b807"
+}

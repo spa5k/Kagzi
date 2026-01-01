@@ -12,8 +12,7 @@ use crate::repository::WorkerRepository;
 
 const WORKER_COLUMNS: &str = "\
     worker_id, namespace_id, task_queue, status, hostname, pid, version, \
-    workflow_types, max_concurrent, active_count, total_completed, total_failed, \
-    registered_at, last_heartbeat_at, deregistered_at, labels";
+    workflow_types, registered_at, last_heartbeat_at, deregistered_at, labels";
 
 #[derive(sqlx::FromRow)]
 struct WorkerRow {
@@ -25,10 +24,6 @@ struct WorkerRow {
     pid: Option<i32>,
     version: Option<String>,
     workflow_types: Vec<String>,
-    max_concurrent: i32,
-    active_count: i32,
-    total_completed: i64,
-    total_failed: i64,
     registered_at: chrono::DateTime<chrono::Utc>,
     last_heartbeat_at: chrono::DateTime<chrono::Utc>,
     deregistered_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -54,10 +49,6 @@ impl WorkerRow {
             pid: self.pid,
             version: self.version,
             workflow_types: self.workflow_types,
-            max_concurrent: self.max_concurrent,
-            active_count: self.active_count,
-            total_completed: self.total_completed,
-            total_failed: self.total_failed,
             registered_at: self.registered_at,
             last_heartbeat_at: self.last_heartbeat_at,
             deregistered_at: self.deregistered_at,
@@ -87,18 +78,15 @@ impl WorkerRepository for PgWorkerRepository {
             r#"
             INSERT INTO kagzi.workers (
                 namespace_id, task_queue, hostname, pid, version,
-                workflow_types, max_concurrent, labels, status, active_count,
-                last_heartbeat_at, deregistered_at
+                workflow_types, labels, status, last_heartbeat_at, deregistered_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ONLINE', 0, NOW(), NULL)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'ONLINE', NOW(), NULL)
             ON CONFLICT (namespace_id, task_queue, hostname, pid) WHERE status != 'OFFLINE'
             DO UPDATE SET
                 version = EXCLUDED.version,
                 workflow_types = EXCLUDED.workflow_types,
-                max_concurrent = EXCLUDED.max_concurrent,
                 labels = EXCLUDED.labels,
                 status = 'ONLINE',
-                active_count = 0,
                 deregistered_at = NULL,
                 last_heartbeat_at = NOW()
             RETURNING worker_id
@@ -109,14 +97,10 @@ impl WorkerRepository for PgWorkerRepository {
             params.pid,
             params.version.as_deref(),
             &params.workflow_types,
-            params.max_concurrent,
             &params.labels
         )
         .fetch_one(&self.pool)
         .await?;
-
-        // Note: queue_concurrency_limit and workflow_type_concurrency are now
-        // handled by worker-side semaphores, not server-side config tables
 
         Ok(worker_id)
     }
@@ -126,18 +110,12 @@ impl WorkerRepository for PgWorkerRepository {
         let result = sqlx::query!(
             r#"
             UPDATE kagzi.workers
-            SET last_heartbeat_at = NOW(),
-                active_count = $2,
-                total_completed = total_completed + GREATEST($3, 0),
-                total_failed = total_failed + GREATEST($4, 0)
+            SET last_heartbeat_at = NOW()
             WHERE worker_id = $1
               AND status != 'OFFLINE'
             RETURNING worker_id
             "#,
-            params.worker_id,
-            params.active_count,
-            params.completed_delta,
-            params.failed_delta
+            params.worker_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -168,7 +146,6 @@ impl WorkerRepository for PgWorkerRepository {
             r#"
             UPDATE kagzi.workers
             SET status = 'OFFLINE',
-                active_count = 0,
                 deregistered_at = NOW()
             WHERE worker_id = $1 AND namespace_id = $2
             "#,
@@ -186,7 +163,7 @@ impl WorkerRepository for PgWorkerRepository {
         let row = sqlx::query_as!(
             WorkerRow,
             r#"
-            SELECT 
+            SELECT
                 worker_id,
                 namespace_id,
                 task_queue,
@@ -195,10 +172,6 @@ impl WorkerRepository for PgWorkerRepository {
                 pid,
                 version,
                 workflow_types,
-                max_concurrent,
-                active_count,
-                total_completed,
-                total_failed,
                 registered_at,
                 last_heartbeat_at,
                 deregistered_at,
@@ -212,7 +185,6 @@ impl WorkerRepository for PgWorkerRepository {
         .await?;
 
         if let Some(r) = row {
-            // Concurrency limits are now managed by worker-side semaphores
             Ok(Some(r.into_model(None, Vec::new())?))
         } else {
             Ok(None)
@@ -254,7 +226,6 @@ impl WorkerRepository for PgWorkerRepository {
         let has_more = rows.len() > params.page_size as usize;
         let mut items = Vec::with_capacity(rows.len().min(params.page_size as usize));
         for r in rows.into_iter().take(params.page_size as usize) {
-            // Concurrency limits are now managed by worker-side semaphores
             items.push(r.into_model(None, Vec::new())?);
         }
 
@@ -308,29 +279,6 @@ impl WorkerRepository for PgWorkerRepository {
         .await?;
 
         Ok(row.count.unwrap_or(0))
-    }
-
-    #[instrument(skip(self))]
-    async fn update_active_count(
-        &self,
-        worker_id: Uuid,
-        namespace_id: &str,
-        delta: i32,
-    ) -> Result<(), StoreError> {
-        sqlx::query!(
-            r#"
-            UPDATE kagzi.workers
-            SET active_count = GREATEST(active_count + $2, 0)
-            WHERE worker_id = $1 AND namespace_id = $3
-            "#,
-            worker_id,
-            delta,
-            namespace_id
-        )
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
     }
 
     #[instrument(skip(self))]

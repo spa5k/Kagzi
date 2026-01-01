@@ -41,11 +41,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn external_id_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🔑 External ID Example - demonstrates idempotent workflow execution\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("charge_payment", charge_payment)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let external_id = "order-123";
@@ -69,24 +73,29 @@ async fn external_id_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "Both calls return the same run id due to idempotency: run1={}, run2={}",
+        "✅ Both calls return the same run id due to idempotency: run1={}, run2={}",
         run1.id, run2.id
     );
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            eprintln!("Worker error: {:?}", e);
+            eprintln!("❌ Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(Duration::from_secs(6)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn memoization_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🧠 Memoization Example - demonstrates step result caching\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("memoized_workflow", memo_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let run = client
@@ -97,15 +106,16 @@ async fn memoization_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "Started memoization workflow; expensive step should run once even if called twice: {}",
+        "🚀 Started memoization workflow; expensive step should run once even if called twice: {}",
         run.id
     );
     tokio::spawn(async move {
         if let Err(e) = worker.run().await {
-            eprintln!("Worker error: {:?}", e);
+            eprintln!("❌ Worker error: {:?}", e);
         }
     });
     tokio::time::sleep(Duration::from_secs(6)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 

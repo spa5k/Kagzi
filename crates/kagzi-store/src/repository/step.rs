@@ -37,4 +37,9 @@ pub trait StepRepository: Send + Sync {
     /// - `scheduled_retry: true` if the workflow should be rescheduled for replay
     /// - `schedule_workflow_retry_ms` containing the backoff delay
     async fn fail(&self, params: FailStepParams) -> Result<FailStepResult, StoreError>;
+
+    /// Complete all pending sleep steps for a workflow.
+    /// Called when a workflow wakes up from sleep to mark sleep steps as completed.
+    /// Returns the number of steps completed.
+    async fn complete_pending_sleeps(&self, run_id: Uuid) -> Result<u64, StoreError>;
 }

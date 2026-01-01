@@ -38,6 +38,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn cron_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("📅 Cron Schedule Example - demonstrates time-based workflow scheduling\n");
+
     let client = Kagzi::connect(server).await?;
     let schedule = client
         .schedule("cleanup_workflow")
@@ -50,27 +52,32 @@ async fn cron_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Created schedule: schedule_id={}", schedule.schedule_id);
+    println!("✅ Created schedule: schedule_id={}", schedule.schedule_id);
 
     let fetched = client
         .get_workflow_schedule(&schedule.schedule_id, Some(namespace))
         .await?;
-    println!("Fetched schedule: {:?}", fetched);
+    println!("🔍 Fetched schedule: {:?}", fetched);
 
     client
         .delete_workflow_schedule(&schedule.schedule_id, Some(namespace))
         .await?;
-    println!("Deleted schedule");
+    println!("🗑️  Deleted schedule");
+    println!("✅ Example complete\n");
 
     Ok(())
 }
 
 async fn durable_sleep_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("⏱️  Durable Sleep Example - demonstrates resumable sleep across restarts\n");
+
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("sleep_demo", sleep_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
 
@@ -84,15 +91,18 @@ async fn durable_sleep_demo(server: &str, namespace: &str) -> anyhow::Result<()>
         .await?;
 
     println!(
-        "Started sleep demo; stop worker during sleep to see resume: {}",
+        "🚀 Started sleep demo; stop worker during sleep to see resume: {}",
         run.id
     );
     tokio::spawn(async move { worker.run().await });
     tokio::time::sleep(std::time::Duration::from_secs(25)).await;
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn catchup_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🔄 Catchup Example - demonstrates missed schedule execution replay\n");
+
     let client = Kagzi::connect(server).await?;
     let schedule = client
         .schedule("catchup_workflow")
@@ -107,10 +117,10 @@ async fn catchup_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "Created catchup schedule; pause server to see replay: schedule_id={}",
+        "✅ Created catchup schedule; pause server to see replay: schedule_id={}",
         schedule.schedule_id
     );
-    // Instruct user to stop scheduler and restart; no automated pause here.
+    println!("💡 Tip: Stop the server, wait 15s, then restart to see catchup in action\n");
     Ok(())
 }
 

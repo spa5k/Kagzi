@@ -19,6 +19,8 @@ pub enum WorkflowStatus {
     Completed,
     Failed,
     Cancelled,
+    Scheduled,
+    Paused,
 }
 
 impl WorkflowStatus {
@@ -28,6 +30,10 @@ impl WorkflowStatus {
 
     pub fn can_cancel(&self) -> bool {
         matches!(self, Self::Pending | Self::Running | Self::Sleeping)
+    }
+
+    pub fn is_schedule_template(&self) -> bool {
+        matches!(self, Self::Scheduled | Self::Paused)
     }
 }
 
@@ -106,10 +112,13 @@ pub struct WorkflowRun {
     pub version: Option<String>,
     pub parent_step_attempt_id: Option<String>,
     pub retry_policy: Option<RetryPolicy>,
+    pub cron_expr: Option<String>,
+    pub schedule_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CreateWorkflow {
+    pub run_id: Uuid,
     pub external_id: String,
     pub task_queue: String,
     pub workflow_type: String,
@@ -117,6 +126,8 @@ pub struct CreateWorkflow {
     pub namespace_id: String,
     pub version: String,
     pub retry_policy: Option<RetryPolicy>,
+    pub cron_expr: Option<String>,
+    pub schedule_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -125,6 +136,7 @@ pub struct ListWorkflowsParams {
     pub filter_status: Option<String>,
     pub page_size: i32,
     pub cursor: Option<WorkflowCursor>,
+    pub schedule_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]

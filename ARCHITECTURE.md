@@ -42,6 +42,10 @@ A workflow run progresses through these states:
 
 - **cancelled**: The workflow was explicitly cancelled and will not be processed further.
 
+- **scheduled**: A schedule template that fires workflows at cron intervals.
+
+- **paused**: A disabled schedule template that won't fire until resumed.
+
 ### 1.4. Step Run Statuses
 
 A step run can be in one of these states:
@@ -89,7 +93,6 @@ Kagzi follows a worker-driven architecture where PostgreSQL is the central coord
          │  │  Tables:                            │   │
          │  │  • workflow_runs (job queue)        │   │
          │  │  • step_runs (execution history)    │   │
-         │  │  • schedules (cron definitions)     │   │
          │  │  • workers (registration)           │   │
          │  │  • workflow_payloads (I/O data)     │   │
          │  └─────────────────────────────────────┘   │
@@ -549,13 +552,13 @@ ctx.sleep_until("wait-until-midnight", midnight_timestamp).await?;
 - Worker releases the workflow (no resources held)
 - Workflow becomes available for execution after sleep completes
 
-#### Child Workflow Steps
+#### Spawning Workflows
 
-**Child workflows** allow composing workflows hierarchically (tracked via `child_workflow_run_id` in `step_runs`).
+Workflows can spawn other workflows from within a step. This is simply starting another workflow—no special "child" relationship. The `parent_step_attempt_id` column tracks lineage for observability.
 
 ```rust
-// Start a child workflow as a step
-let result = ctx.step("process-batch")
+// Spawn a workflow from within a step
+let handle = ctx.step("spawn-processor")
     .run(|| async {
         client.start("batch_processor")
             .input(batch_data)
@@ -563,7 +566,16 @@ let result = ctx.step("process-batch")
             .await
     })
     .await?;
+
+// Optionally wait for result
+let result = handle.result().await?;
 ```
+
+**Tracking:**
+
+- `workflow_runs.parent_step_attempt_id` links to the parent step
+- `step_runs.child_workflow_run_id` links step to spawned workflow
+- `step_runs.step_kind = 'CHILD_WORKFLOW'` for observability
 
 **Use cases:**
 
@@ -574,87 +586,69 @@ let result = ctx.step("process-batch")
 
 ## 4. Scheduling
 
-### 4.1. Cron-Based Schedules
+### 4.1. Unified Schedule Model
 
-Kagzi supports cron-based workflow scheduling through the schedule system:
+Kagzi uses a unified model where schedules are stored in `workflow_runs` with a `SCHEDULED` status. This follows the Hatchet v1 pattern of using a single table for all task types.
 
-1. A schedule defines a cron expression, workflow type, and input payload.
+**Schedule as Template:**
 
-2. The coordinator background task periodically checks for due schedules.
+- A schedule is a workflow_run row with `status = 'SCHEDULED'` and `cron_expr` set
+- When fired, the coordinator creates a new pending run with `schedule_group_id` pointing to the template
+- History is simply `SELECT WHERE schedule_group_id = X`
 
-3. When a schedule is due, it creates a workflow run and records the firing.
+```
+workflow_runs (unified):
+┌────────────┬───────────┬─────────────┬───────────────────┬─────────────────┐
+│ run_id     │ status    │ cron_expr   │ schedule_group_id │ available_at    │
+├────────────┼───────────┼─────────────┼───────────────────┼─────────────────┤
+│ uuid-1     │ SCHEDULED │ "0 * * * *" │ NULL              │ NULL            │ ← Template
+│ uuid-2     │ PENDING   │ NULL        │ uuid-1            │ 2026-01-01 09:00│ ← Fired
+│ uuid-3     │ COMPLETED │ NULL        │ uuid-1            │ 2026-01-01 08:00│ ← Previous
+│ uuid-4     │ PENDING   │ NULL        │ NULL              │ NOW()           │ ← Normal
+└────────────┴───────────┴─────────────┴───────────────────┴─────────────────┘
+```
 
-4. Schedules can be paused, resumed, or deleted via the API.
+**Operations:**
+
+- **Create**: Insert template row with `status='SCHEDULED'`, `cron_expr` set
+- **Pause**: Update template `status='PAUSED'`
+- **Resume**: Update template `status='SCHEDULED'`
+- **Delete**: Delete template (fired runs remain for history)
+- **History**: Query by `schedule_group_id`
 
 ### 4.2. Coordinator Background Task
 
 The coordinator handles two responsibilities:
 
-**Schedule Firing**: Polls the schedules table for entries where `next_fire_at` is in the past, creates workflow runs, and calculates the next fire time.
+**Schedule Firing**: Queries templates where next calculated fire time is in the past, creates pending workflow runs.
 
-**Stale Worker Detection**: Detects workers that haven't sent a heartbeat within the expected interval and marks them as offline.
+**Stale Worker Detection**: Marks workers as offline if heartbeat is stale.
 
-#### Schedule Firing Process (Procedural)
+#### Schedule Firing Process
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                 Coordinator: Schedule Firing                       │
-└────────────────────────────────────────────────────────────────────────┘
-
 Every N seconds (configurable interval):
 
-1. Query Due Schedules
-   └─> SELECT * FROM schedules
-       WHERE enabled = true
-         AND next_fire_at <= NOW()
-       ORDER BY next_fire_at
+1. Query Due Schedule Templates
+   └─> SELECT * FROM workflow_runs
+       WHERE status = 'SCHEDULED'
+         AND next_fire_time(cron_expr) <= NOW()
        LIMIT batch_size
 
-2. For Each Due Schedule:
-   │
-   ├─> Parse Cron Expression
-   │   └─> Calculate next fire time
-   │
-   ├─> Create Workflow Run
-   │   ├─> INSERT INTO workflow_runs (
-   │   │       workflow_type = schedule.workflow_type,
-   │   │       input = schedule.input,
-   │   │       task_queue = schedule.task_queue,
-   │   │       status = 'PENDING',
-   │   │       available_at = NOW()
-   │   │   )
-   │   └─> Get run_id
-   │
-   ├─> Record Firing
-   │   └─> INSERT INTO schedule_firings (
-   │           schedule_id,
-   │           fire_at = schedule.next_fire_at,
-   │           run_id
-   │       )
-   │
-   ├─> Update Schedule
-   │   └─> UPDATE schedules
-   │       SET next_fire_at = calculated_next_time,
-   │           last_fired_at = NOW()
-   │       WHERE schedule_id = $1
-   │
-   └─> Notify Queue
-       └─> queue.notify(namespace, task_queue)
-           └─> Workers wake up and poll
+2. For Each Due Template:
+   ├─> Calculate next fire time from cron_expr
+   ├─> Create fired instance:
+   │   INSERT INTO workflow_runs (
+   │       schedule_group_id = template.run_id,
+   │       workflow_type = template.workflow_type,
+   │       status = 'PENDING',
+   │       available_at = NOW()
+   │   )
+   └─> Notify queue
 
 3. Mark Stale Workers
-   └─> UPDATE workers
-       SET status = 'OFFLINE'
-       WHERE status != 'OFFLINE'
-         AND last_heartbeat_at < NOW() - threshold
-
-┌────────────────────────────────────────────────────────────────────────┐
-│  Configuration:                                                   │
-│                                                                   │
-│  • interval_secs: How often coordinator runs (default: 10s)     │
-│  • batch_size: Max schedules processed per tick (default: 100)  │
-│  • worker_stale_threshold_secs: Heartbeat timeout (default: 60s)│
-└────────────────────────────────────────────────────────────────────────┘
+   └─> UPDATE workers SET status = 'OFFLINE'
+       WHERE last_heartbeat_at < NOW() - threshold
 ```
 
 ## 5. Concurrency Model
@@ -810,32 +804,35 @@ If a worker is actively processing a cancelled workflow, it detects the status c
 
 The `workflow_runs` table is the primary job queue:
 
-| Column                 | Type        | Purpose                                                             |
-| ---------------------- | ----------- | ------------------------------------------------------------------- |
-| run_id                 | UUID        | Primary key (UUID v7 for time ordering)                             |
-| namespace_id           | TEXT        | Multi-tenant isolation (default: 'default')                         |
-| external_id            | TEXT        | User-provided idempotency key                                       |
-| task_queue             | TEXT        | Work distribution queue                                             |
-| workflow_type          | TEXT        | Workflow identifier                                                 |
-| status                 | TEXT        | Current state (PENDING/RUNNING/SLEEPING/COMPLETED/FAILED/CANCELLED) |
-| locked_by              | TEXT        | Worker ID holding the claim                                         |
-| available_at           | TIMESTAMPTZ | When the workflow becomes visible to workers                        |
-| attempts               | INTEGER     | Number of execution attempts                                        |
-| retry_policy           | JSONB       | Retry configuration                                                 |
-| version                | TEXT        | Workflow version (optional)                                         |
-| error                  | TEXT        | Error message if failed                                             |
-| parent_step_attempt_id | TEXT        | Parent step if this is a child workflow                             |
-| created_at             | TIMESTAMPTZ | Workflow creation time                                              |
-| started_at             | TIMESTAMPTZ | First execution time                                                |
-| finished_at            | TIMESTAMPTZ | Completion time                                                     |
+| Column                 | Type        | Purpose                                                              |
+| ---------------------- | ----------- | -------------------------------------------------------------------- |
+| run_id                 | UUID        | Primary key (UUID v7 for time ordering)                              |
+| namespace_id           | TEXT        | Multi-tenant isolation (default: 'default')                          |
+| external_id            | TEXT        | User-provided idempotency key                                        |
+| task_queue             | TEXT        | Work distribution queue                                              |
+| workflow_type          | TEXT        | Workflow identifier                                                  |
+| status                 | TEXT        | PENDING/RUNNING/SLEEPING/COMPLETED/FAILED/CANCELLED/SCHEDULED/PAUSED |
+| locked_by              | TEXT        | Worker ID holding the claim                                          |
+| available_at           | TIMESTAMPTZ | When the workflow becomes visible to workers                         |
+| attempts               | INTEGER     | Number of execution attempts                                         |
+| retry_policy           | JSONB       | Retry configuration                                                  |
+| version                | TEXT        | Workflow version (optional)                                          |
+| error                  | TEXT        | Error message if failed                                              |
+| parent_step_attempt_id | TEXT        | Parent step if spawned from another workflow                         |
+| cron_expr              | TEXT        | Cron expression (for schedule templates)                             |
+| schedule_group_id      | UUID        | Groups fired runs to their schedule template                         |
+| max_catchup            | INTEGER     | Max missed firings to catch up (default: 100)                        |
+| created_at             | TIMESTAMPTZ | Workflow creation time                                               |
+| started_at             | TIMESTAMPTZ | First execution time                                                 |
+| finished_at            | TIMESTAMPTZ | Completion time                                                      |
 
-The single `available_at` timestamp unifies scheduling, visibility timeout, and retry backoff into one mechanism.
+The `available_at` timestamp unifies scheduling, visibility timeout, and retry backoff. Schedule templates use `status = 'SCHEDULED'` with `cron_expr` set.
 
 **Key Indexes:**
 
-- `idx_workflow_available`: (namespace_id, task_queue, available_at) for efficient polling
-- `uq_active_workflow`: Unique constraint on (namespace_id, external_id) for active workflows
-- `idx_workflow_status_lookup`: (namespace_id, status, created_at) for queries
+- `idx_workflow_available`: (namespace_id, task_queue, available_at) for polling
+- `idx_workflow_scheduled`: (namespace_id, task_queue) WHERE status = 'SCHEDULED'
+- `idx_workflow_schedule_group`: (schedule_group_id, created_at) for history
 
 ### 7.2. Step Runs
 
@@ -879,15 +876,13 @@ The `workers` table tracks registered workers:
 | pid               | INTEGER     | Process ID                             |
 | version           | TEXT        | Worker version                         |
 | workflow_types    | TEXT[]      | Registered workflow types              |
-| max_concurrent    | INTEGER     | Concurrency limit (default: 100)       |
 | status            | TEXT        | Worker state (ONLINE/DRAINING/OFFLINE) |
-| active_count      | INTEGER     | Current concurrent workflow count      |
-| total_completed   | BIGINT      | Total workflows completed              |
-| total_failed      | BIGINT      | Total workflows failed                 |
 | registered_at     | TIMESTAMPTZ | Registration time                      |
 | last_heartbeat_at | TIMESTAMPTZ | Last heartbeat timestamp               |
 | deregistered_at   | TIMESTAMPTZ | Deregistration time                    |
 | labels            | JSONB       | Custom worker labels                   |
+
+> **Note:** Concurrency tracking (`max_concurrent`, `active_count`, `total_completed`, `total_failed`) is handled in-memory on the worker side.
 
 **Key Indexes:**
 
@@ -895,32 +890,7 @@ The `workers` table tracks registered workers:
 - `idx_workers_heartbeat`: (status, last_heartbeat_at) for stale detection
 - `idx_workers_queue`: (namespace_id, task_queue, status) for online workers
 
-### 7.4. Schedules
-
-The `schedules` table manages cron-based scheduling:
-
-| Column        | Type        | Purpose                                       |
-| ------------- | ----------- | --------------------------------------------- |
-| schedule_id   | UUID        | Primary key                                   |
-| namespace_id  | TEXT        | Schedule namespace                            |
-| task_queue    | TEXT        | Target task queue                             |
-| workflow_type | TEXT        | Workflow to schedule                          |
-| cron_expr     | TEXT        | Cron expression                               |
-| input         | BYTEA       | Payload for each firing                       |
-| enabled       | BOOLEAN     | Whether scheduling is active                  |
-| max_catchup   | INTEGER     | Max missed firings to catch up (default: 100) |
-| next_fire_at  | TIMESTAMPTZ | When to fire next                             |
-| last_fired_at | TIMESTAMPTZ | Last firing time                              |
-| version       | TEXT        | Workflow version                              |
-| created_at    | TIMESTAMPTZ | Schedule creation time                        |
-| updated_at    | TIMESTAMPTZ | Last update time                              |
-
-**Key Indexes:**
-
-- `idx_schedules_due`: (namespace_id, next_fire_at) where enabled=true
-- `idx_schedules_ns_queue`: (namespace_id, task_queue)
-
-### 7.5. Workflow Payloads
+### 7.4. Workflow Payloads
 
 The `workflow_payloads` table stores large input/output data:
 
@@ -933,19 +903,7 @@ The `workflow_payloads` table stores large input/output data:
 
 This separation keeps the main `workflow_runs` table lean for efficient polling.
 
-### 7.6. Schedule Firings
-
-The `schedule_firings` table tracks schedule execution history:
-
-| Column      | Type        | Purpose                  |
-| ----------- | ----------- | ------------------------ |
-| id          | BIGSERIAL   | Primary key              |
-| schedule_id | UUID        | Foreign key to schedules |
-| fire_at     | TIMESTAMPTZ | Scheduled fire time      |
-| run_id      | UUID        | Created workflow run     |
-| created_at  | TIMESTAMPTZ | Record creation time     |
-
-**Unique Constraint:** (schedule_id, fire_at) prevents duplicate firings
+> **Note:** Schedules are unified into `workflow_runs`. Templates have `status = 'SCHEDULED'`, fired instances have `schedule_group_id` pointing to template. No separate schedules table
 
 ## 8. gRPC Interface
 

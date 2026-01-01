@@ -28,13 +28,6 @@ pub trait WorkerRepository: Send + Sync {
 
     async fn count_online(&self, namespace_id: &str, task_queue: &str) -> Result<i64, StoreError>;
 
-    async fn update_active_count(
-        &self,
-        worker_id: Uuid,
-        namespace_id: &str,
-        delta: i32,
-    ) -> Result<(), StoreError>;
-
     async fn count(
         &self,
         namespace_id: &str,

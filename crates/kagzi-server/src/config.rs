@@ -47,11 +47,14 @@ pub struct WorkerSettings {
     /// How often workers should send heartbeats
     #[serde(default = "default_heartbeat_interval_secs")]
     pub heartbeat_interval_secs: u32,
-    /// How long a worker has to complete work before it becomes available to others.
-    /// This is the visibility timeout - if a worker doesn't complete within this time,
-    /// the workflow is picked up by another worker for replay.
+    /// Initial visibility timeout when claiming a workflow.
+    /// Workflows become available to other workers after this time unless extended.
     #[serde(default = "default_visibility_timeout_secs")]
     pub visibility_timeout_secs: i64,
+    /// How many seconds to extend visibility on each heartbeat.
+    /// Should be greater than heartbeat_interval to allow buffer for network delays.
+    #[serde(default = "default_heartbeat_extension_secs")]
+    pub heartbeat_extension_secs: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,6 +113,10 @@ impl Settings {
                 default_visibility_timeout_secs(),
             )?
             .set_default(
+                "worker.heartbeat_extension_secs",
+                default_heartbeat_extension_secs(),
+            )?
+            .set_default(
                 "payload.warn_threshold_bytes",
                 default_payload_warn_threshold_bytes() as i64,
             )?
@@ -156,6 +163,7 @@ impl Default for WorkerSettings {
             poll_timeout_secs: default_poll_timeout_secs(),
             heartbeat_interval_secs: default_heartbeat_interval_secs(),
             visibility_timeout_secs: default_visibility_timeout_secs(),
+            heartbeat_extension_secs: default_heartbeat_extension_secs(),
         }
     }
 }
@@ -212,7 +220,11 @@ fn default_heartbeat_interval_secs() -> u32 {
 }
 
 fn default_visibility_timeout_secs() -> i64 {
-    300 // 5 minutes
+    60 // 1 minute - fast orphan recovery, extended by heartbeats
+}
+
+fn default_heartbeat_extension_secs() -> i64 {
+    45 // Must be > heartbeat_interval to allow buffer for network delays
 }
 
 fn default_payload_warn_threshold_bytes() -> usize {

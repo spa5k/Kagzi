@@ -40,12 +40,16 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_polling(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("🔄 Polling Example - demonstrates external job status polling\n");
+
     FAST_COUNTER.store(0, Ordering::SeqCst);
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("poll_job", polling_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let run = client
@@ -57,19 +61,32 @@ async fn run_polling(server: &str, namespace: &str) -> anyhow::Result<()> {
         .send()
         .await?;
 
-    println!("Started polling workflow: {}", run.id);
-    tokio::spawn(async move { worker.run().await });
+    println!("🚀 Started polling workflow: {}", run.id);
+    let worker_handle = tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            eprintln!("❌ Worker error: {}", e);
+        }
+    });
     tokio::time::sleep(Duration::from_secs(20)).await;
+
+    if worker_handle.is_finished() {
+        println!("⚠️  Worker stopped unexpectedly");
+    }
+    println!("✅ Example complete\n");
     Ok(())
 }
 
 async fn run_timeout(server: &str, namespace: &str) -> anyhow::Result<()> {
+    println!("⏱️  Timeout Example - demonstrates polling with failure limit\n");
+
     FAST_COUNTER.store(0, Ordering::SeqCst);
     let mut worker = Worker::new(server)
         .namespace(namespace)
         .workflows([("poll_with_timeout", timeout_workflow)])
         .build()
         .await?;
+
+    println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
     let run = client
@@ -82,11 +99,20 @@ async fn run_timeout(server: &str, namespace: &str) -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "Started timeout workflow (expected to fail after limit): {}",
+        "🚀 Started timeout workflow (expected to fail after limit): {}",
         run.id
     );
-    tokio::spawn(async move { worker.run().await });
+    let worker_handle = tokio::spawn(async move {
+        if let Err(e) = worker.run().await {
+            eprintln!("❌ Worker error: {}", e);
+        }
+    });
     tokio::time::sleep(Duration::from_secs(20)).await;
+
+    if worker_handle.is_finished() {
+        println!("⚠️  Worker stopped unexpectedly");
+    }
+    println!("✅ Example complete\n");
     Ok(())
 }
 

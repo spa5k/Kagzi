@@ -26,11 +26,6 @@ pub struct Worker {
     pub version: Option<String>,
 
     pub workflow_types: Vec<String>,
-    pub max_concurrent: i32,
-    pub active_count: i32,
-
-    pub total_completed: i64,
-    pub total_failed: i64,
 
     pub registered_at: DateTime<Utc>,
     pub last_heartbeat_at: DateTime<Utc>,
@@ -55,7 +50,6 @@ pub struct RegisterWorkerParams {
     pub hostname: Option<String>,
     pub pid: Option<i32>,
     pub version: Option<String>,
-    pub max_concurrent: i32,
     pub labels: serde_json::Value,
     pub queue_concurrency_limit: Option<i32>,
     pub workflow_type_concurrency: Vec<WorkflowTypeConcurrency>,
@@ -64,9 +58,6 @@ pub struct RegisterWorkerParams {
 #[derive(Debug, Clone)]
 pub struct WorkerHeartbeatParams {
     pub worker_id: Uuid,
-    pub active_count: i32,
-    pub completed_delta: i32,
-    pub failed_delta: i32,
 }
 
 #[derive(Debug, Clone, Default)]

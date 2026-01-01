@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.workers\n            SET status = 'OFFLINE',\n                deregistered_at = NOW()\n            WHERE worker_id = $1 AND namespace_id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3ac10f9d043c81dad42ac7ad2f25bc084861522c6dc2f3f21ddab643761c9ed8"
+}
