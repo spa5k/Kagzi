@@ -26,6 +26,8 @@ enum WorkflowStatus {
   WORKFLOW_STATUS_COMPLETED = 4;
   WORKFLOW_STATUS_FAILED = 5;
   WORKFLOW_STATUS_CANCELLED = 6;
+  WORKFLOW_STATUS_SCHEDULED = 7;
+  WORKFLOW_STATUS_PAUSED = 8;
 }
 
 // ============================================
@@ -49,6 +51,8 @@ message Workflow {
   string worker_id = 16;
   string version = 17;
   string parent_step_id = 18;
+  optional string cron_expr = 19; // For schedule templates only
+  optional string schedule_id = 20; // For fired instances only
 }
 
 // --- Requests/Responses ---

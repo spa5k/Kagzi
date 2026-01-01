@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_runs\n        SET status = $2,\n            available_at = $3,\n            cron_expr = $4,\n            schedule_id = $5\n        WHERE run_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f6263cbb836150cf8b815df5caad8ba8dc12d70ee3ddb9fd136f3f530f724e17"
+}

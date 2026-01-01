@@ -140,8 +140,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .heartbeat(WorkerHeartbeatParams {
                 worker_id,
                 active_count: req.active_count,
-                completed_delta: req.completed_delta,
-                failed_delta: req.failed_delta,
             })
             .await
             .map_err(map_store_error)?;

@@ -14,6 +14,7 @@ This directory contains examples demonstrating various features of the Kagzi wor
 - **08_saga_pattern** - Compensation-based transactions
 - **09_data_pipeline** - Data processing pipeline
 - **10_multi_queue** - Multiple queue management
+- **11_schedule_test** - Live schedule testing (demonstrates periodic execution over 5 minutes)
 
 ## Running Examples
 

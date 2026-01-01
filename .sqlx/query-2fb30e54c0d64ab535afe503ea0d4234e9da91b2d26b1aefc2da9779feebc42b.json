@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT \n            w.run_id,\n            w.namespace_id,\n            w.external_id,\n            w.task_queue,\n            w.workflow_type,\n            w.status,\n            p.input,\n            p.output,\n            w.locked_by,\n            w.attempts,\n            w.error,\n            w.created_at,\n            w.started_at,\n            w.finished_at,\n            w.available_at,\n            w.version,\n            w.parent_step_attempt_id,\n            w.retry_policy\n        FROM kagzi.workflow_runs w\n        JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id\n        WHERE w.run_id = $1 AND w.namespace_id = $2\n        ",
+  "query": "\n        SELECT\n            w.run_id,\n            w.namespace_id,\n            w.external_id,\n            w.task_queue,\n            w.workflow_type,\n            w.status,\n            p.input,\n            p.output,\n            w.locked_by,\n            w.attempts,\n            w.error,\n            w.created_at,\n            w.started_at,\n            w.finished_at,\n            w.available_at,\n            w.version,\n            w.parent_step_attempt_id,\n            w.retry_policy,\n            w.cron_expr,\n            w.schedule_id\n        FROM kagzi.workflow_runs w\n        JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id\n        WHERE w.run_id = $1 AND w.namespace_id = $2\n        ",
   "describe": {
     "columns": [
       {
@@ -92,6 +92,16 @@
         "ordinal": 17,
         "name": "retry_policy",
         "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 18,
+        "name": "cron_expr",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "schedule_id",
+        "type_info": "Uuid"
       }
     ],
     "parameters": {
@@ -118,8 +128,10 @@
       true,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "ed5df5ef34653bc9123e97dc35360882734b7aebcc8836f5e75569124c1e65c1"
+  "hash": "2fb30e54c0d64ab535afe503ea0d4234e9da91b2d26b1aefc2da9779feebc42b"
 }

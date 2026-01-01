@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH template AS (\n            SELECT * FROM kagzi.workflow_runs WHERE run_id = $1\n        ),\n        payload AS (\n            SELECT input FROM kagzi.workflow_payloads WHERE run_id = $1\n        ),\n        inserted AS (\n            INSERT INTO kagzi.workflow_runs (\n                run_id, namespace_id, external_id, task_queue, workflow_type,\n                status, available_at, schedule_id, version, retry_policy\n            )\n            SELECT\n                $2,                          -- new run_id\n                t.namespace_id,\n                $3,                          -- generated external_id\n                t.task_queue,\n                t.workflow_type,\n                'PENDING',\n                $4,                          -- fire_at\n                t.run_id,                    -- schedule_id = template\n                t.version,\n                t.retry_policy\n            FROM template t\n            ON CONFLICT (schedule_id, available_at)\n                WHERE schedule_id IS NOT NULL\n                DO NOTHING\n            RETURNING run_id\n        )\n        INSERT INTO kagzi.workflow_payloads (run_id, input)\n        SELECT i.run_id, p.input\n        FROM inserted i, payload p\n        RETURNING run_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "232440ee46b1d0ac3c7548e2b04dd0b39f75700241447857d3820aa0ff07134c"
+}

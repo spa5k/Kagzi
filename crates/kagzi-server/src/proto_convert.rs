@@ -33,6 +33,8 @@ pub fn map_workflow_status(status: StoreWorkflowStatus) -> WorkflowStatus {
         StoreWorkflowStatus::Completed => WorkflowStatus::Completed,
         StoreWorkflowStatus::Failed => WorkflowStatus::Failed,
         StoreWorkflowStatus::Cancelled => WorkflowStatus::Cancelled,
+        StoreWorkflowStatus::Scheduled => WorkflowStatus::Scheduled,
+        StoreWorkflowStatus::Paused => WorkflowStatus::Paused,
     }
 }
 
@@ -45,6 +47,8 @@ pub fn workflow_status_to_string(status: WorkflowStatus) -> String {
         WorkflowStatus::Completed => "COMPLETED",
         WorkflowStatus::Failed => "FAILED",
         WorkflowStatus::Cancelled => "CANCELLED",
+        WorkflowStatus::Scheduled => "SCHEDULED",
+        WorkflowStatus::Paused => "PAUSED",
         WorkflowStatus::Unspecified => "UNSPECIFIED",
     }
     .to_string()
@@ -111,6 +115,8 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
         worker_id: w.locked_by.unwrap_or_default(),
         version: w.version.unwrap_or_default(),
         parent_step_id: w.parent_step_attempt_id.unwrap_or_default(),
+        cron_expr: w.cron_expr,
+        schedule_id: w.schedule_id.map(|id| id.to_string()),
     })
 }
 
@@ -159,10 +165,10 @@ pub fn worker_to_proto(w: StoreWorker) -> Worker {
         pid: w.pid.unwrap_or(0),
         version: w.version.unwrap_or_default(),
         workflow_types: w.workflow_types,
-        max_concurrent: w.max_concurrent,
-        active_count: w.active_count,
-        total_completed: w.total_completed,
-        total_failed: w.total_failed,
+        max_concurrent: 0,
+        active_count: 0,
+        total_completed: 0,
+        total_failed: 0,
         registered_at: Some(timestamp_from(w.registered_at)),
         last_heartbeat_at: Some(timestamp_from(w.last_heartbeat_at)),
         labels,

@@ -8,6 +8,7 @@ use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowCursor, WorkflowRepository,
 };
 use tonic::{Request, Response, Status};
+use uuid::Uuid;
 
 use crate::constants::{DEFAULT_NAMESPACE, DEFAULT_VERSION};
 use crate::helpers::{
@@ -65,6 +66,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let create_result = workflows
             .create(CreateWorkflow {
+                run_id: Uuid::now_v7(),
                 external_id: req.external_id.clone(),
                 task_queue,
                 workflow_type: req.workflow_type,
@@ -72,6 +74,8 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
                 namespace_id: namespace_id.clone(),
                 version,
                 retry_policy: merge_proto_policy(req.retry_policy, None),
+                cron_expr: None,
+                schedule_id: None,
             })
             .await;
 
@@ -204,6 +208,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
                 filter_status: filter_status_for_list,
                 page_size,
                 cursor,
+                schedule_id: None,
             })
             .await
             .map_err(map_store_error)?;

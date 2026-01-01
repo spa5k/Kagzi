@@ -58,5 +58,9 @@ name = "10_multi_queue"
 path = "10_multi_queue/main.rs"
 
 [[example]]
+name = "11_schedule_test"
+path = "11_schedule_test/main.rs"
+
+[[example]]
 name = "worker_hub"
 path = "worker_hub.rs"

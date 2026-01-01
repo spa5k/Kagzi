@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict a5TDMedwL27L0Iq6onoprgwq7JvKXKY7ZLzsbA0fA40EQpBnIGd5ztzFjG0eiJV
+\restrict gCugLrfgfP9E1SnBfQ8MLkOURb1lOe6SE7sQKCtKXfzsux218DwY1m1GigxT78p
 
 -- Dumped from database version 18.0
 -- Dumped by pg_dump version 18.0
@@ -45,59 +45,6 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
--- Name: schedule_firings; Type: TABLE; Schema: kagzi; Owner: -
---
-
-CREATE TABLE kagzi.schedule_firings (
-    id bigint NOT NULL,
-    schedule_id uuid NOT NULL,
-    fire_at timestamp with time zone NOT NULL,
-    run_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: schedule_firings_id_seq; Type: SEQUENCE; Schema: kagzi; Owner: -
---
-
-CREATE SEQUENCE kagzi.schedule_firings_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: schedule_firings_id_seq; Type: SEQUENCE OWNED BY; Schema: kagzi; Owner: -
---
-
-ALTER SEQUENCE kagzi.schedule_firings_id_seq OWNED BY kagzi.schedule_firings.id;
-
-
---
--- Name: schedules; Type: TABLE; Schema: kagzi; Owner: -
---
-
-CREATE TABLE kagzi.schedules (
-    schedule_id uuid NOT NULL,
-    namespace_id text DEFAULT 'default'::text NOT NULL,
-    task_queue text NOT NULL,
-    workflow_type text NOT NULL,
-    cron_expr text NOT NULL,
-    input bytea DEFAULT '\x'::bytea NOT NULL,
-    enabled boolean DEFAULT true NOT NULL,
-    max_catchup integer DEFAULT 100 NOT NULL,
-    next_fire_at timestamp with time zone NOT NULL,
-    last_fired_at timestamp with time zone,
-    version text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: step_runs; Type: TABLE; Schema: kagzi; Owner: -
 --
 
@@ -134,11 +81,7 @@ CREATE TABLE kagzi.workers (
     pid integer,
     version text,
     workflow_types text[] DEFAULT '{}'::text[] NOT NULL,
-    max_concurrent integer DEFAULT 100 NOT NULL,
     status text DEFAULT 'ONLINE'::text NOT NULL,
-    active_count integer DEFAULT 0 NOT NULL,
-    total_completed bigint DEFAULT 0 NOT NULL,
-    total_failed bigint DEFAULT 0 NOT NULL,
     registered_at timestamp with time zone DEFAULT now() NOT NULL,
     last_heartbeat_at timestamp with time zone DEFAULT now() NOT NULL,
     deregistered_at timestamp with time zone,
@@ -179,6 +122,8 @@ CREATE TABLE kagzi.workflow_runs (
     version text,
     error text,
     available_at timestamp with time zone,
+    cron_expr text,
+    schedule_id uuid,
     CONSTRAINT chk_available_at CHECK (((status = ANY (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text])) OR (available_at IS NOT NULL)))
 );
 
@@ -195,37 +140,6 @@ CREATE TABLE public._sqlx_migrations (
     checksum bytea NOT NULL,
     execution_time bigint NOT NULL
 );
-
-
---
--- Name: schedule_firings id; Type: DEFAULT; Schema: kagzi; Owner: -
---
-
-ALTER TABLE ONLY kagzi.schedule_firings ALTER COLUMN id SET DEFAULT nextval('kagzi.schedule_firings_id_seq'::regclass);
-
-
---
--- Name: schedule_firings schedule_firings_pkey; Type: CONSTRAINT; Schema: kagzi; Owner: -
---
-
-ALTER TABLE ONLY kagzi.schedule_firings
-    ADD CONSTRAINT schedule_firings_pkey PRIMARY KEY (id);
-
-
---
--- Name: schedule_firings schedule_firings_schedule_id_fire_at_key; Type: CONSTRAINT; Schema: kagzi; Owner: -
---
-
-ALTER TABLE ONLY kagzi.schedule_firings
-    ADD CONSTRAINT schedule_firings_schedule_id_fire_at_key UNIQUE (schedule_id, fire_at);
-
-
---
--- Name: schedules schedules_pkey; Type: CONSTRAINT; Schema: kagzi; Owner: -
---
-
-ALTER TABLE ONLY kagzi.schedules
-    ADD CONSTRAINT schedules_pkey PRIMARY KEY (schedule_id);
 
 
 --
@@ -269,17 +183,10 @@ ALTER TABLE ONLY public._sqlx_migrations
 
 
 --
--- Name: idx_schedules_due; Type: INDEX; Schema: kagzi; Owner: -
+-- Name: idx_schedule_firing_unique; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE INDEX idx_schedules_due ON kagzi.schedules USING btree (namespace_id, next_fire_at) WHERE (enabled = true);
-
-
---
--- Name: idx_schedules_ns_queue; Type: INDEX; Schema: kagzi; Owner: -
---
-
-CREATE INDEX idx_schedules_ns_queue ON kagzi.schedules USING btree (namespace_id, task_queue);
+CREATE UNIQUE INDEX idx_schedule_firing_unique ON kagzi.workflow_runs USING btree (schedule_id, available_at) WHERE (schedule_id IS NOT NULL);
 
 
 --
@@ -332,6 +239,20 @@ CREATE INDEX idx_workflow_runs_running ON kagzi.workflow_runs USING btree (task_
 
 
 --
+-- Name: idx_workflow_schedule_history; Type: INDEX; Schema: kagzi; Owner: -
+--
+
+CREATE INDEX idx_workflow_schedule_history ON kagzi.workflow_runs USING btree (schedule_id, created_at DESC) WHERE (schedule_id IS NOT NULL);
+
+
+--
+-- Name: idx_workflow_schedules_due; Type: INDEX; Schema: kagzi; Owner: -
+--
+
+CREATE INDEX idx_workflow_schedules_due ON kagzi.workflow_runs USING btree (namespace_id, available_at) WHERE (status = 'SCHEDULED'::text);
+
+
+--
 -- Name: idx_workflow_status_lookup; Type: INDEX; Schema: kagzi; Owner: -
 --
 
@@ -346,11 +267,11 @@ CREATE UNIQUE INDEX uq_active_workflow ON kagzi.workflow_runs USING btree (names
 
 
 --
--- Name: schedule_firings schedule_firings_schedule_id_fkey; Type: FK CONSTRAINT; Schema: kagzi; Owner: -
+-- Name: workflow_runs fk_schedule_id; Type: FK CONSTRAINT; Schema: kagzi; Owner: -
 --
 
-ALTER TABLE ONLY kagzi.schedule_firings
-    ADD CONSTRAINT schedule_firings_schedule_id_fkey FOREIGN KEY (schedule_id) REFERENCES kagzi.schedules(schedule_id) ON DELETE CASCADE;
+ALTER TABLE ONLY kagzi.workflow_runs
+    ADD CONSTRAINT fk_schedule_id FOREIGN KEY (schedule_id) REFERENCES kagzi.workflow_runs(run_id) ON DELETE SET NULL;
 
 
 --
@@ -373,5 +294,5 @@ ALTER TABLE ONLY kagzi.workflow_payloads
 -- PostgreSQL database dump complete
 --
 
-\unrestrict a5TDMedwL27L0Iq6onoprgwq7JvKXKY7ZLzsbA0fA40EQpBnIGd5ztzFjG0eiJV
+\unrestrict gCugLrfgfP9E1SnBfQ8MLkOURb1lOe6SE7sQKCtKXfzsux218DwY1m1GigxT78p
 

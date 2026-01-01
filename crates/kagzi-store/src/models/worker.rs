@@ -26,11 +26,6 @@ pub struct Worker {
     pub version: Option<String>,
 
     pub workflow_types: Vec<String>,
-    pub max_concurrent: i32,
-    pub active_count: i32,
-
-    pub total_completed: i64,
-    pub total_failed: i64,
 
     pub registered_at: DateTime<Utc>,
     pub last_heartbeat_at: DateTime<Utc>,
@@ -65,8 +60,6 @@ pub struct RegisterWorkerParams {
 pub struct WorkerHeartbeatParams {
     pub worker_id: Uuid,
     pub active_count: i32,
-    pub completed_delta: i32,
-    pub failed_delta: i32,
 }
 
 #[derive(Debug, Clone, Default)]

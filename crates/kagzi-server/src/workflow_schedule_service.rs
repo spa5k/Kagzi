@@ -9,11 +9,9 @@ use kagzi_proto::kagzi::{
     ListWorkflowSchedulesRequest, ListWorkflowSchedulesResponse, PageInfo,
     UpdateWorkflowScheduleRequest, UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
-use kagzi_store::{
-    CreateSchedule as StoreCreateSchedule, ListSchedulesParams, PgStore,
-    UpdateSchedule as StoreUpdateSchedule, WorkflowScheduleRepository, clamp_max_catchup,
-};
+use kagzi_store::{CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowRepository, WorkflowRun};
 use tonic::{Request, Response, Status};
+use uuid::Uuid;
 
 use crate::constants::DEFAULT_NAMESPACE;
 use crate::helpers::{
@@ -25,8 +23,22 @@ fn parse_cron_expr(expr: &str) -> Result<cron::Schedule, Status> {
     if expr.trim().is_empty() {
         return Err(invalid_argument_error("cron_expr cannot be empty"));
     }
-    cron::Schedule::from_str(expr)
-        .map_err(|e| invalid_argument_error(format!("Invalid cron: {}", e)))
+
+    // Validate format: must be 6 fields (second minute hour day month weekday)
+    let fields: Vec<&str> = expr.split_whitespace().collect();
+    if fields.len() != 6 {
+        return Err(invalid_argument_error(format!(
+            "Invalid cron format: expected 6 fields (second minute hour day month weekday), got {}. Example: '0 */5 * * * *' (every 5 minutes)",
+            fields.len()
+        )));
+    }
+
+    cron::Schedule::from_str(expr).map_err(|e| {
+        invalid_argument_error(format!(
+            "Invalid cron expression: {}. Use 6-field format: second minute hour day month weekday",
+            e
+        ))
+    })
 }
 
 fn next_fire_from_now(
@@ -48,23 +60,35 @@ fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timesta
     }
 }
 
-fn workflow_schedule_to_proto(s: kagzi_store::Schedule) -> Result<WorkflowSchedule, Status> {
-    let input = bytes_to_payload(Some(s.input));
+fn workflow_run_to_schedule_proto(w: WorkflowRun) -> Result<WorkflowSchedule, Status> {
+    let input = bytes_to_payload(Some(w.input));
+
+    let cron_expr = w
+        .cron_expr
+        .ok_or_else(|| invalid_argument_error("Workflow run is not a schedule template"))?;
+
+    let next_fire_at = w
+        .available_at
+        .ok_or_else(|| invalid_argument_error("Schedule template has no next_fire_at"))?;
+
+    let created_at = w
+        .created_at
+        .ok_or_else(|| invalid_argument_error("Schedule template has no created_at"))?;
 
     Ok(WorkflowSchedule {
-        schedule_id: s.schedule_id.to_string(),
-        namespace_id: s.namespace_id,
-        task_queue: s.task_queue,
-        workflow_type: s.workflow_type,
-        cron_expr: s.cron_expr,
+        schedule_id: w.run_id.to_string(),
+        namespace_id: w.namespace_id,
+        task_queue: w.task_queue,
+        workflow_type: w.workflow_type,
+        cron_expr,
         input: Some(input),
-        enabled: s.enabled,
-        max_catchup: s.max_catchup,
-        next_fire_at: Some(to_proto_timestamp(s.next_fire_at)),
-        last_fired_at: s.last_fired_at.map(to_proto_timestamp),
-        version: s.version.unwrap_or_default(),
-        created_at: Some(to_proto_timestamp(s.created_at)),
-        updated_at: Some(to_proto_timestamp(s.updated_at)),
+        enabled: w.status == kagzi_store::WorkflowStatus::Scheduled,
+        max_catchup: 0,
+        next_fire_at: Some(to_proto_timestamp(next_fire_at)),
+        last_fired_at: None,
+        version: w.version.unwrap_or_default(),
+        created_at: Some(to_proto_timestamp(created_at)),
+        updated_at: None,
     })
 }
 
@@ -105,43 +129,46 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
 
-        let enabled = req.enabled.unwrap_or(true);
-        let max_catchup = if let Some(m) = req.max_catchup {
-            clamp_max_catchup(m)
-        } else {
-            100
-        };
+        let first_fire = next_fire_from_now(&req.cron_expr, Utc::now())?;
 
-        let next_fire_at = next_fire_from_now(&req.cron_expr, Utc::now())?;
+        let run_id = Uuid::now_v7();
 
-        let schedule_id = self
-            .store
-            .schedules()
-            .create(StoreCreateSchedule {
-                namespace_id: namespace_id.clone(),
+        self.store
+            .workflows()
+            .create(CreateWorkflow {
+                run_id,
+                external_id: format!("schedule-{}", run_id),
                 task_queue: req.task_queue,
                 workflow_type: req.workflow_type,
-                cron_expr: req.cron_expr,
                 input,
-                enabled,
-                max_catchup,
-                next_fire_at,
-                version: req.version,
+                namespace_id: namespace_id.clone(),
+                version: req.version.unwrap_or_default(),
+                retry_policy: None,
+                cron_expr: Some(req.cron_expr.clone()),
+                schedule_id: None,
             })
             .await
             .map_err(map_store_error)?;
 
-        let schedule = self
+        // Update the workflow to SCHEDULED status and set first fire time
+        let mut template = self
             .store
-            .schedules()
-            .find_by_id(schedule_id, &namespace_id)
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?
-            .map(workflow_schedule_to_proto)
-            .transpose()?
-            .ok_or_else(|| {
-                not_found_error("Schedule not found", "schedule", schedule_id.to_string())
-            })?;
+            .ok_or_else(|| invalid_argument_error("Failed to create schedule"))?;
+
+        template.status = kagzi_store::WorkflowStatus::Scheduled;
+        template.available_at = Some(first_fire);
+
+        self.store
+            .workflows()
+            .update(run_id, template.clone())
+            .await
+            .map_err(map_store_error)?;
+
+        let schedule = workflow_run_to_schedule_proto(template)?;
 
         Ok(Response::new(CreateWorkflowScheduleResponse {
             schedule: Some(schedule),
@@ -153,7 +180,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         request: Request<GetWorkflowScheduleRequest>,
     ) -> Result<Response<GetWorkflowScheduleResponse>, Status> {
         let req = request.into_inner();
-        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+        let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -164,11 +191,11 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let schedule = self
             .store
-            .schedules()
-            .find_by_id(schedule_id, &namespace_id)
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?
-            .map(workflow_schedule_to_proto)
+            .map(workflow_run_to_schedule_proto)
             .transpose()?
             .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
 
@@ -216,7 +243,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                     .next()
                     .and_then(|p| p.parse::<i64>().ok())
                     .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-                let schedule_id_str = parts
+                let run_id_str = parts
                     .next()
                     .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
 
@@ -224,39 +251,37 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                     .timestamp_millis_opt(created_at_ms)
                     .single()
                     .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-                let schedule_id = uuid::Uuid::parse_str(schedule_id_str)
+                let run_id = uuid::Uuid::parse_str(run_id_str)
                     .map_err(|_| invalid_argument_error("Invalid page_token"))?;
 
-                Some(kagzi_store::ScheduleCursor {
-                    created_at,
-                    schedule_id,
-                })
+                Some(kagzi_store::WorkflowCursor { created_at, run_id })
             }
         } else {
             None
         };
 
-        let schedules_result = self
+        let workflows_result = self
             .store
-            .schedules()
-            .list(ListSchedulesParams {
+            .workflows()
+            .list(ListWorkflowsParams {
                 namespace_id: namespace_id.clone(),
-                task_queue: req.task_queue,
+                filter_status: Some("SCHEDULED".to_string()),
                 page_size,
                 cursor,
+                schedule_id: None,
             })
             .await
             .map_err(map_store_error)?;
 
-        let mut proto_schedules = Vec::with_capacity(schedules_result.items.len());
-        for s in schedules_result.items {
-            proto_schedules.push(workflow_schedule_to_proto(s)?);
+        let mut proto_schedules = Vec::with_capacity(workflows_result.items.len());
+        for w in workflows_result.items {
+            proto_schedules.push(workflow_run_to_schedule_proto(w)?);
         }
 
-        let next_page_token = schedules_result
+        let next_page_token = workflows_result
             .next_cursor
             .map(|c| {
-                let cursor_str = format!("{}:{}", c.created_at.timestamp_millis(), c.schedule_id);
+                let cursor_str = format!("{}:{}", c.created_at.timestamp_millis(), c.run_id);
                 base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
             })
             .unwrap_or_default();
@@ -265,8 +290,8 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             schedules: proto_schedules,
             page: Some(PageInfo {
                 next_page_token,
-                has_more: schedules_result.has_more,
-                total_count: 0, // TODO: populate total_count when supported
+                has_more: workflows_result.has_more,
+                total_count: 0,
             }),
         }))
     }
@@ -277,7 +302,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
     ) -> Result<Response<UpdateWorkflowScheduleResponse>, Status> {
         let req = request.into_inner();
 
-        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+        let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -286,10 +311,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             req.namespace_id
         };
 
-        let current_schedule = self
+        let current = self
             .store
-            .schedules()
-            .find_by_id(schedule_id, &namespace_id)
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| {
@@ -303,17 +328,14 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             None
         };
 
-        let next_fire_at = if let Some(cron) = parsed_cron.as_ref() {
+        let _next_fire_at = if let Some(cron) = parsed_cron.as_ref() {
             let candidate = cron
                 .after(&Utc::now())
                 .next()
                 .ok_or_else(|| invalid_argument_error("Cron expression has no future occurrences"))?
                 .with_timezone(&Utc);
 
-            // If the candidate matches the current scheduled time (e.g., update happens
-            // at/near the scheduled fire time), advance to the next cron occurrence to
-            // avoid re-triggering the same scheduled execution.
-            if candidate == current_schedule.next_fire_at {
+            if Some(candidate) == current.available_at {
                 cron.after(&candidate)
                     .next()
                     .map(|dt| dt.with_timezone(&Utc))
@@ -328,40 +350,42 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             None
         };
 
-        let input = payload_to_optional_bytes(req.input);
-        // Context is not used - user payloads treated as opaque bytes
-        let max_catchup = req.max_catchup.map(clamp_max_catchup);
+        let new_status = match req.enabled {
+            Some(true) => Some(kagzi_store::WorkflowStatus::Scheduled),
+            Some(false) => Some(kagzi_store::WorkflowStatus::Paused),
+            None => None,
+        };
 
-        self.store
-            .schedules()
-            .update(
-                schedule_id,
-                &namespace_id,
-                StoreUpdateSchedule {
-                    task_queue: req.task_queue,
-                    workflow_type: req.workflow_type,
-                    cron_expr,
-                    input,
-                    enabled: req.enabled,
-                    max_catchup,
-                    next_fire_at,
-                    version: req.version,
-                },
-            )
-            .await
-            .map_err(map_store_error)?;
+        let next_fire = if new_status == Some(kagzi_store::WorkflowStatus::Scheduled) {
+            let cron_expr = current.cron_expr.as_ref().unwrap();
+            let cron = parse_cron_expr(cron_expr)?;
+            Some(cron.after(&Utc::now()).next().unwrap())
+        } else {
+            None
+        };
+
+        if let Some(status) = new_status {
+            let mut wf = current.clone();
+            wf.status = status;
+            if let Some(fire) = next_fire {
+                wf.available_at = Some(fire);
+            }
+            self.store
+                .workflows()
+                .update(run_id, wf)
+                .await
+                .map_err(map_store_error)?;
+        }
 
         let schedule = self
             .store
-            .schedules()
-            .find_by_id(schedule_id, &namespace_id)
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?
-            .map(workflow_schedule_to_proto)
+            .map(workflow_run_to_schedule_proto)
             .transpose()?
-            .ok_or_else(|| {
-                not_found_error("Schedule not found", "schedule", schedule_id.to_string())
-            })?;
+            .ok_or_else(|| not_found_error("Schedule not found", "schedule", run_id.to_string()))?;
 
         Ok(Response::new(UpdateWorkflowScheduleResponse {
             schedule: Some(schedule),
@@ -373,7 +397,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         request: Request<DeleteWorkflowScheduleRequest>,
     ) -> Result<Response<DeleteWorkflowScheduleResponse>, Status> {
         let req = request.into_inner();
-        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+        let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace_id = if req.namespace_id.is_empty() {
@@ -382,14 +406,14 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             req.namespace_id
         };
 
-        let deleted = self
+        let result = self
             .store
-            .schedules()
-            .delete(schedule_id, &namespace_id)
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
             .await
             .map_err(map_store_error)?;
 
-        if !deleted {
+        if result.is_none() {
             return Err(not_found_error(
                 "Schedule not found",
                 "schedule",
@@ -397,6 +421,14 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             ));
         }
 
-        Ok(Response::new(DeleteWorkflowScheduleResponse { deleted }))
+        self.store
+            .workflows()
+            .delete(run_id)
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(DeleteWorkflowScheduleResponse {
+            deleted: true,
+        }))
     }
 }

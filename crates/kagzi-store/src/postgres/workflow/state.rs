@@ -15,7 +15,7 @@ const WORKFLOW_COLUMNS_WITH_PAYLOAD: &str = "\
     w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
     w.status, p.input, p.output, w.locked_by, w.attempts, w.error, \
     w.created_at, w.started_at, w.finished_at, w.available_at, \
-    w.version, w.parent_step_attempt_id, w.retry_policy";
+    w.version, w.parent_step_attempt_id, w.retry_policy, w.cron_expr, w.schedule_id";
 
 fn validate_payload_size(
     config: &StoreConfig,
@@ -50,16 +50,17 @@ pub(super) async fn create(
     let retry_policy_json = params.retry_policy.map(serde_json::to_value).transpose()?;
     validate_payload_size(&repo.config, &params.input, "Workflow input")?;
     let mut tx = repo.pool.begin().await?;
-    let run_id = Uuid::now_v7();
+    let run_id = params.run_id;
 
     let row = sqlx::query!(
         r#"
         INSERT INTO kagzi.workflow_runs (
             run_id,
             external_id, task_queue, workflow_type, status,
-            namespace_id, version, retry_policy, available_at
+            namespace_id, version, retry_policy, available_at,
+            cron_expr, schedule_id
         )
-        VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW())
+        VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW(), $8, $9)
         RETURNING run_id
         "#,
         run_id,
@@ -68,7 +69,9 @@ pub(super) async fn create(
         params.workflow_type,
         params.namespace_id,
         params.version,
-        retry_policy_json
+        retry_policy_json,
+        params.cron_expr,
+        params.schedule_id
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -98,7 +101,7 @@ pub(super) async fn find_by_id(
     let row = sqlx::query_as!(
         WorkflowRunRow,
         r#"
-        SELECT 
+        SELECT
             w.run_id,
             w.namespace_id,
             w.external_id,
@@ -116,7 +119,9 @@ pub(super) async fn find_by_id(
             w.available_at,
             w.version,
             w.parent_step_attempt_id,
-            w.retry_policy
+            w.retry_policy,
+            w.cron_expr,
+            w.schedule_id
         FROM kagzi.workflow_runs w
         JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
         WHERE w.run_id = $1 AND w.namespace_id = $2
@@ -202,6 +207,10 @@ pub(super) async fn list(
         builder.push(", ");
         builder.push_bind(cursor.run_id);
         builder.push(")");
+    }
+
+    if let Some(schedule_id) = params.schedule_id {
+        builder.push(" AND w.schedule_id = ").push_bind(schedule_id);
     }
 
     builder.push(" ORDER BY w.created_at DESC, w.run_id DESC LIMIT ");
@@ -518,15 +527,16 @@ pub(super) async fn create_batch(
     for p in params {
         validate_payload_size(&repo.config, &p.input, "Workflow input")?;
         let retry_policy_json = p.retry_policy.map(serde_json::to_value).transpose()?;
-        let run_id = Uuid::now_v7();
+        let run_id = p.run_id;
         let row = sqlx::query!(
             r#"
             INSERT INTO kagzi.workflow_runs (
                 run_id,
                 external_id, task_queue, workflow_type, status,
-                namespace_id, version, retry_policy, available_at
+                namespace_id, version, retry_policy, available_at,
+                cron_expr, schedule_id
             )
-            VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW())
+            VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW(), $8, $9)
             RETURNING run_id
             "#,
             run_id,
@@ -535,7 +545,9 @@ pub(super) async fn create_batch(
             p.workflow_type,
             p.namespace_id,
             p.version,
-            retry_policy_json
+            retry_policy_json,
+            p.cron_expr,
+            p.schedule_id
         )
         .fetch_one(&mut *tx)
         .await?;
@@ -557,6 +569,221 @@ pub(super) async fn create_batch(
     tx.commit().await?;
 
     Ok(ids)
+}
+
+#[instrument(skip(repo))]
+pub(super) async fn find_due_schedules(
+    repo: &PgWorkflowRepository,
+    namespace_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    limit: i64,
+) -> Result<Vec<WorkflowRun>, StoreError> {
+    let rows = if namespace_id == "*" {
+        // Query all namespaces
+        sqlx::query_as!(
+            WorkflowRunRow,
+            r#"
+            SELECT
+                w.run_id,
+                w.namespace_id,
+                w.external_id,
+                w.task_queue,
+                w.workflow_type,
+                w.status,
+                p.input,
+                p.output,
+                w.locked_by,
+                w.attempts,
+                w.error,
+                w.created_at,
+                w.started_at,
+                w.finished_at,
+                w.available_at,
+                w.version,
+                w.parent_step_attempt_id,
+                w.retry_policy,
+                w.cron_expr,
+                w.schedule_id
+            FROM kagzi.workflow_runs w
+            JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
+            WHERE w.status = 'SCHEDULED'
+              AND w.available_at <= $1
+            ORDER BY w.available_at ASC
+            LIMIT $2
+            "#,
+            now,
+            limit
+        )
+        .fetch_all(&repo.pool)
+        .await?
+    } else {
+        // Query specific namespace
+        sqlx::query_as!(
+            WorkflowRunRow,
+            r#"
+            SELECT
+                w.run_id,
+                w.namespace_id,
+                w.external_id,
+                w.task_queue,
+                w.workflow_type,
+                w.status,
+                p.input,
+                p.output,
+                w.locked_by,
+                w.attempts,
+                w.error,
+                w.created_at,
+                w.started_at,
+                w.finished_at,
+                w.available_at,
+                w.version,
+                w.parent_step_attempt_id,
+                w.retry_policy,
+                w.cron_expr,
+                w.schedule_id
+            FROM kagzi.workflow_runs w
+            JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
+            WHERE w.namespace_id = $1
+              AND w.status = 'SCHEDULED'
+              AND w.available_at <= $2
+            ORDER BY w.available_at ASC
+            LIMIT $3
+            "#,
+            namespace_id,
+            now,
+            limit
+        )
+        .fetch_all(&repo.pool)
+        .await?
+    };
+
+    rows.into_iter().map(|r| r.into_model()).collect()
+}
+
+#[instrument(skip(repo))]
+pub(super) async fn create_schedule_instance(
+    repo: &PgWorkflowRepository,
+    template_run_id: Uuid,
+    fire_at: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<Uuid>, StoreError> {
+    let new_run_id = Uuid::now_v7();
+
+    let result = sqlx::query!(
+        r#"
+        WITH template AS (
+            SELECT * FROM kagzi.workflow_runs WHERE run_id = $1
+        ),
+        payload AS (
+            SELECT input FROM kagzi.workflow_payloads WHERE run_id = $1
+        ),
+        inserted AS (
+            INSERT INTO kagzi.workflow_runs (
+                run_id, namespace_id, external_id, task_queue, workflow_type,
+                status, available_at, schedule_id, version, retry_policy
+            )
+            SELECT
+                $2,                          -- new run_id
+                t.namespace_id,
+                $3,                          -- generated external_id
+                t.task_queue,
+                t.workflow_type,
+                'PENDING',
+                $4,                          -- fire_at
+                t.run_id,                    -- schedule_id = template
+                t.version,
+                t.retry_policy
+            FROM template t
+            ON CONFLICT (schedule_id, available_at)
+                WHERE schedule_id IS NOT NULL
+                DO NOTHING
+            RETURNING run_id
+        )
+        INSERT INTO kagzi.workflow_payloads (run_id, input)
+        SELECT i.run_id, p.input
+        FROM inserted i, payload p
+        RETURNING run_id
+        "#,
+        template_run_id,
+        new_run_id,
+        format!("schedule-instance-{}", new_run_id),
+        fire_at
+    )
+    .fetch_optional(&repo.pool)
+    .await?;
+
+    Ok(result.map(|r| r.run_id))
+}
+
+#[instrument(skip(repo))]
+pub(super) async fn update_next_fire(
+    repo: &PgWorkflowRepository,
+    run_id: Uuid,
+    next_fire_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), StoreError> {
+    sqlx::query!(
+        r#"
+        UPDATE kagzi.workflow_runs
+        SET available_at = $2
+        WHERE run_id = $1
+        "#,
+        run_id,
+        next_fire_at
+    )
+    .execute(&repo.pool)
+    .await?;
+
+    Ok(())
+}
+
+#[instrument(skip(repo))]
+pub(super) async fn update(
+    repo: &PgWorkflowRepository,
+    run_id: Uuid,
+    workflow: WorkflowRun,
+) -> Result<(), StoreError> {
+    sqlx::query!(
+        r#"
+        UPDATE kagzi.workflow_runs
+        SET status = $2,
+            available_at = $3,
+            cron_expr = $4,
+            schedule_id = $5
+        WHERE run_id = $1
+        "#,
+        run_id,
+        workflow.status.to_string(),
+        workflow.available_at,
+        workflow.cron_expr,
+        workflow.schedule_id
+    )
+    .execute(&repo.pool)
+    .await?;
+
+    Ok(())
+}
+
+#[instrument(skip(repo))]
+pub(super) async fn delete(repo: &PgWorkflowRepository, run_id: Uuid) -> Result<(), StoreError> {
+    sqlx::query!(
+        r#"
+        DELETE FROM kagzi.workflow_payloads WHERE run_id = $1
+        "#,
+        run_id
+    )
+    .execute(&repo.pool)
+    .await?;
+
+    sqlx::query!(
+        r#"
+        DELETE FROM kagzi.workflow_runs WHERE run_id = $1
+        "#,
+        run_id
+    )
+    .execute(&repo.pool)
+    .await?;
+
+    Ok(())
 }
 
 #[cfg(test)]

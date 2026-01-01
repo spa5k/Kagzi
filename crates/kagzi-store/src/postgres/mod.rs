@@ -2,14 +2,12 @@ mod health;
 mod step;
 mod worker;
 mod workflow;
-mod workflow_schedule;
 
 pub use health::PgHealthRepository;
 use sqlx::PgPool;
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;
 pub use workflow::PgWorkflowRepository;
-pub use workflow_schedule::PgScheduleRepository;
 
 #[derive(Clone, Debug)]
 pub struct StoreConfig {
@@ -47,10 +45,6 @@ impl PgStore {
 
     pub fn workers(&self) -> PgWorkerRepository {
         PgWorkerRepository::new(self.pool.clone())
-    }
-
-    pub fn schedules(&self) -> PgScheduleRepository {
-        PgScheduleRepository::new(self.pool.clone(), self.config.clone())
     }
 
     pub fn health(&self) -> PgHealthRepository {

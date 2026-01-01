@@ -24,6 +24,8 @@ pub(super) struct WorkflowRunRow {
     pub version: Option<String>,
     pub parent_step_attempt_id: Option<String>,
     pub retry_policy: Option<serde_json::Value>,
+    pub cron_expr: Option<String>,
+    pub schedule_id: Option<Uuid>,
 }
 
 impl WorkflowRunRow {
@@ -61,6 +63,8 @@ impl WorkflowRunRow {
                     })
                     .ok()
             }),
+            cron_expr: self.cron_expr,
+            schedule_id: self.schedule_id,
         })
     }
 }

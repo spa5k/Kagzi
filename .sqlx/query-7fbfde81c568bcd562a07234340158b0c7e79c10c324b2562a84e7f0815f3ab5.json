@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.workers\n            SET last_heartbeat_at = NOW()\n            WHERE worker_id = $1\n              AND status != 'OFFLINE'\n            RETURNING worker_id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "worker_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7fbfde81c568bcd562a07234340158b0c7e79c10c324b2562a84e7f0815f3ab5"
+}
