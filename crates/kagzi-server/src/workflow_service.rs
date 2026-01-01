@@ -9,6 +9,7 @@ use kagzi_store::{
 };
 use tonic::{Request, Response, Status};
 use tracing::instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use crate::constants::{DEFAULT_NAMESPACE, DEFAULT_VERSION};
@@ -17,6 +18,7 @@ use crate::helpers::{
     precondition_failed_error,
 };
 use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
+use crate::telemetry::extract_context;
 
 pub struct WorkflowServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
@@ -43,6 +45,10 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         &self,
         request: Request<StartWorkflowRequest>,
     ) -> Result<Response<StartWorkflowResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
         tracing::Span::current().record("workflow_type", &req.workflow_type);
         tracing::Span::current().record("external_id", &req.external_id);

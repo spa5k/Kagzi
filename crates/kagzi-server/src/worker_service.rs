@@ -19,6 +19,7 @@ use kagzi_store::{
 use rand::Rng;
 use tonic::{Request, Response, Status};
 use tracing::instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use crate::config::WorkerSettings;
@@ -28,6 +29,7 @@ use crate::helpers::{
     payload_to_optional_bytes, precondition_failed_error,
 };
 use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
+use crate::telemetry::extract_context;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
@@ -356,6 +358,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<BeginStepRequest>,
     ) -> Result<Response<BeginStepResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -446,6 +452,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteStepRequest>,
     ) -> Result<Response<CompleteStepResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -503,6 +513,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<FailStepResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -559,6 +573,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteWorkflowRequest>,
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -615,6 +633,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<FailWorkflowRequest>,
     ) -> Result<Response<FailWorkflowResponse>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         let req = request.into_inner();
 
         let run_id =
@@ -661,6 +683,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
     #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
+        // Extract parent trace context and set it as the parent of current span
+        let parent_cx = extract_context(request.metadata());
+        tracing::Span::current().set_parent(parent_cx);
+
         const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 
         let req = request.into_inner();

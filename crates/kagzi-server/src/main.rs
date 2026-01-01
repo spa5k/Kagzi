@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use kagzi_proto::kagzi::admin_service_server::AdminServiceServer;
 use kagzi_proto::kagzi::worker_service_server::WorkerServiceServer;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServiceServer;
@@ -8,7 +10,7 @@ use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
     coordinator,
 };
-use kagzi_store::PgStore;
+use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
@@ -76,6 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
     });
 
+    // Start the status reporter
+    let status_store = store.clone();
+    let status_token = shutdown_token.child_token();
+    tokio::spawn(async move {
+        status_reporter(status_store, status_token).await;
+    });
+
     let addr = format!("{}:{}", settings.server.host, settings.server.port).parse()?;
     let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
     let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
@@ -122,4 +131,49 @@ async fn run_migrations(
         })?;
 
     Ok(())
+}
+
+async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
+    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            _ = interval.tick() => {
+                // Collect statistics from all namespaces
+                let namespaces = vec!["default", "scheduling"];
+
+                let mut total_workers = 0;
+                let mut total_pending = 0;
+                let mut total_running = 0;
+
+                for namespace in &namespaces {
+                    // Count online workers across all task queues
+                    if let Ok(worker_count) = store.workers().count(namespace, None, None).await {
+                        total_workers += worker_count;
+                    }
+
+                    // Count workflows by status
+                    if let Ok(pending) = store.workflows().count(namespace, Some("PENDING")).await {
+                        total_pending += pending;
+                    }
+                    if let Ok(running) = store.workflows().count(namespace, Some("RUNNING")).await {
+                        total_running += running;
+                    }
+                }
+
+                if total_workers > 0 || total_pending > 0 || total_running > 0 {
+                    tracing::info!(
+                        workers = total_workers,
+                        workflows.pending = total_pending,
+                        workflows.running = total_running,
+                        "Server status"
+                    );
+                }
+            }
+        }
+    }
 }
