@@ -112,6 +112,7 @@ impl TestHarness {
             poll_timeout_secs: config.poll_timeout_secs,
             heartbeat_interval_secs: 1, // Fast heartbeat for tests
             visibility_timeout_secs: config.visibility_timeout_secs,
+            heartbeat_extension_secs: 45, // Standard extension
         };
 
         let shutdown = CancellationToken::new();

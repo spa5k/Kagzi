@@ -550,9 +550,26 @@ impl StepRepository for PgStepRepository {
             schedule_workflow_retry_ms: None,
         })
     }
+
+    #[instrument(skip(self))]
+    async fn complete_pending_sleeps(&self, run_id: Uuid) -> Result<u64, StoreError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE kagzi.step_runs
+            SET status = 'COMPLETED', finished_at = NOW()
+            WHERE run_id = $1 AND step_kind = 'SLEEP' AND status = 'RUNNING' AND is_latest = true
+            "#,
+            run_id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
 }
 
 #[cfg(test)]
+
 mod tests {
     use sqlx::postgres::PgPoolOptions;
 

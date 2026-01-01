@@ -282,16 +282,6 @@ impl WorkerRepository for PgWorkerRepository {
     }
 
     #[instrument(skip(self))]
-    async fn update_active_count(
-        &self,
-        _worker_id: Uuid,
-        _namespace_id: &str,
-        _delta: i32,
-    ) -> Result<(), StoreError> {
-        Ok(())
-    }
-
-    #[instrument(skip(self))]
     async fn count(
         &self,
         namespace_id: &str,

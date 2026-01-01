@@ -786,7 +786,46 @@ pub(super) async fn delete(repo: &PgWorkflowRepository, run_id: Uuid) -> Result<
     Ok(())
 }
 
+#[instrument(skip(repo))]
+pub(super) async fn get_namespace(
+    repo: &PgWorkflowRepository,
+    run_id: Uuid,
+) -> Result<Option<String>, StoreError> {
+    let row = sqlx::query!(
+        r#"
+        SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1
+        "#,
+        run_id
+    )
+    .fetch_optional(&repo.pool)
+    .await?;
+
+    Ok(row.map(|r| r.namespace_id))
+}
+
+#[instrument(skip(repo))]
+pub(super) async fn extend_visibility(
+    repo: &PgWorkflowRepository,
+    worker_id: &str,
+    extension_secs: i64,
+) -> Result<u64, StoreError> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE kagzi.workflow_runs
+        SET available_at = NOW() + ($2 * INTERVAL '1 second')
+        WHERE locked_by = $1 AND status = 'RUNNING'
+        "#,
+        worker_id,
+        extension_secs as f64
+    )
+    .execute(&repo.pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
 #[cfg(test)]
+
 mod tests {
     use super::*;
 

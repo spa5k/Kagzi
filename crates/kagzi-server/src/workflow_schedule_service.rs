@@ -328,27 +328,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             None
         };
 
-        let _next_fire_at = if let Some(cron) = parsed_cron.as_ref() {
-            let candidate = cron
-                .after(&Utc::now())
-                .next()
-                .ok_or_else(|| invalid_argument_error("Cron expression has no future occurrences"))?
-                .with_timezone(&Utc);
-
-            if Some(candidate) == current.available_at {
-                cron.after(&candidate)
-                    .next()
-                    .map(|dt| dt.with_timezone(&Utc))
-            } else {
-                Some(candidate)
-            }
-        } else if let Some(ts) = req.next_fire_at {
-            let dt = chrono::DateTime::<Utc>::from_timestamp(ts.seconds, ts.nanos as u32)
-                .ok_or_else(|| invalid_argument_error("next_fire_at is out of supported range"))?;
-            Some(dt)
-        } else {
-            None
-        };
+        // Validate cron if provided but we'll recalculate next_fire when enabling
+        if let Some(ref cron) = parsed_cron {
+            cron.after(&Utc::now()).next().ok_or_else(|| {
+                invalid_argument_error("Cron expression has no future occurrences")
+            })?;
+        }
 
         let new_status = match req.enabled {
             Some(true) => Some(kagzi_store::WorkflowStatus::Scheduled),

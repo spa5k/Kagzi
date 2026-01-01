@@ -116,4 +116,17 @@ pub trait WorkflowRepository: Send + Sync {
     async fn update(&self, run_id: Uuid, workflow: WorkflowRun) -> Result<(), StoreError>;
 
     async fn delete(&self, run_id: Uuid) -> Result<(), StoreError>;
+
+    /// Get the namespace for a workflow by run_id only.
+    /// Used when the namespace is not known upfront but run_id is.
+    async fn get_namespace(&self, run_id: Uuid) -> Result<Option<String>, StoreError>;
+
+    /// Extend visibility timeout for workflows locked by a specific worker.
+    /// Called during heartbeat to keep workflow locked while worker is healthy.
+    /// Returns the number of workflows extended.
+    async fn extend_visibility(
+        &self,
+        worker_id: &str,
+        extension_secs: i64,
+    ) -> Result<u64, StoreError>;
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -165,6 +165,7 @@ impl WorkerBuilder {
             shutdown: CancellationToken::new(),
             completed_counter: Arc::new(AtomicI32::new(0)),
             failed_counter: Arc::new(AtomicI32::new(0)),
+            consecutive_poll_failures: Arc::new(AtomicU32::new(0)),
         })
     }
 }
@@ -185,6 +186,7 @@ pub struct Worker {
     shutdown: CancellationToken,
     completed_counter: Arc<AtomicI32>,
     failed_counter: Arc<AtomicI32>,
+    consecutive_poll_failures: Arc<AtomicU32>,
 }
 
 impl Worker {
@@ -362,6 +364,8 @@ impl Worker {
         match resp {
             Ok(r) => {
                 let task = r.into_inner();
+                // Reset failure counter on successful poll
+                self.consecutive_poll_failures.store(0, Ordering::Relaxed);
                 if task.run_id.is_empty() {
                     drop(permit);
                     return;
@@ -413,6 +417,13 @@ impl Worker {
                 drop(permit);
                 if e.code() != tonic::Code::DeadlineExceeded {
                     error!("Poll failed: {:?}", e);
+                    // Exponential backoff on poll failures to prevent tight error loops
+                    let failures = self
+                        .consecutive_poll_failures
+                        .fetch_add(1, Ordering::Relaxed)
+                        + 1;
+                    let backoff_ms = std::cmp::min(100 * 2u64.pow(failures.min(10)), 30_000);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                 }
             }
         }

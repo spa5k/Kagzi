@@ -188,4 +188,16 @@ impl WorkflowRepository for PgWorkflowRepository {
     async fn delete(&self, run_id: Uuid) -> Result<(), StoreError> {
         state::delete(self, run_id).await
     }
+
+    async fn get_namespace(&self, run_id: Uuid) -> Result<Option<String>, StoreError> {
+        state::get_namespace(self, run_id).await
+    }
+
+    async fn extend_visibility(
+        &self,
+        worker_id: &str,
+        extension_secs: i64,
+    ) -> Result<u64, StoreError> {
+        state::extend_visibility(self, worker_id, extension_secs).await
+    }
 }
