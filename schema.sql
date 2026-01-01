@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict diLdpTRtTcPKepnPyR1Kgs8ORixzhObCgrJl6FU51S5xEHQZrRgAGuq9ALP5sjJ
+\restrict a5TDMedwL27L0Iq6onoprgwq7JvKXKY7ZLzsbA0fA40EQpBnIGd5ztzFjG0eiJV
 
 -- Dumped from database version 18.0
 -- Dumped by pg_dump version 18.0
@@ -38,20 +38,6 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 --
 
 COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
-
-
---
--- Name: notify_new_work(); Type: FUNCTION; Schema: kagzi; Owner: -
---
-
-CREATE FUNCTION kagzi.notify_new_work() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  PERFORM pg_notify('kagzi_work_' || md5(NEW.namespace_id || '_' || NEW.task_queue), NEW.run_id::text);
-  RETURN NEW;
-END;
-$$;
 
 
 SET default_tablespace = '';
@@ -127,7 +113,6 @@ CREATE TABLE kagzi.step_runs (
     created_at timestamp with time zone DEFAULT now(),
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
-    retry_at timestamp with time zone,
     retry_policy jsonb,
     attempt_number integer DEFAULT 1 NOT NULL,
     is_latest boolean DEFAULT true,
@@ -185,18 +170,16 @@ CREATE TABLE kagzi.workflow_runs (
     workflow_type text NOT NULL,
     status text NOT NULL,
     locked_by text,
-    locked_until timestamp with time zone,
     attempts integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
     started_at timestamp with time zone,
     finished_at timestamp with time zone,
-    wake_up_at timestamp with time zone,
-    deadline_at timestamp with time zone,
     retry_policy jsonb,
     parent_step_attempt_id text,
     version text,
-    idempotency_suffix text,
-    error text
+    error text,
+    available_at timestamp with time zone,
+    CONSTRAINT chk_available_at CHECK (((status = ANY (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text])) OR (available_at IS NOT NULL)))
 );
 
 
@@ -286,20 +269,6 @@ ALTER TABLE ONLY public._sqlx_migrations
 
 
 --
--- Name: idx_queue_poll; Type: INDEX; Schema: kagzi; Owner: -
---
-
-CREATE INDEX idx_queue_poll ON kagzi.workflow_runs USING btree (namespace_id, task_queue, status, wake_up_at);
-
-
---
--- Name: idx_queue_poll_hot; Type: INDEX; Schema: kagzi; Owner: -
---
-
-CREATE INDEX idx_queue_poll_hot ON kagzi.workflow_runs USING btree (namespace_id, task_queue, COALESCE(wake_up_at, created_at)) WHERE (status = ANY (ARRAY['PENDING'::text, 'SLEEPING'::text]));
-
-
---
 -- Name: idx_schedules_due; Type: INDEX; Schema: kagzi; Owner: -
 --
 
@@ -328,20 +297,6 @@ CREATE UNIQUE INDEX idx_step_runs_latest ON kagzi.step_runs USING btree (run_id,
 
 
 --
--- Name: idx_step_runs_pending_retry; Type: INDEX; Schema: kagzi; Owner: -
---
-
-CREATE INDEX idx_step_runs_pending_retry ON kagzi.step_runs USING btree (retry_at) WHERE ((status = 'PENDING'::text) AND (retry_at IS NOT NULL));
-
-
---
--- Name: idx_step_runs_retry; Type: INDEX; Schema: kagzi; Owner: -
---
-
-CREATE INDEX idx_step_runs_retry ON kagzi.step_runs USING btree (run_id, retry_at) WHERE (retry_at IS NOT NULL);
-
-
---
 -- Name: idx_workers_active_unique; Type: INDEX; Schema: kagzi; Owner: -
 --
 
@@ -363,17 +318,10 @@ CREATE INDEX idx_workers_queue ON kagzi.workers USING btree (namespace_id, task_
 
 
 --
--- Name: idx_workflow_poll; Type: INDEX; Schema: kagzi; Owner: -
+-- Name: idx_workflow_available; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE INDEX idx_workflow_poll ON kagzi.workflow_runs USING btree (namespace_id, task_queue, wake_up_at NULLS FIRST, created_at) WHERE (status = ANY (ARRAY['PENDING'::text, 'SLEEPING'::text, 'RUNNING'::text]));
-
-
---
--- Name: idx_workflow_runs_claimable; Type: INDEX; Schema: kagzi; Owner: -
---
-
-CREATE INDEX idx_workflow_runs_claimable ON kagzi.workflow_runs USING btree (task_queue, namespace_id, COALESCE(wake_up_at, created_at)) WHERE (status = ANY (ARRAY['PENDING'::text, 'SLEEPING'::text]));
+CREATE INDEX idx_workflow_available ON kagzi.workflow_runs USING btree (namespace_id, task_queue, available_at) WHERE (status = ANY (ARRAY['PENDING'::text, 'SLEEPING'::text, 'RUNNING'::text]));
 
 
 --
@@ -394,14 +342,7 @@ CREATE INDEX idx_workflow_status_lookup ON kagzi.workflow_runs USING btree (name
 -- Name: uq_active_workflow; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_active_workflow ON kagzi.workflow_runs USING btree (namespace_id, external_id, COALESCE(idempotency_suffix, ''::text)) WHERE (status <> ALL (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text]));
-
-
---
--- Name: workflow_runs trigger_workflow_new_work; Type: TRIGGER; Schema: kagzi; Owner: -
---
-
-CREATE TRIGGER trigger_workflow_new_work AFTER INSERT OR UPDATE ON kagzi.workflow_runs FOR EACH ROW WHEN (((new.status = 'PENDING'::text) AND ((new.wake_up_at IS NULL) OR (new.wake_up_at <= now())))) EXECUTE FUNCTION kagzi.notify_new_work();
+CREATE UNIQUE INDEX uq_active_workflow ON kagzi.workflow_runs USING btree (namespace_id, external_id) WHERE (status <> ALL (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text]));
 
 
 --
@@ -432,5 +373,5 @@ ALTER TABLE ONLY kagzi.workflow_payloads
 -- PostgreSQL database dump complete
 --
 
-\unrestrict diLdpTRtTcPKepnPyR1Kgs8ORixzhObCgrJl6FU51S5xEHQZrRgAGuq9ALP5sjJ
+\unrestrict a5TDMedwL27L0Iq6onoprgwq7JvKXKY7ZLzsbA0fA40EQpBnIGd5ztzFjG0eiJV
 

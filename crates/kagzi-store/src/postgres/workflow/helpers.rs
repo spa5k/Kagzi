@@ -20,7 +20,7 @@ pub(super) struct WorkflowRunRow {
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub wake_up_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub available_at: Option<chrono::DateTime<chrono::Utc>>,
     pub version: Option<String>,
     pub parent_step_attempt_id: Option<String>,
     pub retry_policy: Option<serde_json::Value>,
@@ -47,7 +47,7 @@ impl WorkflowRunRow {
             created_at: self.created_at,
             started_at: self.started_at,
             finished_at: self.finished_at,
-            wake_up_at: self.wake_up_at,
+            available_at: self.available_at,
             version: self.version,
             parent_step_attempt_id: self.parent_step_attempt_id,
             retry_policy: self.retry_policy.and_then(|v| {
@@ -85,7 +85,7 @@ pub(super) async fn set_failed_tx(
             error = $2,
             finished_at = NOW(),
             locked_by = NULL,
-            locked_until = NULL
+            available_at = NULL
         WHERE run_id = $1 AND status = 'RUNNING'
         RETURNING namespace_id, task_queue, workflow_type
         "#,

@@ -14,7 +14,7 @@ use crate::models::{
 const WORKFLOW_COLUMNS_WITH_PAYLOAD: &str = "\
     w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
     w.status, p.input, p.output, w.locked_by, w.attempts, w.error, \
-    w.created_at, w.started_at, w.finished_at, w.wake_up_at, \
+    w.created_at, w.started_at, w.finished_at, w.available_at, \
     w.version, w.parent_step_attempt_id, w.retry_policy";
 
 fn validate_payload_size(
@@ -57,9 +57,9 @@ pub(super) async fn create(
         INSERT INTO kagzi.workflow_runs (
             run_id,
             external_id, task_queue, workflow_type, status,
-            namespace_id, version, retry_policy
+            namespace_id, version, retry_policy, available_at
         )
-        VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7)
+        VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW())
         RETURNING run_id
         "#,
         run_id,
@@ -113,7 +113,7 @@ pub(super) async fn find_by_id(
             w.created_at,
             w.started_at,
             w.finished_at,
-            w.wake_up_at,
+            w.available_at,
             w.version,
             w.parent_step_attempt_id,
             w.retry_policy
@@ -330,7 +330,7 @@ pub(super) async fn cancel(
         SET status = 'CANCELLED',
             finished_at = NOW(),
             locked_by = NULL,
-            locked_until = NULL
+            available_at = NULL
         WHERE run_id = $1 
           AND namespace_id = $2
           AND status = 'RUNNING'
@@ -354,7 +354,7 @@ pub(super) async fn cancel(
         SET status = 'CANCELLED',
             finished_at = NOW(),
             locked_by = NULL,
-            locked_until = NULL
+            available_at = NULL
         WHERE run_id = $1 
           AND namespace_id = $2
           AND status IN ('PENDING', 'SLEEPING')
@@ -386,7 +386,7 @@ pub(super) async fn complete(
         SET status = 'COMPLETED',
             finished_at = NOW(),
             locked_by = NULL,
-            locked_until = NULL
+            available_at = NULL
         WHERE run_id = $1 AND status = 'RUNNING'
         RETURNING namespace_id, task_queue, workflow_type
         "#,
@@ -441,9 +441,8 @@ pub(super) async fn schedule_sleep(
         r#"
         UPDATE kagzi.workflow_runs
         SET status = 'SLEEPING',
-            wake_up_at = NOW() + ($2 * INTERVAL '1 second'),
-            locked_by = NULL,
-            locked_until = NULL
+            available_at = NOW() + ($2 * INTERVAL '1 second'),
+            locked_by = NULL
         WHERE run_id = $1 AND status = 'RUNNING'
         RETURNING namespace_id, task_queue, workflow_type
         "#,
@@ -472,9 +471,7 @@ pub(super) async fn schedule_retry(
         UPDATE kagzi.workflow_runs
         SET status = 'PENDING',
             locked_by = NULL,
-            locked_until = NULL,
-            wake_up_at = NOW() + ($2 * INTERVAL '1 millisecond'),
-            attempts = attempts + 1
+            available_at = NOW() + ($2 * INTERVAL '1 millisecond')
         WHERE run_id = $1 AND status = 'RUNNING'
         RETURNING namespace_id, task_queue, workflow_type
         "#,
@@ -527,9 +524,9 @@ pub(super) async fn create_batch(
             INSERT INTO kagzi.workflow_runs (
                 run_id,
                 external_id, task_queue, workflow_type, status,
-                namespace_id, version, retry_policy
+                namespace_id, version, retry_policy, available_at
             )
-            VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7)
+            VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW())
             RETURNING run_id
             "#,
             run_id,

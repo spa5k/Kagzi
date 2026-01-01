@@ -43,7 +43,6 @@ pub struct StepRun {
     pub created_at: Option<DateTime<Utc>>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
-    pub retry_at: Option<DateTime<Utc>>,
     pub retry_policy: Option<RetryPolicy>,
 }
 
@@ -71,23 +70,24 @@ pub struct FailStepParams {
     pub retry_after_ms: Option<i64>,
 }
 
+/// Result of failing a step.
+///
+/// If retry is scheduled, the workflow should be rescheduled with the
+/// returned delay. The worker will replay the workflow and cached steps
+/// will return instantly until the failed step is re-executed.
 #[derive(Debug, Clone)]
 pub struct FailStepResult {
+    /// Whether a retry was scheduled
     pub scheduled_retry: bool,
-    pub retry_at: Option<DateTime<Utc>>,
+    /// If scheduled_retry is true, this is the delay in milliseconds
+    /// before the workflow should be rescheduled
+    pub schedule_workflow_retry_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StepRetryInfo {
     pub attempt_number: i32,
     pub retry_policy: Option<RetryPolicy>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RetryTriggered {
-    pub run_id: Uuid,
-    pub step_id: String,
-    pub attempt_number: i32,
 }
 
 #[derive(Debug, Clone, Default)]

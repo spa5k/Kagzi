@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::time::Duration;
 
-use chrono::Utc;
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
@@ -49,8 +48,6 @@ pub struct WorkerServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
 }
 
 impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
-    const WORKFLOW_LOCK_DURATION_SECS: i64 = 30;
-
     pub fn new(
         store: PgStore,
         worker_settings: WorkerSettings,
@@ -157,14 +154,8 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             ));
         }
 
-        let extended = self
-            .store
-            .workflows()
-            .extend_worker_locks(&req.worker_id, 30)
-            .await
-            .map_err(map_store_error)?;
-
-        let _ = extended; // We don't need to log this
+        // No lock extension - workers must complete within visibility timeout
+        // If they don't, the workflow becomes available for other workers
 
         let worker = self
             .store
@@ -290,7 +281,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                     &req.task_queue,
                     &req.worker_id,
                     &effective_types,
-                    Self::WORKFLOW_LOCK_DURATION_SECS,
+                    self.worker_settings.visibility_timeout_secs,
                 )
                 .await
                 .map_err(map_store_error)?;
@@ -521,17 +512,8 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        let retry_at_dt = result.retry_at;
-        let retry_at = retry_at_dt.map(|dt| prost_types::Timestamp {
-            seconds: dt.timestamp(),
-            nanos: dt.timestamp_subsec_nanos() as i32,
-        });
-
-        if result.scheduled_retry {
-            let delay_ms = retry_at_dt
-                .map(|dt| (dt - Utc::now()).num_milliseconds().max(0) as u64)
-                .unwrap_or(0);
-
+        // If step failure schedules a workflow retry, reschedule the workflow
+        if let Some(delay_ms) = result.schedule_workflow_retry_ms {
             self.store
                 .workflows()
                 .schedule_retry(run_id, delay_ms)
@@ -541,7 +523,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         Ok(Response::new(FailStepResponse {
             scheduled_retry: result.scheduled_retry,
-            retry_at,
+            retry_at: None, // No longer used - workflow is rescheduled, not step
         }))
     }
 

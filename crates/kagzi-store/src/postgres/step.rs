@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::Utc;
 use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
 use tracing::{instrument, warn};
 use uuid::Uuid;
@@ -8,14 +7,14 @@ use super::StoreConfig;
 use crate::error::StoreError;
 use crate::models::{
     BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
-    PaginatedResult, RetryPolicy, RetryTriggered, StepCursor, StepKind, StepRetryInfo, StepRun,
+    PaginatedResult, RetryPolicy, StepCursor, StepKind, StepRetryInfo, StepRun,
 };
 use crate::repository::StepRepository;
 
 const STEP_COLUMNS: &str = "\
     attempt_id, run_id, step_id, namespace_id, step_kind, attempt_number, status, \
     input, output, error, child_workflow_run_id, created_at, started_at, \
-    finished_at, retry_at, retry_policy";
+    finished_at, retry_policy";
 
 #[derive(sqlx::FromRow)]
 struct StepRunRow {
@@ -33,7 +32,6 @@ struct StepRunRow {
     created_at: Option<chrono::DateTime<chrono::Utc>>,
     started_at: Option<chrono::DateTime<chrono::Utc>>,
     finished_at: Option<chrono::DateTime<chrono::Utc>>,
-    retry_at: Option<chrono::DateTime<chrono::Utc>>,
     retry_policy: Option<serde_json::Value>,
 }
 
@@ -70,7 +68,6 @@ impl StepRunRow {
             created_at: self.created_at,
             started_at: self.started_at,
             finished_at: self.finished_at,
-            retry_at: self.retry_at,
             retry_policy: self
                 .retry_policy
                 .and_then(|v| serde_json::from_value(v).ok()),
@@ -88,14 +85,6 @@ struct RetryInfoRow {
 struct ExistingStepRow {
     status: String,
     output: Option<Vec<u8>>,
-    retry_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-#[derive(sqlx::FromRow)]
-struct RetryTriggeredRow {
-    run_id: Uuid,
-    step_id: String,
-    attempt_number: i32,
 }
 
 #[derive(Clone)]
@@ -256,7 +245,6 @@ impl StepRepository for PgStepRepository {
                 created_at,
                 started_at,
                 finished_at,
-                retry_at,
                 retry_policy
             FROM kagzi.step_runs
             WHERE attempt_id = $1
@@ -336,7 +324,7 @@ impl StepRepository for PgStepRepository {
         let existing: Option<ExistingStepRow> = sqlx::query_as!(
             ExistingStepRow,
             r#"
-            SELECT status, output, retry_at
+            SELECT status, output
             FROM kagzi.step_runs
             WHERE run_id = $1 AND step_id = $2 AND is_latest = true
             "#,
@@ -346,23 +334,13 @@ impl StepRepository for PgStepRepository {
         .fetch_optional(&mut *tx)
         .await?;
 
-        if let Some(ref step) = existing {
-            if step.status == "COMPLETED" {
-                return Ok(BeginStepResult {
-                    should_execute: false,
-                    cached_output: step.output.clone(),
-                });
-            }
-
-            if step.status == "PENDING"
-                && let Some(retry_at) = step.retry_at
-                && retry_at > Utc::now()
-            {
-                return Err(StoreError::precondition_failed(format!(
-                    "Step is in backoff. Retry scheduled at {}",
-                    retry_at
-                )));
-            }
+        if let Some(ref step) = existing
+            && step.status == "COMPLETED"
+        {
+            return Ok(BeginStepResult {
+                should_execute: false,
+                cached_output: step.output.clone(),
+            });
         }
 
         sqlx::query!(
@@ -476,10 +454,16 @@ impl StepRepository for PgStepRepository {
         Ok(())
     }
 
+    /// Fail a step, potentially scheduling a workflow retry.
+    ///
+    /// In the simplified model, step failures trigger workflow retries rather than
+    /// step-level retries. When the workflow replays, cached steps return instantly
+    /// until the failed step is re-executed.
     #[instrument(skip(self, params))]
     async fn fail(&self, params: FailStepParams) -> Result<FailStepResult, StoreError> {
         let retry_info = self.get_retry_info(params.run_id, &params.step_id).await?;
 
+        // Check if we should schedule a workflow retry
         if let Some(info) = retry_info {
             let policy = info.retry_policy.unwrap_or_default();
 
@@ -492,30 +476,31 @@ impl StepRepository for PgStepRepository {
                     .retry_after_ms
                     .unwrap_or_else(|| policy.calculate_delay_ms(info.attempt_number));
 
+                // Mark step as failed
                 sqlx::query!(
                     r#"
                     UPDATE kagzi.step_runs
-                    SET status = 'PENDING',
-                        retry_at = NOW() + ($3 * INTERVAL '1 millisecond'),
-                        error = $4
+                    SET status = 'FAILED',
+                        error = $3,
+                        finished_at = NOW()
                     WHERE run_id = $1 AND step_id = $2 AND is_latest = true
                     "#,
                     params.run_id,
                     params.step_id,
-                    delay_ms as f64,
                     params.error
                 )
                 .execute(&self.pool)
                 .await?;
 
-                let retry_at = Utc::now() + chrono::Duration::milliseconds(delay_ms);
+                // Signal that workflow should be rescheduled
                 return Ok(FailStepResult {
                     scheduled_retry: true,
-                    retry_at: Some(retry_at),
+                    schedule_workflow_retry_ms: Some(delay_ms as u64),
                 });
             }
         }
 
+        // No retry - mark step as permanently failed
         let mut tx = self.pool.begin().await?;
 
         let step_kind = self
@@ -562,40 +547,8 @@ impl StepRepository for PgStepRepository {
 
         Ok(FailStepResult {
             scheduled_retry: false,
-            retry_at: None,
+            schedule_workflow_retry_ms: None,
         })
-    }
-
-    #[instrument(skip(self))]
-    async fn process_pending_retries(&self) -> Result<Vec<RetryTriggered>, StoreError> {
-        let rows: Vec<RetryTriggeredRow> = sqlx::query_as!(
-            RetryTriggeredRow,
-            r#"
-            UPDATE kagzi.step_runs
-            SET status = 'PENDING', retry_at = NULL
-            WHERE attempt_id IN (
-                SELECT attempt_id
-                FROM kagzi.step_runs
-                WHERE status = 'PENDING'
-                  AND retry_at IS NOT NULL
-                  AND retry_at <= NOW()
-                FOR UPDATE SKIP LOCKED
-                LIMIT 100
-            )
-            RETURNING run_id as "run_id!", step_id as "step_id!", attempt_number
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows
-            .into_iter()
-            .map(|r| RetryTriggered {
-                run_id: r.run_id,
-                step_id: r.step_id,
-                attempt_number: r.attempt_number,
-            })
-            .collect())
     }
 }
 
