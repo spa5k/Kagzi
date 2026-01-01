@@ -64,7 +64,7 @@ async fn run_saga(
             fail_car,
             fail_hotel,
         })
-        .r#await()
+        .send()
         .await?;
 
     println!(

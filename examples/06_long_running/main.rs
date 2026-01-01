@@ -54,7 +54,7 @@ async fn run_polling(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(JobInput {
             job_id: "job-42".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!("Started polling workflow: {}", run.id);
@@ -78,7 +78,7 @@ async fn run_timeout(server: &str, namespace: &str) -> anyhow::Result<()> {
         .input(JobInput {
             job_id: "job-timeout".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!(

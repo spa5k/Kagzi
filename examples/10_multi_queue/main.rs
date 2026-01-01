@@ -70,7 +70,7 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
         .input(TaskInput {
             label: "urgent-report".into(),
         })
-        .r#await()
+        .send()
         .await?;
     let low = client
         .start("priority_task")
@@ -78,7 +78,7 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
         .input(TaskInput {
             label: "weekly-digest".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!(
@@ -129,7 +129,7 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
         .input(TaskInput {
             label: "prod-task".into(),
         })
-        .r#await()
+        .send()
         .await?;
     let staging_run = client
         .start("ns_task")
@@ -137,7 +137,7 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
         .input(TaskInput {
             label: "staging-task".into(),
         })
-        .r#await()
+        .send()
         .await?;
 
     println!(

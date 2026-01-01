@@ -56,7 +56,7 @@ async fn external_id_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
             order_id: external_id.into(),
         })
         .id(external_id)
-        .r#await()
+        .send()
         .await?;
     let run2 = client
         .start("charge_payment")
@@ -65,7 +65,7 @@ async fn external_id_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
             order_id: external_id.into(),
         })
         .id(external_id)
-        .r#await()
+        .send()
         .await?;
 
     println!(
@@ -93,7 +93,7 @@ async fn memoization_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .start("memoized_workflow")
         .namespace(namespace)
         .input(MemoInput { value: 5 })
-        .r#await()
+        .send()
         .await?;
 
     println!(
