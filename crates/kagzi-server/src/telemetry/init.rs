@@ -29,15 +29,15 @@ pub struct TelemetryGuard {
 
 impl Drop for TelemetryGuard {
     fn drop(&mut self) {
-        if let Some(ref provider) = self.tracer_provider
-            && let Err(e) = provider.shutdown()
-        {
-            eprintln!("Failed to shutdown tracer provider: {:?}", e);
-        }
-        if let Some(ref provider) = self.meter_provider
+        if let Some(provider) = self.meter_provider.take()
             && let Err(e) = provider.shutdown()
         {
             eprintln!("Failed to shutdown meter provider: {:?}", e);
+        }
+        if let Some(provider) = self.tracer_provider.take()
+            && let Err(e) = provider.shutdown()
+        {
+            eprintln!("Failed to shutdown tracer provider: {:?}", e);
         }
     }
 }

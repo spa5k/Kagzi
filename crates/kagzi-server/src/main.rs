@@ -143,25 +143,37 @@ async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
                 break;
             }
             _ = interval.tick() => {
-                // Collect statistics from all namespaces
-                let namespaces = vec!["default", "scheduling"];
+                let namespaces = match store.workers().list_distinct_namespaces().await {
+                    Ok(namespaces) => {
+                        if namespaces.is_empty() {
+                            tracing::debug!("No active workers found, skipping status report");
+                            continue;
+                        }
+                        namespaces
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to fetch namespaces from workers, skipping status report");
+                        continue;
+                    }
+                };
 
                 let mut total_workers = 0;
                 let mut total_pending = 0;
                 let mut total_running = 0;
 
                 for namespace in &namespaces {
-                    // Count online workers across all task queues
-                    if let Ok(worker_count) = store.workers().count(namespace, None, None).await {
-                        total_workers += worker_count;
+                    match store.workers().count(namespace, None, None).await {
+                        Ok(count) => total_workers += count,
+                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count workers"),
                     }
 
-                    // Count workflows by status
-                    if let Ok(pending) = store.workflows().count(namespace, Some("PENDING")).await {
-                        total_pending += pending;
+                    match store.workflows().count(namespace, Some("PENDING")).await {
+                        Ok(count) => total_pending += count,
+                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count pending workflows"),
                     }
-                    if let Ok(running) = store.workflows().count(namespace, Some("RUNNING")).await {
-                        total_running += running;
+                    match store.workflows().count(namespace, Some("RUNNING")).await {
+                        Ok(count) => total_running += count,
+                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count running workflows"),
                     }
                 }
 

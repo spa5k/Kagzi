@@ -13,7 +13,7 @@ use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 /// Returns a new Context with the extracted span context, or the current context if none found.
 ///
 /// # Example
-/// ```ignore
+/// ```no_run
 /// async fn my_grpc_method(&self, request: Request<MyRequest>) -> Result<Response<MyResponse>, Status> {
 ///     let parent_cx = extract_context(request.metadata());
 ///     let _guard = parent_cx.attach();
@@ -30,7 +30,7 @@ pub fn extract_context(metadata: &MetadataMap) -> Context {
 /// Call this before making outgoing gRPC calls to propagate the trace.
 ///
 /// # Example
-/// ```ignore
+/// ```no_run
 /// let mut request = tonic::Request::new(my_request);
 /// inject_context(request.metadata_mut());
 /// let response = client.some_method(request).await?;
@@ -66,10 +66,23 @@ struct MetadataInjector<'a>(&'a mut MetadataMap);
 
 impl Injector for MetadataInjector<'_> {
     fn set(&mut self, key: &str, value: String) {
-        if let Ok(name) = MetadataKey::from_bytes(key.as_bytes())
-            && let Ok(val) = MetadataValue::try_from(&value)
-        {
-            self.0.insert(name, val);
-        }
+        let name = match MetadataKey::from_bytes(key.as_bytes()) {
+            Ok(name) => name,
+            Err(e) => {
+                tracing::debug!("Failed to create metadata key for trace injection: {:?}", e);
+                return;
+            }
+        };
+        let val = match MetadataValue::try_from(&value) {
+            Ok(val) => val,
+            Err(e) => {
+                tracing::debug!(
+                    "Failed to create metadata value for trace injection: {:?}",
+                    e
+                );
+                return;
+            }
+        };
+        self.0.insert(name, val);
     }
 }

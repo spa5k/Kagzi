@@ -167,7 +167,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         }
     }
 
-    #[instrument(skip(self, request))]
+    #[instrument(skip(self, request), fields(namespace_id = tracing::field::Empty))]
     async fn list_workflows(
         &self,
         request: Request<ListWorkflowsRequest>,
@@ -181,6 +181,8 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         } else {
             req.namespace_id
         };
+
+        tracing::Span::current().record("namespace_id", &namespace_id);
 
         let page = req.page.unwrap_or_default();
         let page_size = if page.page_size <= 0 {

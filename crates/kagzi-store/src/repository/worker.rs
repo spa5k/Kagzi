@@ -34,4 +34,8 @@ pub trait WorkerRepository: Send + Sync {
         task_queue: Option<&str>,
         filter_status: Option<WorkerStatus>,
     ) -> Result<i64, StoreError>;
+
+    /// Get list of distinct namespace_ids from workers table.
+    /// Useful for status reporting and administration.
+    async fn list_distinct_namespaces(&self) -> Result<Vec<String>, StoreError>;
 }
