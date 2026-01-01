@@ -17,11 +17,12 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tonic::transport::Channel;
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, info_span, warn};
 use uuid::Uuid;
 
 use crate::context::Context;
 use crate::errors::{KagziError, WorkflowPaused, map_grpc_error};
+use crate::propagation::inject_context;
 use crate::retry::Retry;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -410,78 +411,91 @@ async fn execute_workflow(
     input: serde_json::Value,
     default_retry: Option<Retry>,
 ) {
-    let ctx = Context {
-        client: client.clone(),
-        run_id: run_id.clone(),
-        default_retry,
-    };
+    // Create a span for the entire workflow execution
+    let span = info_span!(
+        "workflow_execution",
+        run_id = %run_id,
+        otel.kind = "client",
+    );
 
-    // Execute workflow in a separate task so panics are captured as JoinError
-    // instead of crashing the runtime. JoinError is converted into a failure.
-    let task = tokio::spawn(async move { handler(ctx, input).await });
+    async {
+        let ctx = Context {
+            client: client.clone(),
+            run_id: run_id.clone(),
+            default_retry,
+        };
 
-    let result = match task.await {
-        Ok(r) => r,
-        Err(join_err) => {
-            error!(
-                run_id = %run_id,
-                error = %join_err,
-                "Workflow panicked"
-            );
-            Err(anyhow::anyhow!(format!("workflow panicked: {join_err}")))
-        }
-    };
+        // Execute workflow in a separate task so panics are captured as JoinError
+        // instead of crashing the runtime. JoinError is converted into a failure.
+        let task = tokio::spawn(async move { handler(ctx, input).await }.in_current_span());
 
-    match result {
-        Ok(output) => {
-            let data = match serde_json::to_vec(&output) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    error!(
-                        run_id = %run_id,
-                        error = %e,
-                        "Failed to serialize workflow output"
-                    );
-                    return; // Let workflow retry or fail explicitly
-                }
-            };
-
-            let complete_request = Request::new(CompleteWorkflowRequest {
-                run_id,
-                output: Some(ProtoPayload {
-                    data,
-                    metadata: HashMap::new(),
-                }),
-            });
-
-            let _ = client.complete_workflow(complete_request).await;
-        }
-        Err(e) => {
-            if e.downcast_ref::<WorkflowPaused>().is_some() {
-                info!(
+        let result = match task.await {
+            Ok(r) => r,
+            Err(join_err) => {
+                error!(
                     run_id = %run_id,
-                    "Workflow paused (sleeping)"
+                    error = %join_err,
+                    "Workflow panicked"
                 );
-                return;
+                Err(anyhow::anyhow!(format!("workflow panicked: {join_err}")))
             }
+        };
 
-            error!(
-                run_id = %run_id,
-                error = %e,
-                "Workflow failed"
-            );
+        match result {
+            Ok(output) => {
+                let data = match serde_json::to_vec(&output) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        error!(
+                            run_id = %run_id,
+                            error = %e,
+                            "Failed to serialize workflow output"
+                        );
+                        return; // Let workflow retry or fail explicitly
+                    }
+                };
 
-            let kagzi_err = e
-                .downcast_ref::<KagziError>()
-                .cloned()
-                .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
+                let mut complete_request = Request::new(CompleteWorkflowRequest {
+                    run_id,
+                    output: Some(ProtoPayload {
+                        data,
+                        metadata: HashMap::new(),
+                    }),
+                });
+                inject_context(complete_request.metadata_mut());
 
-            let fail_request = Request::new(FailWorkflowRequest {
-                run_id,
-                error: Some(kagzi_err.to_detail()),
-            });
+                let _ = client.complete_workflow(complete_request).await;
+            }
+            Err(e) => {
+                if e.downcast_ref::<WorkflowPaused>().is_some() {
+                    info!(
+                        run_id = %run_id,
+                        "Workflow paused (sleeping)"
+                    );
+                    return;
+                }
 
-            let _ = client.fail_workflow(fail_request).await;
+                error!(
+                    run_id = %run_id,
+                    error = %e,
+                    "Workflow failed"
+                );
+
+                let kagzi_err = e
+                    .downcast_ref::<KagziError>()
+                    .cloned()
+                    .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
+
+                let mut fail_request = Request::new(FailWorkflowRequest {
+                    run_id,
+                    error: Some(kagzi_err.to_detail()),
+                });
+                inject_context(fail_request.metadata_mut());
+
+                let _ = client.fail_workflow(fail_request).await;
+            }
         }
     }
+    .instrument(span)
+    .await
 }

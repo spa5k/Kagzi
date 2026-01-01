@@ -4,6 +4,7 @@ pub mod constants;
 pub mod coordinator;
 pub mod helpers;
 pub mod proto_convert;
+pub mod telemetry;
 pub mod worker_service;
 pub mod workflow_schedule_service;
 pub mod workflow_service;

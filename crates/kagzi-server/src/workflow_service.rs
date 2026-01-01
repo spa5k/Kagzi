@@ -8,6 +8,7 @@ use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowCursor, WorkflowRepository,
 };
 use tonic::{Request, Response, Status};
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::constants::{DEFAULT_NAMESPACE, DEFAULT_VERSION};
@@ -30,11 +31,29 @@ impl<Q: QueueNotifier> WorkflowServiceImpl<Q> {
 
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
+    #[instrument(
+        skip(self, request),
+        fields(
+            workflow_type = tracing::field::Empty,
+            external_id = tracing::field::Empty,
+            namespace_id = tracing::field::Empty,
+        )
+    )]
     async fn start_workflow(
         &self,
         request: Request<StartWorkflowRequest>,
     ) -> Result<Response<StartWorkflowResponse>, Status> {
         let req = request.into_inner();
+        tracing::Span::current().record("workflow_type", &req.workflow_type);
+        tracing::Span::current().record("external_id", &req.external_id);
+        tracing::Span::current().record(
+            "namespace_id",
+            if req.namespace_id.is_empty() {
+                DEFAULT_NAMESPACE
+            } else {
+                &req.namespace_id
+            },
+        );
 
         if req.external_id.is_empty() {
             return Err(invalid_argument_error("external_id is required"));
@@ -102,6 +121,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn get_workflow(
         &self,
         request: Request<GetWorkflowRequest>,
@@ -141,6 +161,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         }
     }
 
+    #[instrument(skip(self, request))]
     async fn list_workflows(
         &self,
         request: Request<ListWorkflowsRequest>,
@@ -247,6 +268,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         Ok(response)
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn cancel_workflow(
         &self,
         request: Request<CancelWorkflowRequest>,

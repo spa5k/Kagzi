@@ -15,18 +15,14 @@ use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     let settings = Settings::new().map_err(|e| {
         eprintln!("Failed to load configuration: {:?}", e);
         e
     })?;
+
+    // Initialize telemetry (tracing + OpenTelemetry)
+    // Keep the guard alive for the duration of the program
+    let _telemetry_guard = kagzi_server::telemetry::init_telemetry(&settings.telemetry)?;
 
     let db_pool = PgPoolOptions::new()
         .max_connections(settings.server.db_max_connections)
@@ -86,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admin_service = AdminServiceImpl::new(store.clone());
     let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
-    println!("Kagzi Server listening on {}", addr);
+    tracing::info!("Kagzi Server listening on {}", addr);
 
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
@@ -106,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::select! {
         res = server => res?,
         _ = tokio::signal::ctrl_c() => {
-            println!("Received shutdown signal");
+            tracing::info!("Received shutdown signal");
             shutdown_token.cancel();
         }
     }

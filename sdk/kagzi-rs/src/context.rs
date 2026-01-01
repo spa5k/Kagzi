@@ -13,9 +13,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tonic::Request;
 use tonic::transport::Channel;
-use tracing::{error, warn};
+use tracing::{Instrument, error, info_span, warn};
 
 use crate::errors::{KagziError, WorkflowPaused, map_grpc_error};
+use crate::propagation::inject_context;
 use crate::retry::Retry;
 
 pub struct Context {
@@ -60,7 +61,7 @@ impl Context {
     }
 
     async fn sleep_internal(&mut self, name: &str, duration: Duration) -> anyhow::Result<()> {
-        let begin_request = Request::new(BeginStepRequest {
+        let mut begin_request = Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
             step_name: name.to_string(),
             kind: StepKind::Sleep as i32,
@@ -70,6 +71,7 @@ impl Context {
             }),
             retry_policy: None,
         });
+        inject_context(begin_request.metadata_mut());
 
         let begin_resp = self
             .client
@@ -88,7 +90,7 @@ impl Context {
             return Ok(());
         }
 
-        let sleep_request = Request::new(SleepRequest {
+        let mut sleep_request = Request::new(SleepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id.clone(),
             duration: Some(ProstDuration {
@@ -96,6 +98,7 @@ impl Context {
                 nanos: duration.subsec_nanos() as i32,
             }),
         });
+        inject_context(sleep_request.metadata_mut());
 
         self.client
             .sleep(sleep_request)
@@ -127,20 +130,39 @@ impl<'a> StepBuilder<'a> {
         Fut: Future<Output = anyhow::Result<R>> + Send,
         R: Serialize + DeserializeOwned + Send + 'static,
     {
+        let span = info_span!(
+            "step_execution",
+            run_id = %self.ctx.run_id,
+            step_name = %self.name,
+            otel.kind = "client",
+        );
+
+        self.run_instrumented(f).instrument(span).await
+    }
+
+    async fn run_instrumented<F, Fut, R>(self, f: F) -> anyhow::Result<R>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = anyhow::Result<R>> + Send,
+        R: Serialize + DeserializeOwned + Send + 'static,
+    {
         // Determine effective retry policy
         let retry = self.retry.or_else(|| self.ctx.default_retry.clone());
 
-        // Call BeginStep
+        // Call BeginStep with trace context
+        let mut begin_request = Request::new(BeginStepRequest {
+            run_id: self.ctx.run_id.clone(),
+            step_name: self.name.clone(),
+            kind: StepKind::Function as i32,
+            input: None, // No longer serializing input
+            retry_policy: retry.map(Into::into),
+        });
+        inject_context(begin_request.metadata_mut());
+
         let begin_resp = self
             .ctx
             .client
-            .begin_step(BeginStepRequest {
-                run_id: self.ctx.run_id.clone(),
-                step_name: self.name.clone(),
-                kind: StepKind::Function as i32,
-                input: None, // No longer serializing input
-                retry_policy: retry.map(Into::into),
-            })
+            .begin_step(begin_request)
             .await?
             .into_inner();
 
@@ -165,7 +187,7 @@ impl<'a> StepBuilder<'a> {
                 let output = serde_json::to_vec(&value)?;
                 let mut backoff = Duration::from_secs(1);
                 loop {
-                    let complete_request = Request::new(CompleteStepRequest {
+                    let mut complete_request = Request::new(CompleteStepRequest {
                         run_id: self.ctx.run_id.clone(),
                         step_id: step_id.clone(),
                         output: Some(ProtoPayload {
@@ -173,6 +195,7 @@ impl<'a> StepBuilder<'a> {
                             metadata: HashMap::new(),
                         }),
                     });
+                    inject_context(complete_request.metadata_mut());
 
                     match self.ctx.client.complete_step(complete_request).await {
                         Ok(_) => break,
@@ -197,11 +220,12 @@ impl<'a> StepBuilder<'a> {
                     .cloned()
                     .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
 
-                let fail_request = Request::new(FailStepRequest {
+                let mut fail_request = Request::new(FailStepRequest {
                     run_id: self.ctx.run_id.clone(),
                     step_id: step_id.clone(),
                     error: Some(kagzi_err.to_detail()),
                 });
+                inject_context(fail_request.metadata_mut());
 
                 let fail_resp = self
                     .ctx

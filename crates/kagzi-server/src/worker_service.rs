@@ -18,6 +18,7 @@ use kagzi_store::{
 };
 use rand::Rng;
 use tonic::{Request, Response, Status};
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::config::WorkerSettings;
@@ -65,6 +66,7 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
 
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
+    #[instrument(skip(self, request), fields(task_queue = %request.get_ref().task_queue))]
     async fn register(
         &self,
         request: Request<RegisterRequest>,
@@ -125,6 +127,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(worker_id = %request.get_ref().worker_id))]
     async fn heartbeat(
         &self,
         request: Request<HeartbeatRequest>,
@@ -180,6 +183,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(worker_id = %request.get_ref().worker_id))]
     async fn deregister(
         &self,
         request: Request<DeregisterRequest>,
@@ -215,6 +219,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         Ok(Response::new(()))
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            worker_id = %request.get_ref().worker_id,
+            task_queue = %request.get_ref().task_queue,
+        )
+    )]
     async fn poll_task(
         &self,
         request: Request<PollTaskRequest>,
@@ -334,6 +345,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            run_id = %request.get_ref().run_id,
+            step_name = %request.get_ref().step_name,
+        )
+    )]
     async fn begin_step(
         &self,
         request: Request<BeginStepRequest>,
@@ -417,6 +435,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            run_id = %request.get_ref().run_id,
+            step_id = %request.get_ref().step_id,
+        )
+    )]
     async fn complete_step(
         &self,
         request: Request<CompleteStepRequest>,
@@ -467,6 +492,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         Ok(Response::new(CompleteStepResponse { step: Some(step) }))
     }
 
+    #[instrument(
+        skip(self, request),
+        fields(
+            run_id = %request.get_ref().run_id,
+            step_id = %request.get_ref().step_id,
+        )
+    )]
     async fn fail_step(
         &self,
         request: Request<FailStepRequest>,
@@ -522,6 +554,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn complete_workflow(
         &self,
         request: Request<CompleteWorkflowRequest>,
@@ -577,6 +610,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn fail_workflow(
         &self,
         request: Request<FailWorkflowRequest>,
@@ -625,6 +659,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         }))
     }
 
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
         const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 

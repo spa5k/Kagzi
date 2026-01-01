@@ -4,6 +4,7 @@ use std::pin::Pin;
 mod client;
 mod context;
 mod errors;
+mod propagation;
 mod retry;
 mod worker;
 
