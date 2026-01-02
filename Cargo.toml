@@ -40,10 +40,10 @@ tonic-reflection = "0.14.2"
 uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
 
 # Tracing & OpenTelemetry (versions must be compatible)
-opentelemetry = "0.28"
-opentelemetry-semantic-conventions = "0.28"
-opentelemetry-stdout = { version = "0.28", features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.28", features = ["rt-tokio", "metrics"] }
+opentelemetry = "0.31.0"
+opentelemetry-semantic-conventions = "0.31.0"
+opentelemetry-stdout = { version = "0.31", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "metrics"] }
 tracing = "0.1"
-tracing-opentelemetry = "0.29"
+tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }

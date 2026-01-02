@@ -378,7 +378,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<BeginStepResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -472,7 +472,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<CompleteStepResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -533,7 +533,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<FailStepResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -593,7 +593,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -655,7 +655,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<FailWorkflowResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -711,7 +711,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 

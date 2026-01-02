@@ -267,24 +267,28 @@ async fn main() -> anyhow::Result<()> {
     let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "default".into());
 
     // 1. Worker Setup
+    let server_clone = server.clone();
+    let namespace_clone = namespace.clone();
     let _worker_handle = tokio::spawn(async move {
-        // Need to fetch fresh variables in thread
-        let server =
-            env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
-        let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "default".into());
-
-        println!("👷 Worker connecting to {}...", server);
-        let mut worker = Worker::new(&server)
-            .namespace(&namespace)
-            .max_concurrent(2) // Limited to 1 to demonstrate queuing with long-running tasks
+        println!("👷 Worker connecting to {}...", server_clone);
+        let mut worker = Worker::new(&server_clone)
+            .namespace(&namespace_clone)
+            .max_concurrent(2) // Limited to 2 to demonstrate queuing with long-running tasks
             // Retry policy: Exponential backoff for simulated network glitches
             .retry(common::default_retry())
             .workflows([("order_fulfillment", order_fulfillment_workflow)])
             .build()
-            .await
-            .expect("Failed to build worker");
+            .await;
 
-        worker.run().await.expect("Worker failed");
+        if let Err(e) = &mut worker {
+            eprintln!("Failed to build worker: {:?}", e);
+            return;
+        }
+
+        let mut worker = worker.unwrap();
+        if let Err(e) = worker.run().await {
+            eprintln!("Worker error: {:?}", e);
+        }
     });
 
     // 2. Client Setup
@@ -296,14 +300,14 @@ async fn main() -> anyhow::Result<()> {
     println!("   - Simulating steady traffic with random BURSTS");
     println!("-----------------------------------");
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut order_count = 0;
 
     loop {
         // 5% chance of a traffic spike (DDOS / Viral moment)
         let is_spike = rand::random::<f32>() < 0.05;
         let batch_size = if is_spike {
-            let s = rand::Rng::gen_range(&mut rng, 50..100);
+            let s = rand::Rng::random_range(&mut rng, 50..100);
             println!("\n⚡️ TRAFFIC SPIKE! Incoming batch of {} orders! ⚡️\n", s);
             s
         } else {

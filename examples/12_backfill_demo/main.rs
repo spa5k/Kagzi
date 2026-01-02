@@ -6,6 +6,20 @@
 //! 2. Runs the worker normally for 30 seconds
 //! 3. STOPS the worker for ~25 seconds (missing 2 scheduled fires)
 //! 4. Restarts the worker and watches the coordinator catch up missed runs
+//!
+//! # max_catchup Parameter
+//!
+//! The `max_catchup` parameter controls how many missed runs will be executed
+//! when a schedule resumes after downtime:
+//!
+//! - `max_catchup = 0`: Skip all missed runs, jump to current time
+//! - `max_catchup = N`: Catch up at most N missed runs, skip the rest
+//! - `max_catchup = 50` (default): Catch up to 50 missed runs
+//!
+//! This prevents overwhelming the system if a schedule has been down for a long time.
+//! For example, with a 1-minute schedule that's been down for a day (1440 minutes),
+//! you'd get 1440 missed runs. With max_catchup=50, only the 50 most recent runs
+//! will execute, preventing resource exhaustion.
 
 use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -78,13 +92,13 @@ async fn main() -> anyhow::Result<()> {
         .workflow("ping_workflow")
         .cron("*/10 * * * * *") // every 10 seconds
         .input(PingInput { seq: 1 })
-        .catchup(50) // allow backfill (default)
+        .catchup(50) // Catch up to 50 missed runs (prevents resource exhaustion)
         .send()
         .await?;
 
     println!("📅 Schedule created: {}", schedule.schedule_id);
     println!("⏰ Cron: */10 * * * * * (fires every 10 seconds)");
-    println!("🔧 max_catchup: 50 (will catch up missed runs)\n");
+    println!("🔧 max_catchup: 50 (will catch up to 50 most recent missed runs)\n");
 
     // 2. Phase 1: Worker running normally
     println!("═══════════════════════════════════════════════════════════════════");
@@ -94,7 +108,9 @@ async fn main() -> anyhow::Result<()> {
     let server_clone = server.clone();
     let namespace_clone = namespace.clone();
     let worker_handle = tokio::spawn(async move {
-        let _ = run_worker(&server_clone, &namespace_clone).await;
+        if let Err(e) = run_worker(&server_clone, &namespace_clone).await {
+            eprintln!("Worker error in Phase 1: {:?}", e);
+        }
     });
 
     // Wait 30 seconds with worker running
@@ -118,8 +134,8 @@ async fn main() -> anyhow::Result<()> {
     for i in (1..=5).rev() {
         tokio::time::sleep(Duration::from_secs(5)).await;
         println!(
-            "  💤 Downtime: {} seconds... (missed fires accumulating)",
-            (6 - i) * 5
+            "  💤 Downtime: {} seconds remaining... (missed fires accumulating)",
+            i * 5
         );
     }
 
@@ -137,7 +153,9 @@ async fn main() -> anyhow::Result<()> {
     let server_clone = server.clone();
     let namespace_clone = namespace.clone();
     let worker_handle = tokio::spawn(async move {
-        let _ = run_worker(&server_clone, &namespace_clone).await;
+        if let Err(e) = run_worker(&server_clone, &namespace_clone).await {
+            eprintln!("Worker error in Phase 3: {:?}", e);
+        }
     });
 
     println!("👀 Watch for rapid 🔥 fires as missed runs catch up...\n");

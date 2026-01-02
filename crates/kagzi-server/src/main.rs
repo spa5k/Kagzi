@@ -94,7 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = format!("{}:{}", settings.server.host, settings.server.port).parse()?;
     let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
-    let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
+    let workflow_schedule_service =
+        WorkflowScheduleServiceImpl::new(store.clone(), settings.coordinator.default_max_catchup);
     let admin_service = AdminServiceImpl::new(store.clone());
     let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
@@ -134,8 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Graceful shutdown sequence
-    info!("Shutdown initiated...");
-    tracing::info!("Received shutdown signal, initiating graceful shutdown");
+    info!("Received shutdown signal, initiating graceful shutdown");
     shutdown_token.cancel();
 
     // Wait for background tasks with timeout

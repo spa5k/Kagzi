@@ -48,6 +48,13 @@ pub struct CoordinatorSettings {
     pub batch_size: i32,
     /// How long a worker can go without heartbeat before being marked offline
     pub worker_stale_threshold_secs: i64,
+    /// Default max_catchup for new schedules (controls how many missed runs to backfill)
+    /// Similar to Temporal's catchup window concept
+    /// Value 0 = never backfill, skip to current time
+    pub default_max_catchup: i32,
+    /// Maximum number of schedule instances to create per second (global rate limit)
+    /// Prevents resource exhaustion during large backfills
+    pub max_backfill_per_second: i32,
 }
 
 impl Default for CoordinatorSettings {
@@ -56,6 +63,8 @@ impl Default for CoordinatorSettings {
             interval_secs: 5,
             batch_size: 100,
             worker_stale_threshold_secs: 30,
+            default_max_catchup: 50, // Catch up to 50 missed runs by default
+            max_backfill_per_second: 10, // Max 10 schedule instances per second globally
         }
     }
 }

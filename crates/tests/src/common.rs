@@ -107,6 +107,8 @@ impl TestHarness {
             interval_secs: config.coordinator_interval_secs,
             batch_size: config.coordinator_batch_size,
             worker_stale_threshold_secs: config.worker_stale_threshold_secs,
+            default_max_catchup: 50,
+            max_backfill_per_second: 10,
         };
         let worker_settings = WorkerSettings {
             poll_timeout_secs: config.poll_timeout_secs,
@@ -154,7 +156,7 @@ impl TestHarness {
         };
 
         let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
-        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
+        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone(), 50);
         let admin_service = AdminServiceImpl::new(store.clone());
         let worker_service = WorkerServiceImpl::new(
             store.clone(),

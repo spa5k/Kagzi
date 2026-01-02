@@ -94,11 +94,15 @@ fn workflow_run_to_schedule_proto(w: WorkflowRun) -> Result<WorkflowSchedule, St
 #[derive(Clone)]
 pub struct WorkflowScheduleServiceImpl {
     pub store: PgStore,
+    pub default_max_catchup: i32,
 }
 
 impl WorkflowScheduleServiceImpl {
-    pub fn new(store: PgStore) -> Self {
-        Self { store }
+    pub fn new(store: PgStore, default_max_catchup: i32) -> Self {
+        Self {
+            store,
+            default_max_catchup,
+        }
     }
 }
 
@@ -159,7 +163,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         template.status = kagzi_store::WorkflowStatus::Scheduled;
         template.available_at = Some(first_fire);
-        template.max_catchup = req.max_catchup.unwrap_or(50);
+        template.max_catchup = req.max_catchup.unwrap_or(self.default_max_catchup);
 
         self.store
             .workflows()

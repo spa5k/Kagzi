@@ -18,7 +18,7 @@ cargo run --example 12_backfill_demo
 
 ## Expected Output
 
-```
+```text
 🔥 [12:00:00] FIRE #1 - Workflow executed
 🔥 [12:00:10] FIRE #2 - Workflow executed
 🔥 [12:00:20] FIRE #3 - Workflow executed
