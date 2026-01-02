@@ -64,6 +64,10 @@ name = "11_schedule_test"
 path = "11_schedule_test/main.rs"
 
 [[example]]
+name = "12_backfill_demo"
+path = "12_backfill_demo/main.rs"
+
+[[example]]
 name = "worker_hub"
 path = "worker_hub.rs"
 

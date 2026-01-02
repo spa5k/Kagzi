@@ -72,12 +72,15 @@ async fn fire_due_schedules<Q: QueueNotifier>(
         return Ok(());
     }
 
-    info!(count = templates.len(), "Processing due schedules");
+    // Only log count if there are many schedules being processed
+    if templates.len() > 5 {
+        info!(count = templates.len(), "Processing due schedules");
+    }
 
     let mut fired = 0;
 
     for template in templates {
-        let Some(fire_at) = template.available_at else {
+        let Some(current_fire_at) = template.available_at else {
             warn!(run_id = %template.run_id, "Schedule template missing available_at");
             continue;
         };
@@ -86,14 +89,65 @@ async fn fire_due_schedules<Q: QueueNotifier>(
             continue;
         };
 
+        let cron = cron::Schedule::from_str(cron_expr)
+            .map_err(|e| kagzi_store::StoreError::invalid_state(format!("Invalid cron: {}", e)))?;
+
+        // Backfill-aware logic:
+        // If max_catchup=0, skip all missed runs and jump to current time
+        if template.max_catchup == 0 {
+            let next_fire = cron
+                .after(&now)
+                .next()
+                .unwrap_or(now + chrono::Duration::days(365));
+            warn!(
+                schedule_id = %template.run_id,
+                "max_catchup=0, skipping missed runs"
+            );
+            store
+                .workflows()
+                .update_next_fire(template.run_id, next_fire, Some(now))
+                .await?;
+            continue;
+        }
+
+        // Calculate how many runs were missed (for logging and limiting)
+        let cursor = template
+            .last_fired_at
+            .or(template.created_at)
+            .unwrap_or(current_fire_at);
+        let missed_count = cron.after(&cursor).take_while(|t| *t <= now).count();
+
+        // If too many missed runs, skip excess and warn
+        if missed_count > template.max_catchup as usize {
+            warn!(
+                schedule_id = %template.run_id,
+                missed = missed_count,
+                max_catchup = template.max_catchup,
+                "Too many missed runs, skipping to recent"
+            );
+            // Skip to current time minus catchup window
+            let skip_to = cron
+                .after(&cursor)
+                .skip(missed_count.saturating_sub(template.max_catchup as usize))
+                .next()
+                .unwrap_or(now);
+            store
+                .workflows()
+                .update_next_fire(template.run_id, skip_to, Some(now))
+                .await?;
+            continue;
+        }
+
+        // Fire the current occurrence (which is current_fire_at)
         if let Some(run_id) = store
             .workflows()
-            .create_schedule_instance(template.run_id, fire_at)
+            .create_schedule_instance(template.run_id, current_fire_at)
             .await?
         {
             info!(
                 schedule_id = %template.run_id,
                 run_id = %run_id,
+                fire_at = %current_fire_at,
                 "Fired schedule"
             );
             if let Err(e) = queue
@@ -105,26 +159,23 @@ async fn fire_due_schedules<Q: QueueNotifier>(
             fired += 1;
         }
 
-        let cron = cron::Schedule::from_str(cron_expr)
-            .map_err(|e| kagzi_store::StoreError::invalid_state(format!("Invalid cron: {}", e)))?;
-        let next_fire = match cron.after(&now).next() {
-            Some(t) => t,
-            None => {
-                warn!(
-                    schedule_id = %template.run_id,
-                    "Cron expression has no future occurrences, defaulting to 365 days"
-                );
-                now + chrono::Duration::days(365)
-            }
-        };
+        // Calculate NEXT fire time from the time slot we just fired (not from now)
+        // This enables sequential catchup: next tick will pick up the following missed run
+        let next_fire = cron
+            .after(&current_fire_at)
+            .next()
+            .unwrap_or(now + chrono::Duration::days(365));
 
         store
             .workflows()
-            .update_next_fire(template.run_id, next_fire)
+            .update_next_fire(template.run_id, next_fire, Some(current_fire_at))
             .await?;
     }
 
-    info!(fired, "Finished processing due schedules");
+    // Only log if we actually fired something
+    if fired > 0 {
+        info!(fired, "Fired scheduled workflows");
+    }
     Ok(())
 }
 

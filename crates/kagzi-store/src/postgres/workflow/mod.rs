@@ -177,8 +177,9 @@ impl WorkflowRepository for PgWorkflowRepository {
         &self,
         run_id: Uuid,
         next_fire_at: DateTime<Utc>,
+        last_fired_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError> {
-        state::update_next_fire(self, run_id, next_fire_at).await
+        state::update_next_fire(self, run_id, next_fire_at, last_fired_at).await
     }
 
     async fn update(&self, run_id: Uuid, workflow: WorkflowRun) -> Result<(), StoreError> {

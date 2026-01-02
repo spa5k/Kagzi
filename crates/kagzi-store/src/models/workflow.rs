@@ -114,6 +114,8 @@ pub struct WorkflowRun {
     pub retry_policy: Option<RetryPolicy>,
     pub cron_expr: Option<String>,
     pub schedule_id: Option<Uuid>,
+    pub last_fired_at: Option<DateTime<Utc>>,
+    pub max_catchup: i32,
 }
 
 #[derive(Debug, Clone)]

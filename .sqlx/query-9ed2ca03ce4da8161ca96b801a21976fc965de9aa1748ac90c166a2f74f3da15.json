@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.workflow_runs\n            SET available_at = $2\n            WHERE run_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9ed2ca03ce4da8161ca96b801a21976fc965de9aa1748ac90c166a2f74f3da15"
+}

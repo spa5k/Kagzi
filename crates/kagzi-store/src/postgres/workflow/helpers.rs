@@ -26,6 +26,8 @@ pub(super) struct WorkflowRunRow {
     pub retry_policy: Option<serde_json::Value>,
     pub cron_expr: Option<String>,
     pub schedule_id: Option<Uuid>,
+    pub last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub max_catchup: i32,
 }
 
 impl WorkflowRunRow {
@@ -65,6 +67,8 @@ impl WorkflowRunRow {
             }),
             cron_expr: self.cron_expr,
             schedule_id: self.schedule_id,
+            last_fired_at: self.last_fired_at,
+            max_catchup: self.max_catchup,
         })
     }
 }

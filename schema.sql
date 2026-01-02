@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict zKQeTxHh3jpZU4T5cjCa9NPNfpbSzaRFbl6cg196zyEOJPno6gxgRDEu0dn3zcu
+\restrict E0XuEtxVXjmUpFbfwAP2NZI3gXtF5doX4zMVsGo4DMmYHZyPfI3CWa6U0XeAth0
 
 -- Dumped from database version 18.0
 -- Dumped by pg_dump version 18.0
@@ -124,6 +124,8 @@ CREATE TABLE kagzi.workflow_runs (
     available_at timestamp with time zone,
     cron_expr text,
     schedule_id uuid,
+    last_fired_at timestamp with time zone,
+    max_catchup integer DEFAULT 50 NOT NULL,
     CONSTRAINT chk_available_at CHECK (((status = ANY (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text])) OR (available_at IS NOT NULL)))
 );
 
@@ -294,5 +296,5 @@ ALTER TABLE ONLY kagzi.workflow_payloads
 -- PostgreSQL database dump complete
 --
 
-\unrestrict zKQeTxHh3jpZU4T5cjCa9NPNfpbSzaRFbl6cg196zyEOJPno6gxgRDEu0dn3zcu
+\unrestrict E0XuEtxVXjmUpFbfwAP2NZI3gXtF5doX4zMVsGo4DMmYHZyPfI3CWa6U0XeAth0
 
