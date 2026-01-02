@@ -159,9 +159,7 @@ impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
         // Get database URL from environment first (required field)
         let db_url = std::env::var("KAGZI_DB_URL")
-            .map_err(|_| {
-                ConfigError::NotFound("database_url (set KAGZI_DB_URL)".into())
-            })?;
+            .map_err(|_| ConfigError::NotFound("database_url (set KAGZI_DB_URL)".into()))?;
 
         let builder = Config::builder()
             .set_default("database_url", db_url)?

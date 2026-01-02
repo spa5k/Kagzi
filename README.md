@@ -4,8 +4,13 @@
 
 Kagzi is a workflow engine that enables you to write durable, fault-tolerant workflows in Rust. Your workflows survive process crashes, server restarts, and code deploys through deterministic replay and PostgreSQL-backed state management.
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-2024-orange.svg)](https://www.rust-lang.org)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Rust Edition](https://img.shields.io/badge/rust-2024-orange.svg)](https://www.rust-lang.org)
+[![CI](https://github.com/spa5k/kagzi/actions/workflows/tests.yml/badge.svg)](https://github.com/spa5k/kagzi/actions/workflows/tests.yml)
+[![Docker](https://github.com/spa5k/kagzi/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/spa5k/kagzi/pkgs/container/kagzi)
+[![GitHub Stars](https://img.shields.io/github/stars/spa5k/kagzi?style=social)](https://github.com/spa5k/kagzi/stargazers)
+[![Maintenance](https://img.shields.io/badge/Maintenance-Actively%20Maintained-green.svg)](https://github.com/spa5k/kagzi/graphs/commit-activity)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/spa5k/Kagzi)
 
 ## Why Kagzi?
 

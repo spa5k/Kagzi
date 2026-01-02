@@ -159,7 +159,8 @@ impl TestHarness {
         };
 
         let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
-        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone(), default_max_catchup);
+        let workflow_schedule_service =
+            WorkflowScheduleServiceImpl::new(store.clone(), default_max_catchup);
         let admin_service = AdminServiceImpl::new(store.clone());
         let worker_service = WorkerServiceImpl::new(
             store.clone(),
