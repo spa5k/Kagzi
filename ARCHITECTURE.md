@@ -164,10 +164,9 @@ graph TD
 
 - Database abstraction layer using sqlx
 - Repository pattern with traits:
-  - `WorkflowRepository`: Workflow run CRUD and polling
+  - `WorkflowRepository`: Workflow run CRUD, polling, and schedule management
   - `StepRepository`: Step execution history
   - `WorkerRepository`: Worker registration and heartbeat
-  - `WorkflowScheduleRepository`: Cron schedule management
   - `HealthRepository`: System health checks
 - PostgreSQL-specific implementation in `postgres/` directory
 
@@ -419,15 +418,17 @@ The replay model ensures that crashed workers don't lose work. A new worker can 
 
 ### 3.2. Visibility Timeout
 
-Kagzi uses a visibility timeout model rather than continuous lock extension:
+Kagzi uses a heartbeat-based visibility extension model:
 
 1. When a worker claims a workflow run, `availableAt` is set to `NOW() + visibility_timeout`.
 
-2. If the worker doesn't complete within this window, another worker can claim the run.
+2. Workers send periodic heartbeats that extend `availableAt` by `heartbeat_extension_secs`.
 
-3. The new worker replays the workflow: completed steps return cached outputs, failed steps re-execute.
+3. If a worker crashes and stops sending heartbeats, the visibility timeout expires and another worker can claim the run.
 
-This simplifies the model by removing the need for heartbeat extension while still providing crash recovery.
+4. The new worker replays the workflow: completed steps return cached outputs, failed steps re-execute.
+
+This provides both crash recovery and protection against duplicate execution during normal operation.
 
 #### Workflow State Machine
 
@@ -962,9 +963,12 @@ Discovery and health endpoints:
 
 ```protobuf
 service AdminService {
-  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
-  rpc GetWorkflowTypes(GetWorkflowTypesRequest) returns (GetWorkflowTypesResponse);
-  rpc GetServerStatus(GetServerStatusRequest) returns (GetServerStatusResponse);
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+  rpc GetWorker(GetWorkerRequest) returns (GetWorkerResponse);
+  rpc GetStep(GetStepRequest) returns (GetStepResponse);
+  rpc ListSteps(ListStepsRequest) returns (ListStepsResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
 }
 ```
 
@@ -1016,17 +1020,17 @@ Unlike Temporal's architecture with separate frontend, history, and matching ser
 
 This trade-off prioritizes developer experience and operational simplicity over horizontal scalability.
 
-### 10.4. Visibility Timeout vs Heartbeat Extension
+### 10.4. Heartbeat-Based Visibility Extension
 
-Kagzi uses fixed visibility timeouts rather than continuous heartbeat extension:
+Kagzi uses heartbeat-based visibility extension to balance simplicity and correctness:
 
-- **Simpler implementation**: No background heartbeat task.
+- **Crash recovery**: Workers that crash stop sending heartbeats, making workflows visible to other workers.
 
-- **Crash recovery**: Workers that crash are automatically detected.
+- **Duplicate prevention**: Active workers extend visibility, preventing duplicate execution during normal operation.
 
-- **Trade-off**: In-flight work may re-execute on timeout.
+- **Simple model**: Heartbeats serve dual purposes: health monitoring and lease extension.
 
-The replay model with cached step outputs makes re-execution acceptable since completed steps don't re-run.
+The replay model with cached step outputs provides additional safety: even if a workflow is claimed twice, completed steps don't re-execute.
 
 ## 11. Technical Stack
 
