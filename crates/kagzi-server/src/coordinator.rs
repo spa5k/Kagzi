@@ -128,8 +128,7 @@ async fn fire_due_schedules<Q: QueueNotifier>(
             // Skip to current time minus catchup window
             let skip_to = cron
                 .after(&cursor)
-                .skip(missed_count.saturating_sub(template.max_catchup as usize))
-                .next()
+                .nth(missed_count.saturating_sub(template.max_catchup as usize))
                 .unwrap_or(now);
             store
                 .workflows()

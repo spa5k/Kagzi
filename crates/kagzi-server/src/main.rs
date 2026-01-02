@@ -14,6 +14,7 @@ use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let queue_listener = queue.clone();
     let queue_listener_token = shutdown_token.child_token();
-    let _queue_listener_handle = tokio::spawn(async move {
+    let queue_listener_handle = tokio::spawn(async move {
         if let Err(e) = queue_listener.start(queue_listener_token).await {
             eprintln!("Queue listener failed: {:?}", e);
             eprintln!("Server is running in degraded mode - queue notifications will not work");
@@ -74,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let coordinator_store = store.clone();
     let coordinator_queue = queue.clone();
     let coordinator_token = shutdown_token.child_token();
-    tokio::spawn(async move {
+    let coordinator_handle = tokio::spawn(async move {
         coordinator::run(
             coordinator_store,
             coordinator_queue,
@@ -87,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the status reporter
     let status_store = store.clone();
     let status_token = shutdown_token.child_token();
-    tokio::spawn(async move {
+    let status_reporter_handle = tokio::spawn(async move {
         status_reporter(status_store, status_token).await;
     });
 
@@ -98,7 +99,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
     // Start the server
-
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
         .build_v1()?;
@@ -114,13 +114,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(reflection_service)
         .serve_with_shutdown(addr, server_token.cancelled());
 
+    // Wait for shutdown signal (Ctrl+C or SIGTERM)
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
     tokio::select! {
         res = server => res?,
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal");
-            shutdown_token.cancel();
-        }
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
+
+    // Graceful shutdown sequence
+    info!("Shutdown initiated...");
+    tracing::info!("Received shutdown signal, initiating graceful shutdown");
+    shutdown_token.cancel();
+
+    // Wait for background tasks with timeout
+    let shutdown_timeout = Duration::from_secs(10);
+    info!(
+        "Waiting for background tasks ({}s timeout)...",
+        shutdown_timeout.as_secs()
+    );
+
+    let shutdown_result = tokio::time::timeout(shutdown_timeout, async {
+        let _ = tokio::join!(
+            coordinator_handle,
+            queue_listener_handle,
+            status_reporter_handle,
+        );
+    })
+    .await;
+
+    match shutdown_result {
+        Ok(_) => info!("All tasks stopped gracefully"),
+        Err(_) => info!("Shutdown timeout reached, forcing exit"),
+    }
+
+    info!("Kagzi server stopped");
 
     Ok(())
 }
@@ -208,20 +247,17 @@ async fn print_startup_stats(store: &PgStore) {
         .await
         .unwrap_or(0);
 
-    println!("  📈 Current State");
-    println!("     ├─ Workers online:    {}", workers);
-    println!("     ├─ Active schedules:  {}", schedules);
-    println!("     ├─ Pending workflows: {}", pending);
-    println!("     └─ Running workflows: {}", running);
-    println!();
+    info!("Current State");
+    info!("   - Workers online:    {}", workers);
+    info!("   - Active schedules:  {}", schedules);
+    info!("   - Pending workflows: {}", pending);
+    info!("   - Running workflows: {}", running);
 
     if workers == 0 {
-        println!("  ⚠️  No workers connected. Start a worker to process jobs.");
+        info!("No workers connected. Start a worker to process jobs.");
     } else {
-        println!("  ✅ Ready to process workflows!");
+        info!("Ready to process workflows!");
     }
-    println!("  ─────────────────────────────────────────────────");
-    println!();
 }
 
 async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
@@ -246,7 +282,7 @@ async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
                     no_worker_reminder_count += 1;
                     // Remind every 2 minutes (4 x 30s ticks)
                     if no_worker_reminder_count % 4 == 1 {
-                        println!("  ⏳ Awaiting workers... (no workers connected)");
+                        info!("Awaiting workers... (no workers connected)");
                     }
                     continue;
                 }
@@ -284,23 +320,10 @@ async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
                 }
 
                 let now = chrono::Utc::now().format("%H:%M:%S");
-                println!();
-                println!("  ┌─────────────────────────────────────────────────");
-                println!("  │ 📊 Status @ {}", now);
-                println!("  ├─────────────────────────────────────────────────");
-                println!(
-                    "  │ 👷 Workers: {}   📝 Schedules: {}",
-                    total_workers, total_schedules
+                info!(
+                    "Status @ {} | Workers: {} | Schedules: {} | Workflows: [{} pending, {} running, {} sleeping] | Completed: {}",
+                    now, total_workers, total_schedules, total_pending, total_running, total_sleeping, total_completed
                 );
-                println!("  │");
-                println!(
-                    "  │ 🔄 Workflows: {} pending, {} running, {} sleeping",
-                    total_pending, total_running, total_sleeping
-                );
-                println!("  │ ✅ Completed: {}", total_completed);
-                println!("  │ 🌍 Namespaces: {:?}", namespaces);
-                println!("  └─────────────────────────────────────────────────");
-                println!();
             }
         }
     }
