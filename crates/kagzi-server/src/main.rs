@@ -14,6 +14,7 @@ use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,12 +38,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     run_migrations(&db_pool).await?;
 
+    // Print welcome banner
+    print_welcome_banner(&settings);
+
     // Create the store
     let store_config = kagzi_store::StoreConfig {
         payload_warn_threshold_bytes: settings.payload.warn_threshold_bytes,
         payload_max_size_bytes: settings.payload.max_size_bytes,
     };
     let store = PgStore::new(db_pool, store_config);
+
+    // Print startup stats (workers, schedules, pending jobs)
+    print_startup_stats(&store).await;
 
     let shutdown_token = CancellationToken::new();
     let coordinator_settings = settings.coordinator.clone();
@@ -57,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let queue_listener = queue.clone();
     let queue_listener_token = shutdown_token.child_token();
-    let _queue_listener_handle = tokio::spawn(async move {
+    let queue_listener_handle = tokio::spawn(async move {
         if let Err(e) = queue_listener.start(queue_listener_token).await {
             eprintln!("Queue listener failed: {:?}", e);
             eprintln!("Server is running in degraded mode - queue notifications will not work");
@@ -68,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let coordinator_store = store.clone();
     let coordinator_queue = queue.clone();
     let coordinator_token = shutdown_token.child_token();
-    tokio::spawn(async move {
+    let coordinator_handle = tokio::spawn(async move {
         coordinator::run(
             coordinator_store,
             coordinator_queue,
@@ -81,18 +88,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the status reporter
     let status_store = store.clone();
     let status_token = shutdown_token.child_token();
-    tokio::spawn(async move {
+    let status_reporter_handle = tokio::spawn(async move {
         status_reporter(status_store, status_token).await;
     });
 
     let addr = format!("{}:{}", settings.server.host, settings.server.port).parse()?;
     let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
-    let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
+    let workflow_schedule_service =
+        WorkflowScheduleServiceImpl::new(store.clone(), settings.coordinator.default_max_catchup);
     let admin_service = AdminServiceImpl::new(store.clone());
     let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
-    tracing::info!("Kagzi Server listening on {}", addr);
-
+    // Start the server
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
         .build_v1()?;
@@ -108,13 +115,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(reflection_service)
         .serve_with_shutdown(addr, server_token.cancelled());
 
+    // Wait for shutdown signal (Ctrl+C or SIGTERM)
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
     tokio::select! {
         res = server => res?,
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal");
-            shutdown_token.cancel();
-        }
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
+
+    // Graceful shutdown sequence
+    info!("Received shutdown signal, initiating graceful shutdown");
+    shutdown_token.cancel();
+
+    // Wait for background tasks with timeout
+    let shutdown_timeout = Duration::from_secs(10);
+    info!(
+        "Waiting for background tasks ({}s timeout)...",
+        shutdown_timeout.as_secs()
+    );
+
+    let shutdown_result = tokio::time::timeout(shutdown_timeout, async {
+        let _ = tokio::join!(
+            coordinator_handle,
+            queue_listener_handle,
+            status_reporter_handle,
+        );
+    })
+    .await;
+
+    match shutdown_result {
+        Ok(_) => info!("All tasks stopped gracefully"),
+        Err(_) => info!("Shutdown timeout reached, forcing exit"),
+    }
+
+    info!("Kagzi server stopped");
 
     Ok(())
 }
@@ -133,9 +178,92 @@ async fn run_migrations(
     Ok(())
 }
 
+fn print_welcome_banner(settings: &Settings) {
+    let version = env!("CARGO_PKG_VERSION");
+
+    println!();
+    println!(
+        r#"
+  ██╗  ██╗ █████╗  ██████╗ ███████╗██╗
+  ██║ ██╔╝██╔══██╗██╔════╝ ╚══███╔╝██║
+  █████╔╝ ███████║██║  ███╗  ███╔╝ ██║
+  ██╔═██╗ ██╔══██║██║   ██║ ███╔╝  ██║
+  ██║  ██╗██║  ██║╚██████╔╝███████╗██║
+  ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝
+"#
+    );
+    println!("  Durable Workflow Engine v{}", version);
+    println!("  ─────────────────────────────────────────────────");
+    println!();
+    println!("  🌐 gRPC Server");
+    println!(
+        "     └─ Listening on {}:{}",
+        settings.server.host, settings.server.port
+    );
+    println!();
+    println!("  ⚙️  Configuration");
+    println!(
+        "     ├─ DB connections:     {}",
+        settings.server.db_max_connections
+    );
+    println!(
+        "     ├─ Coordinator tick:   {}s",
+        settings.coordinator.interval_secs
+    );
+    println!(
+        "     ├─ Visibility timeout: {}s",
+        settings.worker.visibility_timeout_secs
+    );
+    println!(
+        "     ├─ Heartbeat interval: {}s",
+        settings.worker.heartbeat_interval_secs
+    );
+    println!(
+        "     └─ Worker stale after: {}s",
+        settings.coordinator.worker_stale_threshold_secs
+    );
+    println!();
+    println!("  📊 Status updates every 10s when workers are active");
+    println!("  ─────────────────────────────────────────────────");
+    println!();
+}
+
+async fn print_startup_stats(store: &PgStore) {
+    // Query current state
+    let workers = store.workers().count("*", None, None).await.unwrap_or(0);
+    let pending = store
+        .workflows()
+        .count("*", Some("PENDING"))
+        .await
+        .unwrap_or(0);
+    let running = store
+        .workflows()
+        .count("*", Some("RUNNING"))
+        .await
+        .unwrap_or(0);
+    let schedules = store
+        .workflows()
+        .count("*", Some("SCHEDULED"))
+        .await
+        .unwrap_or(0);
+
+    info!("Current State");
+    info!("   - Workers online:    {}", workers);
+    info!("   - Active schedules:  {}", schedules);
+    info!("   - Pending workflows: {}", pending);
+    info!("   - Running workflows: {}", running);
+
+    if workers == 0 {
+        info!("No workers connected. Start a worker to process jobs.");
+    } else {
+        info!("Ready to process workflows!");
+    }
+}
+
 async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
-    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut no_worker_reminder_count = 0u32;
 
     loop {
         tokio::select! {
@@ -143,48 +271,59 @@ async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
                 break;
             }
             _ = interval.tick() => {
+                // Count workers across all namespaces
+                let total_workers = store
+                    .workers()
+                    .count("*", None, None)
+                    .await
+                    .unwrap_or(0);
+
+                if total_workers == 0 {
+                    no_worker_reminder_count += 1;
+                    // Remind every 2 minutes (4 x 30s ticks)
+                    if no_worker_reminder_count % 4 == 1 {
+                        info!("Awaiting workers... (no workers connected)");
+                    }
+                    continue;
+                }
+
+                no_worker_reminder_count = 0;
+
+                // Get namespaces for detailed stats
                 let namespaces = match store.workers().list_distinct_namespaces().await {
-                    Ok(namespaces) => {
-                        if namespaces.is_empty() {
-                            tracing::debug!("No active workers found, skipping status report");
-                            continue;
-                        }
-                        namespaces
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to fetch namespaces from workers, skipping status report");
-                        continue;
-                    }
+                    Ok(ns) => ns,
+                    Err(_) => continue,
                 };
 
-                let mut total_workers = 0;
-                let mut total_pending = 0;
-                let mut total_running = 0;
+                let mut total_pending = 0i64;
+                let mut total_running = 0i64;
+                let mut total_sleeping = 0i64;
+                let mut total_completed = 0i64;
+                let mut total_schedules = 0i64;
 
                 for namespace in &namespaces {
-                    match store.workers().count(namespace, None, None).await {
-                        Ok(count) => total_workers += count,
-                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count workers"),
+                    if let Ok(count) = store.workflows().count(namespace, Some("PENDING")).await {
+                        total_pending += count;
                     }
-
-                    match store.workflows().count(namespace, Some("PENDING")).await {
-                        Ok(count) => total_pending += count,
-                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count pending workflows"),
+                    if let Ok(count) = store.workflows().count(namespace, Some("RUNNING")).await {
+                        total_running += count;
                     }
-                    match store.workflows().count(namespace, Some("RUNNING")).await {
-                        Ok(count) => total_running += count,
-                        Err(e) => tracing::debug!(namespace, error = %e, "Failed to count running workflows"),
+                    if let Ok(count) = store.workflows().count(namespace, Some("SLEEPING")).await {
+                        total_sleeping += count;
+                    }
+                    if let Ok(count) = store.workflows().count(namespace, Some("COMPLETED")).await {
+                        total_completed += count;
+                    }
+                    if let Ok(count) = store.workflows().count(namespace, Some("SCHEDULED")).await {
+                        total_schedules += count;
                     }
                 }
 
-                if total_workers > 0 || total_pending > 0 || total_running > 0 {
-                    tracing::info!(
-                        workers = total_workers,
-                        workflows.pending = total_pending,
-                        workflows.running = total_running,
-                        "Server status"
-                    );
-                }
+                let now = chrono::Utc::now().format("%H:%M:%S");
+                info!(
+                    "Status @ {} | Workers: {} | Schedules: {} | Workflows: [{} pending, {} running, {} sleeping] | Completed: {}",
+                    now, total_workers, total_schedules, total_pending, total_running, total_sleeping, total_completed
+                );
             }
         }
     }

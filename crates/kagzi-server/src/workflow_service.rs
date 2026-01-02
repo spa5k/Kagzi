@@ -47,7 +47,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
     ) -> Result<Response<StartWorkflowResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
         tracing::Span::current().record("workflow_type", &req.workflow_type);

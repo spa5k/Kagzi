@@ -111,6 +111,7 @@ pub trait WorkflowRepository: Send + Sync {
         &self,
         run_id: Uuid,
         next_fire_at: DateTime<Utc>,
+        last_fired_at: Option<DateTime<Utc>>,
     ) -> Result<(), StoreError>;
 
     async fn update(&self, run_id: Uuid, workflow: WorkflowRun) -> Result<(), StoreError>;

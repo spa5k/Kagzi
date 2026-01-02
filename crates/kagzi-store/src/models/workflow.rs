@@ -114,6 +114,18 @@ pub struct WorkflowRun {
     pub retry_policy: Option<RetryPolicy>,
     pub cron_expr: Option<String>,
     pub schedule_id: Option<Uuid>,
+    /// Last time this scheduled workflow fired.
+    /// Used to calculate missed runs for backfill-aware scheduling.
+    /// None for first-time schedules.
+    pub last_fired_at: Option<DateTime<Utc>>,
+    /// Maximum number of missed runs to catch up on during backfill.
+    /// - 0: Never backfill, skip all missed runs to current time
+    /// - N: Catch up at most N missed runs (e.g., 50 = catch up to 50 most recent runs)
+    ///
+    /// This prevents resource exhaustion when a schedule has been down for a long time.
+    /// For example, with a 1-minute schedule down for a day (1440 missed runs),
+    /// max_catchup=50 ensures only the 50 most recent runs execute.
+    pub max_catchup: i32,
 }
 
 #[derive(Debug, Clone)]

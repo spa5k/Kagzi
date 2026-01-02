@@ -107,6 +107,8 @@ impl TestHarness {
             interval_secs: config.coordinator_interval_secs,
             batch_size: config.coordinator_batch_size,
             worker_stale_threshold_secs: config.worker_stale_threshold_secs,
+            default_max_catchup: 50,
+            max_backfill_per_second: 10,
         };
         let worker_settings = WorkerSettings {
             poll_timeout_secs: config.poll_timeout_secs,
@@ -114,6 +116,9 @@ impl TestHarness {
             visibility_timeout_secs: config.visibility_timeout_secs,
             heartbeat_extension_secs: 45, // Standard extension
         };
+
+        // Extract default_max_catchup before coordinator_settings is moved
+        let default_max_catchup = coordinator_settings.default_max_catchup;
 
         let shutdown = CancellationToken::new();
 
@@ -154,7 +159,7 @@ impl TestHarness {
         };
 
         let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
-        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone());
+        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone(), default_max_catchup);
         let admin_service = AdminServiceImpl::new(store.clone());
         let worker_service = WorkerServiceImpl::new(
             store.clone(),

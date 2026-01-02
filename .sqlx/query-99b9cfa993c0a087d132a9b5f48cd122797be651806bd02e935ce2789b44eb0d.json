@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                w.run_id,\n                w.namespace_id,\n                w.external_id,\n                w.task_queue,\n                w.workflow_type,\n                w.status,\n                p.input,\n                p.output,\n                w.locked_by,\n                w.attempts,\n                w.error,\n                w.created_at,\n                w.started_at,\n                w.finished_at,\n                w.available_at,\n                w.version,\n                w.parent_step_attempt_id,\n                w.retry_policy,\n                w.cron_expr,\n                w.schedule_id\n            FROM kagzi.workflow_runs w\n            JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id\n            WHERE w.status = 'SCHEDULED'\n              AND w.available_at <= $1\n            ORDER BY w.available_at ASC\n            LIMIT $2\n            ",
+  "query": "\n        SELECT\n            w.run_id,\n            w.namespace_id,\n            w.external_id,\n            w.task_queue,\n            w.workflow_type,\n            w.status,\n            p.input,\n            p.output,\n            w.locked_by,\n            w.attempts,\n            w.error,\n            w.created_at,\n            w.started_at,\n            w.finished_at,\n            w.available_at,\n            w.version,\n            w.parent_step_attempt_id,\n            w.retry_policy,\n            w.cron_expr,\n            w.schedule_id,\n            w.last_fired_at,\n            w.max_catchup\n        FROM kagzi.workflow_runs w\n        JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id\n        WHERE w.run_id = $1 AND w.namespace_id = $2\n        ",
   "describe": {
     "columns": [
       {
@@ -102,12 +102,22 @@
         "ordinal": 19,
         "name": "schedule_id",
         "type_info": "Uuid"
+      },
+      {
+        "ordinal": 20,
+        "name": "last_fired_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "max_catchup",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
       "Left": [
-        "Timestamptz",
-        "Int8"
+        "Uuid",
+        "Text"
       ]
     },
     "nullable": [
@@ -130,8 +140,10 @@
       true,
       true,
       true,
-      true
+      true,
+      true,
+      false
     ]
   },
-  "hash": "ae5f80e6753d5bc27af1821f29850bbf3b3ccf44755c028a74a8a779ed34955b"
+  "hash": "99b9cfa993c0a087d132a9b5f48cd122797be651806bd02e935ce2789b44eb0d"
 }

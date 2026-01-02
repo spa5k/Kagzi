@@ -15,7 +15,8 @@ const WORKFLOW_COLUMNS_WITH_PAYLOAD: &str = "\
     w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
     w.status, p.input, p.output, w.locked_by, w.attempts, w.error, \
     w.created_at, w.started_at, w.finished_at, w.available_at, \
-    w.version, w.parent_step_attempt_id, w.retry_policy, w.cron_expr, w.schedule_id";
+    w.version, w.parent_step_attempt_id, w.retry_policy, w.cron_expr, w.schedule_id, \
+    w.last_fired_at, w.max_catchup";
 
 fn validate_payload_size(
     config: &StoreConfig,
@@ -121,7 +122,9 @@ pub(super) async fn find_by_id(
             w.parent_step_attempt_id,
             w.retry_policy,
             w.cron_expr,
-            w.schedule_id
+            w.schedule_id,
+            w.last_fired_at,
+            w.max_catchup
         FROM kagzi.workflow_runs w
         JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
         WHERE w.run_id = $1 AND w.namespace_id = $2
@@ -603,7 +606,9 @@ pub(super) async fn find_due_schedules(
                 w.parent_step_attempt_id,
                 w.retry_policy,
                 w.cron_expr,
-                w.schedule_id
+                w.schedule_id,
+                w.last_fired_at,
+                w.max_catchup
             FROM kagzi.workflow_runs w
             JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
             WHERE w.status = 'SCHEDULED'
@@ -641,7 +646,9 @@ pub(super) async fn find_due_schedules(
                 w.parent_step_attempt_id,
                 w.retry_policy,
                 w.cron_expr,
-                w.schedule_id
+                w.schedule_id,
+                w.last_fired_at,
+                w.max_catchup
             FROM kagzi.workflow_runs w
             JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
             WHERE w.namespace_id = $1
@@ -720,18 +727,34 @@ pub(super) async fn update_next_fire(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
     next_fire_at: chrono::DateTime<chrono::Utc>,
+    last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<(), StoreError> {
-    sqlx::query!(
-        r#"
-        UPDATE kagzi.workflow_runs
-        SET available_at = $2
-        WHERE run_id = $1
-        "#,
-        run_id,
-        next_fire_at
-    )
-    .execute(&repo.pool)
-    .await?;
+    if let Some(last) = last_fired_at {
+        sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET available_at = $2, last_fired_at = $3
+            WHERE run_id = $1
+            "#,
+            run_id,
+            next_fire_at,
+            last
+        )
+        .execute(&repo.pool)
+        .await?;
+    } else {
+        sqlx::query!(
+            r#"
+            UPDATE kagzi.workflow_runs
+            SET available_at = $2
+            WHERE run_id = $1
+            "#,
+            run_id,
+            next_fire_at
+        )
+        .execute(&repo.pool)
+        .await?;
+    }
 
     Ok(())
 }
@@ -748,14 +771,18 @@ pub(super) async fn update(
         SET status = $2,
             available_at = $3,
             cron_expr = $4,
-            schedule_id = $5
+            schedule_id = $5,
+            max_catchup = $6,
+            last_fired_at = $7
         WHERE run_id = $1
         "#,
         run_id,
         workflow.status.to_string(),
         workflow.available_at,
         workflow.cron_expr,
-        workflow.schedule_id
+        workflow.schedule_id,
+        workflow.max_catchup,
+        workflow.last_fired_at
     )
     .execute(&repo.pool)
     .await?;

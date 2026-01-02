@@ -18,7 +18,7 @@ use kagzi_store::{
 };
 use rand::Rng;
 use tonic::{Request, Response, Status};
-use tracing::instrument;
+use tracing::{info, instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
@@ -82,6 +82,11 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("namespace_id is required"));
         }
         let namespace_id = req.namespace_id;
+        let workflow_types = req.workflow_types;
+
+        // Clone for logging after worker_id is assigned
+        let namespace_for_log = namespace_id.clone();
+        let workflows_for_log = workflow_types.clone();
 
         let worker_id = self
             .store
@@ -89,7 +94,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .register(RegisterWorkerParams {
                 namespace_id,
                 task_queue: req.task_queue,
-                workflow_types: req.workflow_types,
+                workflow_types,
                 hostname: if req.hostname.is_empty() {
                     None
                 } else {
@@ -120,6 +125,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             })
             .await
             .map_err(map_store_error)?;
+
+        info!(
+            worker_id = %worker_id,
+            namespace = %namespace_for_log,
+            workflows = ?workflows_for_log,
+            "Worker connected"
+        );
 
         Ok(Response::new(RegisterResponse {
             worker_id: worker_id.to_string(),
@@ -208,12 +220,14 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 .start_drain(worker_id, &namespace_id)
                 .await
                 .map_err(map_store_error)?;
+            info!(worker_id = %worker_id, namespace = %namespace_id, "Worker draining");
         } else {
             self.store
                 .workers()
                 .deregister(worker_id, &namespace_id)
                 .await
                 .map_err(map_store_error)?;
+            info!(worker_id = %worker_id, namespace = %namespace_id, "Worker disconnected");
         }
 
         Ok(Response::new(()))
@@ -305,6 +319,13 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             if let Some(work_item) = work_item {
                 let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 
+                info!(
+                    run_id = %work_item.run_id,
+                    workflow_type = %work_item.workflow_type,
+                    worker_id = %req.worker_id,
+                    "Dispatched workflow"
+                );
+
                 let payload = bytes_to_payload(Some(work_item.input));
 
                 return Ok(Response::new(PollTaskResponse {
@@ -357,7 +378,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<BeginStepResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -451,7 +472,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<CompleteStepResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -512,7 +533,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<FailStepResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -572,7 +593,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -620,6 +641,8 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
+        info!(run_id = %run_id, "Workflow completed");
+
         Ok(Response::new(CompleteWorkflowResponse {
             status: kagzi_proto::kagzi::WorkflowStatus::Completed as i32,
         }))
@@ -632,7 +655,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     ) -> Result<Response<FailWorkflowResponse>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         let req = request.into_inner();
 
@@ -673,6 +696,12 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
+        info!(
+            run_id = %run_id,
+            error = %error_detail.message,
+            "Workflow failed"
+        );
+
         Ok(Response::new(FailWorkflowResponse {
             status: kagzi_proto::kagzi::WorkflowStatus::Failed as i32,
         }))
@@ -682,7 +711,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
         // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
-        tracing::Span::current().set_parent(parent_cx);
+        let _ = tracing::Span::current().set_parent(parent_cx);
 
         const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 
