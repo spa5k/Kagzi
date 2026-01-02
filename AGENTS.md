@@ -101,7 +101,7 @@ just test-e2e                # Run end-to-end tests
 
 ## Environment Variables
 
-- `DATABASE_URL`: PostgreSQL connection string
+- `KAGZI_DB_URL`: PostgreSQL connection string
 - `KAGZI_POLL_TIMEOUT_SECS`: Poll timeout for integration tests
 - `KAGZI_SERVER_URL`: Server URL for examples (default: http://localhost:50051)
 - `KAGZI_NAMESPACE`: Workflow namespace for examples

@@ -117,6 +117,9 @@ impl TestHarness {
             heartbeat_extension_secs: 45, // Standard extension
         };
 
+        // Extract default_max_catchup before coordinator_settings is moved
+        let default_max_catchup = coordinator_settings.default_max_catchup;
+
         let shutdown = CancellationToken::new();
 
         let queue = kagzi_queue::PostgresNotifier::new(pool.clone(), 300, 300);
@@ -156,7 +159,7 @@ impl TestHarness {
         };
 
         let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
-        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone(), 50);
+        let workflow_schedule_service = WorkflowScheduleServiceImpl::new(store.clone(), default_max_catchup);
         let admin_service = AdminServiceImpl::new(store.clone());
         let worker_service = WorkerServiceImpl::new(
             store.clone(),

@@ -38,7 +38,7 @@ pub async fn run<Q: QueueNotifier>(
 
     // Spawn a background task to reset the rate limit counter every second
     let shutdown_clone = shutdown.clone();
-    tokio::spawn(async move {
+    let _reset_handle = tokio::spawn(async move {
         let mut reset_interval = tokio::time::interval(Duration::from_secs(1));
         reset_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -64,6 +64,9 @@ pub async fn run<Q: QueueNotifier>(
         tokio::select! {
             _ = shutdown.cancelled() => {
                 info!("Coordinator shutting down");
+                // Note: _reset_handle is dropped here and will be aborted.
+                // If panic detection is desired, await it explicitly:
+                // let _ = tokio::time::timeout(Duration::from_secs(1), _reset_handle).await;
                 break;
             }
             _ = ticker.tick() => {
