@@ -185,7 +185,6 @@ impl<'a> StepBuilder<'a> {
             Ok(value) => {
                 let output = serde_json::to_vec(&value)?;
 
-                // Use backoff crate for retry logic
                 let mut backoff = ExponentialBackoff {
                     initial_interval: Duration::from_secs(1),
                     max_interval: Duration::from_secs(60),

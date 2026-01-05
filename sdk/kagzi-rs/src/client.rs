@@ -392,7 +392,6 @@ impl StartWorkflowBuilder {
     /// - Server returns an error
     #[must_use = "Returns the workflow run ID which is needed to track execution"]
     pub async fn send(mut self) -> anyhow::Result<WorkflowRun> {
-        // Validate before sending
         self.validate()?;
 
         let resp = self
@@ -622,7 +621,6 @@ impl ScheduleBuilder {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("cron expression is required"))?;
 
-        // Use cron crate for robust validation
         Schedule::from_str(cron)
             .map_err(|e| anyhow::anyhow!("Invalid cron expression '{cron}': {e}"))?;
 
@@ -649,7 +647,6 @@ impl ScheduleBuilder {
     /// - Server returns an error
     #[must_use = "Returns the created workflow schedule"]
     pub async fn send(mut self) -> anyhow::Result<WorkflowSchedule> {
-        // Validate before sending
         self.validate()?;
 
         let workflow_type = self

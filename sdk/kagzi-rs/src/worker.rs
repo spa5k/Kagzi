@@ -214,21 +214,18 @@ impl WorkerBuilder {
     /// - Connection to the server fails
     #[tracing::instrument(skip(self))]
     pub async fn build(self) -> anyhow::Result<Worker> {
-        // Validate configuration first
         self.validate()?;
 
         if self.workflows.is_empty() {
             anyhow::bail!("At least one workflow must be registered");
         }
 
-        // Create channel with tower middleware for timeout
         let channel = Channel::from_shared(self.addr.clone())
             .map_err(|e| anyhow::anyhow!("Invalid server address: {e}"))?
             .connect()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to worker service: {e}"))?;
 
-        // Wrap channel with tower timeout layer
         let channel = ServiceBuilder::new()
             .timeout(Duration::from_secs(POLL_TIMEOUT_SECS))
             .service(channel);
@@ -463,7 +460,6 @@ impl Worker {
             Err(_) => return,
         };
 
-        // Get worker_id, return early if not registered
         let worker_id = match &self.worker_id {
             Some(id) => id,
             None => {
@@ -528,22 +524,19 @@ impl Worker {
                 drop(permit);
                 if e.code() != tonic::Code::DeadlineExceeded {
                     error!(error = %e, "Poll failed");
-                    // Exponential backoff on poll failures to prevent tight error loops
                     let _failures = self
                         .consecutive_poll_failures
                         .fetch_add(1, Ordering::Relaxed)
                         + 1;
 
-                    // Use backoff crate for exponential backoff
                     let mut backoff = ExponentialBackoff {
                         initial_interval: Duration::from_millis(100),
                         max_interval: Duration::from_secs(30),
                         multiplier: 2.0,
-                        max_elapsed_time: None, // No limit
+                        max_elapsed_time: None,
                         ..Default::default()
                     };
 
-                    // Calculate backoff duration based on failure count
                     let backoff_duration =
                         backoff.next_backoff().unwrap_or(Duration::from_secs(30));
                     tokio::time::sleep(backoff_duration).await;
