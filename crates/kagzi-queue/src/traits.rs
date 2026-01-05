@@ -32,7 +32,7 @@ use crate::QueueError;
 /// use tokio_util::sync::CancellationToken;
 ///
 /// async fn example(pool: sqlx::PgPool) {
-///     let queue = PostgresNotifier::new(pool, 300, 300);
+///     let queue = PostgresNotifier::new(pool, 64, 300, 300);
 ///     let shutdown = CancellationToken::new();
 ///     
 ///     // Start the background listener

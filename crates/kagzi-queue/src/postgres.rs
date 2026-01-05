@@ -12,21 +12,26 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::error::QueueError;
 use crate::traits::QueueNotifier;
 
-const CHANNEL_CAPACITY: usize = 64;
-
 #[derive(Clone)]
 pub struct PostgresNotifier {
     pool: PgPool,
     channels: Arc<DashMap<String, broadcast::Sender<()>>>,
+    channel_capacity: usize,
     cleanup_interval_secs: u64,
     max_reconnect_secs: u64,
 }
 
 impl PostgresNotifier {
-    pub fn new(pool: PgPool, cleanup_interval_secs: u64, max_reconnect_secs: u64) -> Self {
+    pub fn new(
+        pool: PgPool,
+        channel_capacity: usize,
+        cleanup_interval_secs: u64,
+        max_reconnect_secs: u64,
+    ) -> Self {
         Self {
             pool,
             channels: Arc::new(DashMap::new()),
+            channel_capacity,
             cleanup_interval_secs,
             max_reconnect_secs,
         }
@@ -40,7 +45,7 @@ impl PostgresNotifier {
         self.channels
             .entry(key.to_string())
             .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
+                let (tx, _) = broadcast::channel(self.channel_capacity);
                 tx
             })
             .clone()
@@ -59,6 +64,69 @@ impl PostgresNotifier {
         });
         if removed > 0 {
             info!(count = removed, "Cleaned up stale notification channels");
+        }
+    }
+
+    async fn reconnect_listener(
+        &self,
+        shutdown: &CancellationToken,
+    ) -> Result<PgListener, QueueError> {
+        let max_attempts = (self.max_reconnect_secs / 10).max(3) as usize;
+
+        let mut backoff = backon::ExponentialBuilder::default()
+            .with_min_delay(std::time::Duration::from_secs(1))
+            .with_max_delay(std::time::Duration::from_secs(30))
+            .with_max_times(max_attempts)
+            .with_jitter()
+            .build();
+
+        loop {
+            if shutdown.is_cancelled() {
+                return Ok(PgListener::connect_with(&self.pool).await?);
+            }
+
+            match PgListener::connect_with(&self.pool).await {
+                Ok(mut listener) => match listener.listen("kagzi_work").await {
+                    Ok(_) => {
+                        info!("Queue listener reconnected");
+                        return Ok(listener);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to re-listen after reconnect, retrying");
+                        if let Some(delay) = backoff.next() {
+                            tokio::select! {
+                                _ = shutdown.cancelled() => {
+                                    return Ok(PgListener::connect_with(&self.pool).await?);
+                                }
+                                _ = tokio::time::sleep(delay) => {}
+                            }
+                        } else {
+                            error!(
+                                "Exhausted reconnection attempts after {} seconds",
+                                self.max_reconnect_secs
+                            );
+                            return Err(QueueError::Database(sqlx::Error::PoolClosed));
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!(error = %e, "Failed to reconnect listener, retrying");
+                    if let Some(delay) = backoff.next() {
+                        tokio::select! {
+                            _ = shutdown.cancelled() => {
+                                return Ok(PgListener::connect_with(&self.pool).await?);
+                            }
+                            _ = tokio::time::sleep(delay) => {}
+                        }
+                    } else {
+                        error!(
+                            "Exhausted reconnection attempts after {} seconds",
+                            self.max_reconnect_secs
+                        );
+                        return Err(QueueError::Database(e));
+                    }
+                }
+            }
         }
     }
 }
@@ -124,49 +192,7 @@ impl QueueNotifier for PostgresNotifier {
                         }
                         Err(e) => {
                             error!(error = %e, "Error receiving notification, attempting to reconnect");
-
-                            let mut backoff_strategy = backon::ExponentialBuilder::default()
-                                .with_min_delay(std::time::Duration::from_secs(1))
-                                .with_max_delay(std::time::Duration::from_secs(30))
-                                .with_jitter()
-                                .build();
-
-                            loop {
-                                if shutdown.is_cancelled() {
-                                    return Ok(());
-                                }
-
-                                match PgListener::connect_with(&self.pool).await {
-                                    Ok(mut new_listener) => {
-                                        if let Err(e) = new_listener.listen("kagzi_work").await {
-                                            warn!(error = %e, "Failed to re-listen after reconnect, retrying");
-                                            if let Some(delay) = backoff_strategy.next() {
-                                                tokio::time::sleep(delay).await;
-                                                continue;
-                                            } else {
-                                                error!("Exhausted reconnection attempts after {} seconds", self.max_reconnect_secs);
-                                                return Err(QueueError::Other(format!(
-                                                    "Failed to reconnect queue listener after {} seconds",
-                                                    self.max_reconnect_secs
-                                                )));
-                                            }
-                                        }
-                                        listener = new_listener;
-                                        info!("Queue listener reconnected");
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        warn!(error = %e, "Failed to reconnect listener, retrying");
-                                        if let Some(delay) = backoff_strategy.next() {
-                                            tokio::time::sleep(delay).await;
-                                            continue;
-                                        } else {
-                                            error!("Exhausted reconnection attempts after {} seconds", self.max_reconnect_secs);
-                                            return Err(QueueError::Database(e));
-                                        }
-                                    }
-                                }
-                            }
+                            listener = self.reconnect_listener(&shutdown).await?;
                         }
                     }
                 }

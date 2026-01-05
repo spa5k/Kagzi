@@ -122,7 +122,7 @@ impl TestHarness {
 
         let shutdown = CancellationToken::new();
 
-        let queue = kagzi_queue::PostgresNotifier::new(pool.clone(), 300, 300);
+        let queue = kagzi_queue::PostgresNotifier::new(pool.clone(), 64, 300, 300);
         let queue_listener = queue.clone();
         let queue_listener_token = shutdown.child_token();
         tokio::spawn(async move {
@@ -153,6 +153,7 @@ impl TestHarness {
 
         // Use default queue settings for tests
         let queue_settings = kagzi_server::config::QueueSettings {
+            channel_capacity: 64,
             cleanup_interval_secs: 300,
             poll_jitter_ms: 100,
             max_reconnect_secs: 300,
