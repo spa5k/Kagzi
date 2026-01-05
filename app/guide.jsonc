@@ -1,0 +1,119 @@
+{
+  "design_system_spec": {
+    "name": "Kagzi Brutalist",
+    "core_philosophy": [
+      "Zero Radius: All UI elements (cards, inputs, buttons) must have 0px border-radius.",
+      "Structural Borders: Layout sections are defined by visible 1px borders, not whitespace or shadows.",
+      "High Contrast: Use stark foreground/background contrast. Avoid soft greys for text.",
+      "Precision: Use monospace fonts (JetBrains Mono) for all IDs, Timestamps, and Logs."
+    ],
+
+    // How to configure globals.css to achieve this
+    "theme_overrides": {
+      "radius": "Set --radius to 0rem globally.",
+      "colors": {
+        "primary": "Neon Accent (Magenta/Pink) - Used for 'Running' state and active UI elements.",
+        "muted": "Dark Grey/Blue - Used for 'Pending' or background structures.",
+        "destructive": "Standard Error Red - Used for 'Failed' states.",
+        "border": "Visible but low opacity (10-15%) - defines the grid."
+      },
+      "typography": {
+        "sans": "Inter (UI labels, headers)",
+        "mono": "JetBrains Mono (Run IDs, Payloads, Timestamps, Trace bars)"
+      }
+    }
+  },
+
+  "layout_architecture": {
+    "app_shell": {
+      "strategy": "Fixed Sidebar + Scrollable Main Content",
+      "sidebar": {
+        "component": "Shadcn <ScrollArea> (if many items) or plain HTML nav",
+        "behavior": "Fixed width, border-right. Contains NavLinks and Namespace Switcher.",
+        "styling": "Background slightly lighter/darker than main content to create depth without shadow."
+      },
+      "main_area": {
+        "strategy": "Flex column. Top header fixed, content area scrollable.",
+        "top_bar": "Breadcrumbs (Shadcn), User Profile, Global Refresh button."
+      }
+    }
+  },
+
+  "component_mapping": {
+    "shadcn_primitives": {
+      // Mapping standard Shadcn components to Kagzi use-cases
+      "Badge": {
+        "usage": "Workflow Status indicators",
+        "style_tweak": "Square corners, solid colors for statuses (Running=Primary, Failed=Destructive)."
+      },
+      "Card": {
+        "usage": "Data containers (e.g., Payload view, Metadata box)",
+        "style_tweak": "Remove shadow, add 1px border. No padding by default (use explicit spacing)."
+      },
+      "Table": {
+        "usage": "Lists of Schedules or Batch Jobs",
+        "style_tweak": "Dense layout, monospace font for cells."
+      },
+      "Sheet": {
+        "usage": "Mobile Sidebar or 'Settings' slide-over",
+        "style_tweak": "Remove overlay blur, keep hard edges."
+      },
+      "DropdownMenu": {
+        "usage": "Namespace Selector, Row Actions",
+        "style_tweak": "No rounded corners, straight border."
+      },
+      "Input": {
+        "usage": "Search/Filter bars",
+        "style_tweak": "Focus ring should be sharp, not a glow."
+      }
+    }
+  },
+
+  "view_definitions": {
+    "workflow_list_view": {
+      "layout_model": "Master-Detail (Split View)",
+      "left_pane_list": {
+        "behavior": "Virtual scroll (if >1000 items). Select item updates URL params.",
+        "item_template": "Row containing: Status Dot | Workflow Type | Monospace ID | Relative Time."
+      },
+      "right_pane_detail": {
+        "behavior": "Changes content based on selection in left pane.",
+        "sections": [
+          "Header (Title + Actions)",
+          "Activity Viz (Canvas Sparkline)",
+          "Trace View (Custom Component)",
+          "Data Tabs (Input/Output/Logs)"
+        ]
+      }
+    },
+
+    "trace_view_component": {
+      "concept": "Gantt Chart / Waterfall",
+      "tech_stack": "HTML/CSS Flexbox (Not Canvas, for accessibility)",
+      "interaction": {
+        "hover": "Crosshair cursor. Highlight specific step details in a tooltip or side-panel.",
+        "click": "Open step details (logs/error message) in a modal or drawer."
+      },
+      "rendering_logic": {
+        "container": "Relative positioning context.",
+        "ruler": "Top axis showing time markers (0s, 500ms, 1s).",
+        "rows": "One row per step. Nesting indicated by indentation or connector lines.",
+        "bars": "Absolute positioning: `left: (start/total)%`, `width: (duration/total)%`."
+      }
+    }
+  },
+
+  "interaction_models": {
+    "realtime_feedback": {
+      "status": "When status is 'RUNNING', use a CSS Pulse animation on the status dot.",
+      "canvas": "The top activity bar should use `requestAnimationFrame` to draw random or real load data smoothly."
+    },
+    "data_exploration": {
+      "payloads": "Use a JSON syntax highlighter (like `react-syntax-highlighter`) inside a Shadcn ScrollArea.",
+      "copy_paste": "Hovering over any UUID or JSON block reveals a 'Copy' icon."
+    },
+    "error_handling": {
+      "visuals": "Errors should not be hidden in tooltips. If a step failed, render the error message explicitly in the detail pane in monospaced red text."
+    }
+  }
+}
