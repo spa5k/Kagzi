@@ -11,6 +11,7 @@
 //! them uniformly in a `HashMap`. We use `BoxFuture` for type erasure:
 //!
 //! ```rust
+//! use std::pin::Pin;
 //! type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 //! ```
 //!
@@ -34,8 +35,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use backoff::ExponentialBackoff;
-use backoff::backoff::Backoff;
+use backon::{BackoffBuilder, ExponentialBuilder};
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
     CompleteWorkflowRequest, DeregisterRequest, ErrorCode, FailWorkflowRequest, HeartbeatRequest,
@@ -529,16 +529,13 @@ impl Worker {
                         .fetch_add(1, Ordering::Relaxed)
                         + 1;
 
-                    let mut backoff = ExponentialBackoff {
-                        initial_interval: Duration::from_millis(100),
-                        max_interval: Duration::from_secs(30),
-                        multiplier: 2.0,
-                        max_elapsed_time: None,
-                        ..Default::default()
-                    };
+                    let mut backoff = ExponentialBuilder::default()
+                        .with_min_delay(Duration::from_millis(100))
+                        .with_max_delay(Duration::from_secs(30))
+                        .with_jitter()
+                        .build();
 
-                    let backoff_duration =
-                        backoff.next_backoff().unwrap_or(Duration::from_secs(30));
+                    let backoff_duration = backoff.next().unwrap_or(Duration::from_secs(30));
                     tokio::time::sleep(backoff_duration).await;
                 }
             }

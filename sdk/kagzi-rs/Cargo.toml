@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-backoff = { version = "0.4", features = ["tokio"] }
+backon = { workspace = true }
 chrono = { workspace = true }
 cron = "0.15.0"
 futures = "0.3"

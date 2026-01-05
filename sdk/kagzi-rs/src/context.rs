@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::time::Duration;
 
-use backoff::ExponentialBackoff;
-use backoff::backoff::Backoff;
+use backon::{BackoffBuilder, ExponentialBuilder};
 use chrono::Utc;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
@@ -185,11 +184,11 @@ impl<'a> StepBuilder<'a> {
             Ok(value) => {
                 let output = serde_json::to_vec(&value)?;
 
-                let mut backoff = ExponentialBackoff {
-                    initial_interval: Duration::from_secs(1),
-                    max_interval: Duration::from_secs(60),
-                    ..Default::default()
-                };
+                let mut backoff = ExponentialBuilder::default()
+                    .with_min_delay(Duration::from_secs(1))
+                    .with_max_delay(Duration::from_secs(60))
+                    .with_jitter()
+                    .build();
 
                 loop {
                     let mut complete_request = Request::new(CompleteStepRequest {
@@ -215,7 +214,7 @@ impl<'a> StepBuilder<'a> {
                         }
                         Err(e) => {
                             warn!(error = %e, "CompleteStep failed, retrying");
-                            if let Some(duration) = backoff.next_backoff() {
+                            if let Some(duration) = backoff.next() {
                                 tokio::time::sleep(duration).await;
                             } else {
                                 return Err(anyhow::anyhow!(KagziError::from(e)));

@@ -40,6 +40,7 @@ use crate::errors::KagziError;
 /// # Ok(())
 /// # }
 /// # use serde::Serialize;
+/// # #[derive(Serialize)]
 /// # struct MyInput { value: i32 }
 /// ```
 pub struct Kagzi {
@@ -92,7 +93,7 @@ impl Kagzi {
     /// let run = client
     ///     .start("my_workflow")
     ///     .namespace("production")
-    ///     .input(&MyInput { value: 42 })
+    ///     .input(&MyInput { value: 42 })?
     ///     .idempotency_key("unique-key-123")
     ///     .send()
     ///     .await?;
@@ -132,7 +133,7 @@ impl Kagzi {
     ///     .namespace("production")
     ///     .workflow("cleanup_workflow")
     ///     .cron("0 2 * * *")  // 2 AM daily
-    ///     .input(&CleanupInput { table: "logs".to_string() })
+    ///     .input(&CleanupInput { table: "logs".to_string() })?
     ///     .catchup(10)
     ///     .send()
     ///     .await?;
@@ -266,7 +267,7 @@ impl Kagzi {
 /// let run = client
 ///     .start("my_workflow")
 ///     .namespace("production")
-///     .input(&MyInput { value: 42 })
+///     .input(&MyInput { value: 42 })?
 ///     .idempotency_key("unique-key")
 ///     .send()
 ///     .await?;
@@ -310,7 +311,7 @@ impl StartWorkflowBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # use kagzi::Kagzi;
     /// # use serde::Serialize;
     /// # #[derive(Serialize)]
@@ -343,12 +344,12 @@ impl StartWorkflowBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # use kagzi::Kagzi;
     /// # #[tokio::main]
     /// # async fn main() -> anyhow::Result<()> {
     /// # let client = Kagzi::connect("http://localhost:50051").await?;
-    /// // Will only create the workflow once, subsequent calls with same key return existing run
+    /// // Will only create workflow once, subsequent calls with same key return existing run
     /// let run = client
     ///     .start("charge_payment")
     ///     .idempotency_key("order-123")
@@ -449,7 +450,7 @@ pub struct WorkflowRun {
 ///     .namespace("production")
 ///     .workflow("cleanup_workflow")
 ///     .cron("0 2 * * *")  // 2 AM daily
-///     .input(&CleanupInput { table: "logs".to_string() })
+///     .input(&CleanupInput { table: "logs".to_string() })?
 ///     .catchup(10)
 ///     .enabled(true)
 ///     .send()
@@ -546,7 +547,7 @@ impl ScheduleBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # use kagzi::Kagzi;
     /// # #[tokio::main]
     /// # async fn main() -> anyhow::Result<()> {
@@ -575,7 +576,7 @@ impl ScheduleBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # use kagzi::Kagzi;
     /// # #[tokio::main]
     /// # async fn main() -> anyhow::Result<()> {
