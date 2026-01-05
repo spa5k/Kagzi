@@ -111,6 +111,8 @@ impl Default for PayloadSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueueSettings {
+    /// Broadcast channel capacity for queue notifications
+    pub channel_capacity: usize,
     /// Interval in seconds for cleaning up stale notification channels
     pub cleanup_interval_secs: u64,
     /// Maximum jitter in milliseconds to add when workers wake from notifications
@@ -122,6 +124,7 @@ pub struct QueueSettings {
 impl Default for QueueSettings {
     fn default() -> Self {
         Self {
+            channel_capacity: 64,       // Broadcast channel capacity per queue
             cleanup_interval_secs: 300, // 5 minutes
             poll_jitter_ms: 100,        // 100ms max jitter
             max_reconnect_secs: 300,    // 5 minutes max reconnection attempts

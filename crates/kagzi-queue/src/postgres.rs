@@ -82,7 +82,7 @@ impl PostgresNotifier {
 
         loop {
             if shutdown.is_cancelled() {
-                return Err(QueueError::Database(sqlx::Error::PoolClosed));
+                return Ok(PgListener::connect_with(&self.pool).await?);
             }
 
             match PgListener::connect_with(&self.pool).await {
@@ -94,7 +94,12 @@ impl PostgresNotifier {
                     Err(e) => {
                         warn!(error = %e, "Failed to re-listen after reconnect, retrying");
                         if let Some(delay) = backoff.next() {
-                            tokio::time::sleep(delay).await;
+                            tokio::select! {
+                                _ = shutdown.cancelled() => {
+                                    return Ok(PgListener::connect_with(&self.pool).await?);
+                                }
+                                _ = tokio::time::sleep(delay) => {}
+                            }
                         } else {
                             error!(
                                 "Exhausted reconnection attempts after {} seconds",
@@ -107,7 +112,12 @@ impl PostgresNotifier {
                 Err(e) => {
                     warn!(error = %e, "Failed to reconnect listener, retrying");
                     if let Some(delay) = backoff.next() {
-                        tokio::time::sleep(delay).await;
+                        tokio::select! {
+                            _ = shutdown.cancelled() => {
+                                return Ok(PgListener::connect_with(&self.pool).await?);
+                            }
+                            _ = tokio::time::sleep(delay) => {}
+                        }
                     } else {
                         error!(
                             "Exhausted reconnection attempts after {} seconds",
