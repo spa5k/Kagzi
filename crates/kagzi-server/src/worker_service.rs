@@ -218,9 +218,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        let should_drain = worker
-            .map(|w| w.status == StoreWorkerStatus::Draining)
-            .unwrap_or(false);
+        let should_drain = matches!(
+            worker,
+            Some(w) if w.status == StoreWorkerStatus::Draining
+        );
 
         Ok(Response::new(HeartbeatResponse {
             accepted: true,

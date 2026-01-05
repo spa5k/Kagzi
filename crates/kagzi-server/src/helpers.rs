@@ -217,6 +217,11 @@ pub fn decode_cursor(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, uuid
     Ok((created_at, id))
 }
 
+pub fn parse_uuid(s: &str) -> Result<uuid::Uuid, Status> {
+    uuid::Uuid::parse_str(s)
+        .map_err(|_| invalid_argument_error(format!("Invalid UUID format: {}", s)))
+}
+
 pub fn map_store_error(e: kagzi_store::StoreError) -> Status {
     match e {
         kagzi_store::StoreError::NotFound { entity, id } => {

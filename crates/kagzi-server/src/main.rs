@@ -19,7 +19,7 @@ use tracing::info;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::new().map_err(|e| {
-        eprintln!("Failed to load configuration: {:?}", e);
+        tracing::error!(error = ?e, "Failed to load configuration");
         e
     })?;
 
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&settings.database_url)
         .await
         .map_err(|e| {
-            eprintln!("Failed to connect to database: {:?}", e);
+            tracing::error!(error = ?e, "Failed to connect to database");
             e
         })?;
 
@@ -66,8 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let queue_listener_token = shutdown_token.child_token();
     let queue_listener_handle = tokio::spawn(async move {
         if let Err(e) = queue_listener.start(queue_listener_token).await {
-            eprintln!("Queue listener failed: {:?}", e);
-            eprintln!("Server is running in degraded mode - queue notifications will not work");
+            tracing::error!(error = ?e, "Queue listener failed");
+            tracing::warn!(
+                "Server is running in degraded mode - queue notifications will not work"
+            );
         }
     });
 
@@ -120,10 +122,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        let sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+        match sigterm {
+            Ok(mut handler) => {
+                handler.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, "Failed to install SIGTERM handler, proceeding without graceful SIGTERM support");
+            }
+        }
     };
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
@@ -171,7 +178,7 @@ async fn run_migrations(
         .run(pool)
         .await
         .map_err(|e| {
-            eprintln!("Failed to run migrations: {:?}", e);
+            tracing::error!(error = ?e, "Failed to run migrations");
             e
         })?;
 
@@ -180,8 +187,6 @@ async fn run_migrations(
 
 fn print_welcome_banner(settings: &Settings) {
     let version = env!("CARGO_PKG_VERSION");
-
-    println!();
     println!(
         r#"
   ██╗  ██╗ █████╗  ██████╗ ███████╗██╗
@@ -192,40 +197,19 @@ fn print_welcome_banner(settings: &Settings) {
   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝
 "#
     );
-    println!("  Durable Workflow Engine v{}", version);
-    println!("  ─────────────────────────────────────────────────");
-    println!();
-    println!("  🌐 gRPC Server");
-    println!(
-        "     └─ Listening on {}:{}",
-        settings.server.host, settings.server.port
+
+    tracing::info!(
+        target: "kagzi::startup",
+        version = %version,
+        host = %settings.server.host,
+        port = %settings.server.port,
+        db_connections = %settings.server.db_max_connections,
+        coordinator_tick_secs = %settings.coordinator.interval_secs,
+        visibility_timeout_secs = %settings.worker.visibility_timeout_secs,
+        heartbeat_interval_secs = %settings.worker.heartbeat_interval_secs,
+        worker_stale_secs = %settings.coordinator.worker_stale_threshold_secs,
+        "Kagzi server started"
     );
-    println!();
-    println!("  ⚙️  Configuration");
-    println!(
-        "     ├─ DB connections:     {}",
-        settings.server.db_max_connections
-    );
-    println!(
-        "     ├─ Coordinator tick:   {}s",
-        settings.coordinator.interval_secs
-    );
-    println!(
-        "     ├─ Visibility timeout: {}s",
-        settings.worker.visibility_timeout_secs
-    );
-    println!(
-        "     ├─ Heartbeat interval: {}s",
-        settings.worker.heartbeat_interval_secs
-    );
-    println!(
-        "     └─ Worker stale after: {}s",
-        settings.coordinator.worker_stale_threshold_secs
-    );
-    println!();
-    println!("  📊 Status updates every 10s when workers are active");
-    println!("  ─────────────────────────────────────────────────");
-    println!();
 }
 
 async fn print_startup_stats(store: &PgStore) {

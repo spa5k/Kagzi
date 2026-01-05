@@ -36,10 +36,15 @@ pub async fn run<Q: QueueNotifier>(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Initialize rate limiter for schedule backfilling
-    let rate_limiter = RateLimiter::direct(Quota::per_second(
-        NonZeroU32::new(settings.max_backfill_per_second.max(1) as u32)
-            .expect("max(1) guarantees non-zero"),
-    ));
+    let max_per_second = settings.max_backfill_per_second.max(1) as u32;
+    let quota = NonZeroU32::new(max_per_second).unwrap_or_else(|| {
+        tracing::error!(
+            "max_backfill_per_second is invalid (got {}), using default of 1",
+            settings.max_backfill_per_second
+        );
+        NonZeroU32::new(1).unwrap()
+    });
+    let rate_limiter = RateLimiter::direct(Quota::per_second(quota));
 
     info!(
         interval_secs = settings.interval_secs,
