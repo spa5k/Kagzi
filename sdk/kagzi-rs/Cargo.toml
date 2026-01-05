@@ -7,7 +7,9 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+backoff = { version = "0.4", features = ["tokio"] }
 chrono = { workspace = true }
+cron = "0.15.0"
 futures = "0.3"
 hostname = "0.4.2"
 humantime = "2.1"
@@ -18,9 +20,12 @@ prost-types = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+time = { version = "0.3", features = ["parsing", "formatting"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 tonic = { workspace = true, features = ["transport"] }
+tower = { version = "0.5", features = ["timeout", "util"] }
+tower-layer = "0.3"
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true }

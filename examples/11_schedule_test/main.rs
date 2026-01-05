@@ -62,14 +62,15 @@ async fn main() -> anyhow::Result<()> {
 
     // 2. Create schedule (fires every 2 minutes for testing)
     let client = Kagzi::connect(&server).await?;
+    let input = CleanupInput {
+        table: "live_test_sessions".into(),
+    };
     let schedule = client
         .schedule("cleanup_workflow")
         .namespace(&namespace)
         .workflow("cleanup_workflow")
         .cron("0 */2 * * * *") // every 2 minutes (second minute hour day month weekday)
-        .input(CleanupInput {
-            table: "live_test_sessions".into(),
-        })
+        .input(&input)
         .send()
         .await?;
 

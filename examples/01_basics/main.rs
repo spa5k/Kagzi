@@ -164,12 +164,13 @@ async fn run_hello(server: &str, namespace: &str) -> anyhow::Result<()> {
 
     let client = Kagzi::connect(server).await?;
 
+    let input = HelloInput {
+        name: "Kagzi".to_string(),
+    };
     let run = client
         .start("hello_workflow")
         .namespace(namespace)
-        .input(HelloInput {
-            name: "Kagzi".to_string(),
-        })
+        .input(&input)
         .send()
         .await?;
 
@@ -197,12 +198,13 @@ async fn run_chain(server: &str, namespace: &str) -> anyhow::Result<()> {
 
     let client = Kagzi::connect(server).await?;
 
+    let input = ChainInput {
+        name: "pipeline".to_string(),
+    };
     let run = client
         .start("chain_workflow")
         .namespace(namespace)
-        .input(ChainInput {
-            name: "pipeline".to_string(),
-        })
+        .input(&input)
         .send()
         .await?;
 
@@ -230,12 +232,13 @@ async fn run_context(server: &str, namespace: &str) -> anyhow::Result<()> {
 
     let client = Kagzi::connect(server).await?;
 
+    let input = ContextAwareInput {
+        name: "context".into(),
+    };
     let run = client
         .start("context_workflow")
         .namespace(namespace)
-        .input(ContextAwareInput {
-            name: "context".into(),
-        })
+        .input(&input)
         .send()
         .await?;
 
@@ -263,12 +266,13 @@ async fn run_sleep(server: &str, namespace: &str) -> anyhow::Result<()> {
 
     let client = Kagzi::connect(server).await?;
 
+    let input = SleepInput {
+        name: "sleeper".to_string(),
+    };
     let run = client
         .start("sleep_workflow")
         .namespace(namespace)
-        .input(SleepInput {
-            name: "sleeper".to_string(),
-        })
+        .input(&input)
         .send()
         .await?;
 

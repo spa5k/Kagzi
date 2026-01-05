@@ -63,12 +63,13 @@ async fn static_fanout(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = StaticInput {
+        user_id: "user-123".into(),
+    };
     let run = client
         .start("profile_aggregate")
         .namespace(namespace)
-        .input(StaticInput {
-            user_id: "user-123".into(),
-        })
+        .input(&input)
         .send()
         .await?;
     println!("🚀 Started static fan-out workflow: {}", run.id);
@@ -91,12 +92,13 @@ async fn dynamic_mapreduce(server: &str, namespace: &str) -> anyhow::Result<()> 
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = NumbersInput {
+        values: vec![1, 2, 3, 4],
+    };
     let run = client
         .start("square_and_sum")
         .namespace(namespace)
-        .input(NumbersInput {
-            values: vec![1, 2, 3, 4],
-        })
+        .input(&input)
         .send()
         .await?;
     println!("🚀 Started dynamic map-reduce workflow: {}", run.id);
@@ -158,7 +160,7 @@ async fn mapreduce_workflow(
     let mut squared = Vec::with_capacity(input.values.len());
     for (idx, value) in input.values.iter().enumerate() {
         let val = ctx
-            .step(&format!("square-{idx}"))
+            .step(format!("square-{idx}"))
             .run(|| square(*value))
             .await?;
         squared.push(val);

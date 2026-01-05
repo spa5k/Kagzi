@@ -30,14 +30,16 @@ async fn welcome_user_route(user_id: String, user_email: String) -> anyhow::Resu
     // Import and use the input type
     use separate_files_example::types::SendWelcomeEmailInput;
 
+    let input = SendWelcomeEmailInput {
+        user_id: user_id.clone(),
+        user_email,
+    };
+
     // Run workflow asynchronously
     let run = client
         .start("send-welcome-email")
         .namespace("email")
-        .input(SendWelcomeEmailInput {
-            user_id: user_id.clone(),
-            user_email,
-        })
+        .input(&input)
         .send()
         .await?;
 

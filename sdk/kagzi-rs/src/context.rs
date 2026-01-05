@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::time::Duration;
 
+use backoff::ExponentialBackoff;
+use backoff::backoff::Backoff;
 use chrono::Utc;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
@@ -13,24 +15,25 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tonic::Request;
 use tonic::transport::Channel;
-use tracing::{Instrument, error, info_span, warn};
+use tower::timeout::Timeout;
+use tracing::{error, warn};
 
-use crate::errors::{KagziError, WorkflowPaused, map_grpc_error};
+use crate::errors::{KagziError, WorkflowPaused};
 use crate::propagation::inject_context;
 use crate::retry::Retry;
 
 pub struct Context {
-    pub(crate) client: WorkerServiceClient<Channel>,
+    pub(crate) client: WorkerServiceClient<Timeout<Channel>>,
     pub(crate) run_id: String,
     pub(crate) default_retry: Option<Retry>,
 }
 
 impl Context {
     /// Start building a step
-    pub fn step(&mut self, name: &str) -> StepBuilder<'_> {
+    pub fn step(&mut self, name: impl Into<String>) -> StepBuilder<'_> {
         StepBuilder {
             ctx: self,
-            name: name.to_string(),
+            name: name.into(),
             retry: None,
         }
     }
@@ -40,13 +43,15 @@ impl Context {
     /// The name is used for observability (logs, UI) but does not need to be unique.
     ///
     /// Duration formats: "30s", "5m", "1h", "1 day", "2 weeks"
+    #[tracing::instrument(skip(self), fields(step_name = %name))]
     pub async fn sleep(&mut self, name: &str, duration: &str) -> anyhow::Result<()> {
         let d = humantime::parse_duration(duration)
-            .map_err(|e| anyhow::anyhow!("Invalid duration '{}': {}", duration, e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid duration format: {e}"))?;
         self.sleep_internal(name, d).await
     }
 
     /// Sleep until a specific timestamp
+    #[tracing::instrument(skip(self))]
     pub async fn sleep_until(
         &mut self,
         name: &str,
@@ -60,6 +65,7 @@ impl Context {
         self.sleep_internal(name, duration).await
     }
 
+    /// Internal sleep implementation
     async fn sleep_internal(&mut self, name: &str, duration: Duration) -> anyhow::Result<()> {
         let mut begin_request = Request::new(BeginStepRequest {
             run_id: self.run_id.clone(),
@@ -77,7 +83,7 @@ impl Context {
             .client
             .begin_step(begin_request)
             .await
-            .map_err(map_grpc_error)?
+            .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?
             .into_inner();
 
         let step_id = if begin_resp.step_id.is_empty() {
@@ -103,7 +109,7 @@ impl Context {
         self.client
             .sleep(sleep_request)
             .await
-            .map_err(map_grpc_error)?;
+            .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?;
 
         // Signal that workflow should pause
         Err(WorkflowPaused.into())
@@ -124,23 +130,16 @@ impl<'a> StepBuilder<'a> {
     }
 
     /// Execute the step
-    pub async fn run<F, Fut, R>(self, f: F) -> anyhow::Result<R>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = anyhow::Result<R>> + Send,
-        R: Serialize + DeserializeOwned + Send + 'static,
-    {
-        let span = info_span!(
-            "step_execution",
+    #[tracing::instrument(
+        name = "step_execution",
+        skip(self, f),
+        fields(
             run_id = %self.ctx.run_id,
             step_name = %self.name,
-            otel.kind = "client",
-        );
-
-        self.run_instrumented(f).instrument(span).await
-    }
-
-    async fn run_instrumented<F, Fut, R>(self, f: F) -> anyhow::Result<R>
+            otel.kind = "client"
+        )
+    )]
+    pub async fn run<F, Fut, R>(self, f: F) -> anyhow::Result<R>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = anyhow::Result<R>> + Send,
@@ -185,7 +184,14 @@ impl<'a> StepBuilder<'a> {
         match result {
             Ok(value) => {
                 let output = serde_json::to_vec(&value)?;
-                let mut backoff = Duration::from_secs(1);
+
+                // Use backoff crate for retry logic
+                let mut backoff = ExponentialBackoff {
+                    initial_interval: Duration::from_secs(1),
+                    max_interval: Duration::from_secs(60),
+                    ..Default::default()
+                };
+
                 loop {
                     let mut complete_request = Request::new(CompleteStepRequest {
                         run_id: self.ctx.run_id.clone(),
@@ -200,26 +206,28 @@ impl<'a> StepBuilder<'a> {
                     match self.ctx.client.complete_step(complete_request).await {
                         Ok(_) => break,
                         Err(e) if e.code() == tonic::Code::NotFound => {
-                            error!("Workflow deleted during execution: {}", e);
-                            return Err(map_grpc_error(e));
+                            error!(error = %e, "Workflow deleted during execution");
+                            return Err(anyhow::anyhow!(KagziError::from(e)));
                         }
                         Err(e) if e.code() == tonic::Code::FailedPrecondition => {
-                            // Step was already completed (likely our previous request succeeded
-                            // but we didn't receive the response). This is safe to treat as success.
-                            warn!("Step already completed (treating as success): {}", e);
+                            // Step already completed, treat as success
+                            warn!(error = %e, "Step already completed (treating as success)");
                             break;
                         }
                         Err(e) => {
-                            warn!("CompleteStep failed, retrying in {:?}: {}", backoff, e);
-                            tokio::time::sleep(backoff).await;
-                            backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
+                            warn!(error = %e, "CompleteStep failed, retrying");
+                            if let Some(duration) = backoff.next_backoff() {
+                                tokio::time::sleep(duration).await;
+                            } else {
+                                return Err(anyhow::anyhow!(KagziError::from(e)));
+                            }
                         }
                     }
                 }
                 Ok(value)
             }
             Err(e) => {
-                error!(error = %e, "Step {} failed", self.name);
+                error!(error = %e, step_name = %self.name, "Step failed");
 
                 let kagzi_err = e
                     .downcast_ref::<KagziError>()
@@ -238,7 +246,7 @@ impl<'a> StepBuilder<'a> {
                     .client
                     .fail_step(fail_request)
                     .await
-                    .map_err(map_grpc_error)?
+                    .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?
                     .into_inner();
 
                 if fail_resp.scheduled_retry {

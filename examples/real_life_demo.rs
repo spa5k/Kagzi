@@ -381,7 +381,7 @@ async fn main() -> anyhow::Result<()> {
 
             client
                 .start("order_fulfillment")
-                .input(order)
+                .input(&order)
                 .namespace(&namespace)
                 .send()
                 .await?;
