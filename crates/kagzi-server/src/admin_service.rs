@@ -1,4 +1,3 @@
-// unused imports removed
 use kagzi_proto::kagzi::admin_service_server::AdminService;
 use kagzi_proto::kagzi::{
     GetServerInfoRequest, GetServerInfoResponse, GetStepRequest, GetStepResponse, GetWorkerRequest,
@@ -25,7 +24,6 @@ fn normalize_worker_status(status: Option<i32>) -> Result<Option<StoreWorkerStat
         Some(raw) => match WorkerStatus::try_from(raw)
             .map_err(|_| invalid_argument_error("Invalid status_filter"))?
         {
-            // removed base64 engine import
             WorkerStatus::Draining => Ok(Some(StoreWorkerStatus::Draining)),
             WorkerStatus::Offline => Ok(Some(StoreWorkerStatus::Offline)),
             WorkerStatus::Unspecified => Ok(None),

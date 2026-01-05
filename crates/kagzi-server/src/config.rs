@@ -161,7 +161,6 @@ impl Settings {
             .add_source(config::File::with_name("config/default").required(false))
             .add_source(Environment::with_prefix("KAGZI").separator("_"));
 
-        // Support KAGZI_DB_URL explicitly if not handled by standard mapping
         if let Ok(url) = std::env::var("KAGZI_DB_URL") {
             builder = builder.set_override("database_url", url)?;
         }

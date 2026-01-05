@@ -122,15 +122,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(unix)]
     let terminate = async {
-        let sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
-        match sigterm {
-            Ok(mut handler) => {
-                handler.recv().await;
-            }
-            Err(e) => {
-                tracing::error!(error = ?e, "Failed to install SIGTERM handler, proceeding without graceful SIGTERM support");
-            }
-        }
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
     };
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();

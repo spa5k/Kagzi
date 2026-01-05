@@ -62,8 +62,6 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
         }
     }
 
-    /// Helper to validate that a workflow exists, belongs to the correct namespace,
-    /// and is in a valid state for performing actions.
     async fn validate_workflow_action(
         &self,
         run_id: Uuid,
@@ -77,7 +75,6 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
 
-        // Validate workflow exists and is in a valid state
         let workflow_check = self
             .store
             .workflows()
