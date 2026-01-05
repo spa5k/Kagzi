@@ -2,6 +2,7 @@ pub mod admin_service;
 pub mod config;
 pub mod constants;
 pub mod coordinator;
+pub mod embedded_assets;
 pub mod helpers;
 pub mod proto_convert;
 pub mod telemetry;

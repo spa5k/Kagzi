@@ -8,12 +8,11 @@ use kagzi_queue::QueueNotifier;
 use kagzi_server::config::Settings;
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    coordinator,
+    coordinator, embedded_assets,
 };
 use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
-use tonic::transport::Server;
 use tracing::info;
 
 #[tokio::main]
@@ -95,28 +94,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         status_reporter(status_store, status_token).await;
     });
 
-    let addr = format!("{}:{}", settings.server.host, settings.server.port).parse()?;
+    let addr: std::net::SocketAddr =
+        format!("{}:{}", settings.server.host, settings.server.port).parse()?;
     let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
     let workflow_schedule_service =
         WorkflowScheduleServiceImpl::new(store.clone(), settings.coordinator.default_max_catchup);
     let admin_service = AdminServiceImpl::new(store.clone());
     let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
 
-    // Start the server
+    // Build gRPC services using Routes
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(kagzi_proto::FILE_DESCRIPTOR_SET)
         .build_v1()?;
 
-    let server_token = shutdown_token.child_token();
-    let server = Server::builder()
-        .add_service(WorkflowServiceServer::new(workflow_service))
+    let grpc = tonic::service::Routes::new(WorkflowServiceServer::new(workflow_service))
         .add_service(WorkflowScheduleServiceServer::new(
             workflow_schedule_service,
         ))
         .add_service(AdminServiceServer::new(admin_service))
         .add_service(WorkerServiceServer::new(worker_service))
-        .add_service(reflection_service)
-        .serve_with_shutdown(addr, server_token.cancelled());
+        .add_service(reflection_service);
+
+    // Combine gRPC and static file serving on same port
+    // 1. Static assets have priority (served by Axum)
+    // 2. gRPC requests (standard and Web) are handled by the fallback
+    // 3. CORS is applied to everything
+    
+    // Wrap the entire gRPC router with tonic-web support
+    // This converts gRPC-Web requests to standard gRPC
+    let grpc_web_service = tower::ServiceBuilder::new()
+        .layer(tonic_web::GrpcWebLayer::new())
+        .service(grpc);
+
+    let app = embedded_assets::static_router()
+        .fallback_service(grpc_web_service)
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any),
+        );
+
+    // Create TCP listener
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    info!("Server listening on {}", addr);
+
+    let server_token = shutdown_token.child_token();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        server_token.cancelled().await;
+    });
 
     // Wait for shutdown signal (Ctrl+C or SIGTERM)
     let ctrl_c = tokio::signal::ctrl_c();
