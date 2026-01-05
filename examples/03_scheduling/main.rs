@@ -41,14 +41,15 @@ async fn cron_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("📅 Cron Schedule Example - demonstrates time-based workflow scheduling\n");
 
     let client = Kagzi::connect(server).await?;
+    let input = CleanupInput {
+        table: "sessions".into(),
+    };
     let schedule = client
         .schedule("cleanup_workflow")
         .namespace(namespace)
         .workflow("cleanup_workflow")
         .cron("*/1 * * * * *") // every second for demo
-        .input(CleanupInput {
-            table: "sessions".into(),
-        })
+        .input(&input)?
         .send()
         .await?;
 
@@ -81,12 +82,13 @@ async fn durable_sleep_demo(server: &str, namespace: &str) -> anyhow::Result<()>
 
     let client = Kagzi::connect(server).await?;
 
+    let input = SleepInput {
+        step: "wait-and-resume".into(),
+    };
     let run = client
         .start("sleep_demo")
         .namespace(namespace)
-        .input(SleepInput {
-            step: "wait-and-resume".into(),
-        })
+        .input(&input)?
         .send()
         .await?;
 
@@ -104,15 +106,16 @@ async fn catchup_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("🔄 Catchup Example - demonstrates missed schedule execution replay\n");
 
     let client = Kagzi::connect(server).await?;
+    let input = CleanupInput {
+        table: "audit_logs".into(),
+    };
     let schedule = client
         .schedule("catchup_workflow")
         .namespace(namespace)
         .workflow("catchup_workflow")
         .cron("*/5 * * * * *") // every 5 seconds
-        .input(CleanupInput {
-            table: "audit_logs".into(),
-        })
         .catchup(10)
+        .input(&input)?
         .send()
         .await?;
 

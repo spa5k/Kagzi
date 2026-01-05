@@ -56,12 +56,13 @@ async fn transform_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = TransformInput {
+        payload: serde_json::json!({ "name": "kagzi", "version": 1 }),
+    };
     let run = client
         .start("json_transform")
         .namespace(namespace)
-        .input(TransformInput {
-            payload: serde_json::json!({ "name": "kagzi", "version": 1 }),
-        })
+        .input(&input)?
         .send()
         .await?;
 
@@ -108,10 +109,11 @@ async fn large_payload_demo(server: &str, namespace: &str) -> anyhow::Result<()>
 
     let client = Kagzi::connect(server).await?;
     let big = "x".repeat(1_200_000); // 1.2MB to trigger warning thresholds
+    let input = LargeInput { content: big };
     let run = client
         .start("large_payload")
         .namespace(namespace)
-        .input(LargeInput { content: big })
+        .input(&input)?
         .send()
         .await?;
 

@@ -7,10 +7,12 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+backon = { workspace = true }
 chrono = { workspace = true }
-futures = "0.3"
-hostname = "0.4.2"
-humantime = "2.1"
+cron = { workspace = true }
+futures = { workspace = true }
+hostname = { workspace = true }
+humantime = { workspace = true }
 kagzi-proto = { path = "../../crates/kagzi-proto" }
 opentelemetry = { workspace = true }
 prost = { workspace = true }
@@ -18,9 +20,12 @@ prost-types = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 tonic = { workspace = true, features = ["transport"] }
+tower = { workspace = true }
+tower-layer = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true }

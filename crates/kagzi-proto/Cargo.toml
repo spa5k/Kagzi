@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 prost.workspace = true
-prost-types = "0.14.1"
+prost-types.workspace = true
 serde.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true

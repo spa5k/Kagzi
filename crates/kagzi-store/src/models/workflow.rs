@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use backoff::ExponentialBackoff;
-use backoff::backoff::Backoff;
+use backon::{BackoffBuilder, ExponentialBuilder};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, Display, EnumString};
@@ -61,21 +60,20 @@ impl Default for RetryPolicy {
 
 impl RetryPolicy {
     pub fn calculate_delay_ms(&self, attempt: i32) -> i64 {
-        let mut backoff = ExponentialBackoff {
-            current_interval: Duration::from_millis(self.initial_interval_ms as u64),
-            initial_interval: Duration::from_millis(self.initial_interval_ms as u64),
-            multiplier: self.backoff_coefficient,
-            max_interval: Duration::from_millis(self.maximum_interval_ms as u64),
-            randomization_factor: 0.5, // add jitter to avoid thundering herd
-            ..Default::default()
-        };
+        let mut backoff = ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(self.initial_interval_ms as u64))
+            .with_max_delay(Duration::from_millis(self.maximum_interval_ms as u64))
+            .with_jitter()
+            .build();
 
-        // Advance to the requested attempt number (attempt 1 uses initial interval).
+        // Advance to requested attempt number (attempt 1 uses initial interval).
         for _ in 0..attempt.saturating_sub(1) {
-            backoff.next_backoff();
+            backoff.next();
         }
 
-        let delay = backoff.next_backoff().unwrap_or(backoff.max_interval);
+        let delay = backoff
+            .next()
+            .unwrap_or(Duration::from_millis(self.maximum_interval_ms as u64));
         delay.as_millis() as i64
     }
 

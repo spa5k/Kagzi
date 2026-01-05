@@ -1,4 +1,3 @@
-use chrono::{TimeZone, Utc};
 use kagzi_proto::kagzi::admin_service_server::AdminService;
 use kagzi_proto::kagzi::{
     GetServerInfoRequest, GetServerInfoResponse, GetStepRequest, GetStepResponse, GetWorkerRequest,
@@ -13,7 +12,10 @@ use kagzi_store::{
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
-use crate::helpers::{invalid_argument_error, map_store_error, not_found_error};
+use crate::helpers::{
+    decode_cursor, encode_cursor, invalid_argument_error, map_store_error, normalize_page_size,
+    not_found_error,
+};
 use crate::proto_convert::{step_to_proto, worker_to_proto};
 
 fn normalize_worker_status(status: Option<i32>) -> Result<Option<StoreWorkerStatus>, Status> {
@@ -22,10 +24,10 @@ fn normalize_worker_status(status: Option<i32>) -> Result<Option<StoreWorkerStat
         Some(raw) => match WorkerStatus::try_from(raw)
             .map_err(|_| invalid_argument_error("Invalid status_filter"))?
         {
-            WorkerStatus::Online => Ok(Some(StoreWorkerStatus::Online)),
             WorkerStatus::Draining => Ok(Some(StoreWorkerStatus::Draining)),
             WorkerStatus::Offline => Ok(Some(StoreWorkerStatus::Offline)),
             WorkerStatus::Unspecified => Ok(None),
+            WorkerStatus::Online => Ok(Some(StoreWorkerStatus::Online)),
         },
     }
 }
@@ -54,13 +56,7 @@ impl AdminService for AdminServiceImpl {
         }
         let namespace_id = req.namespace_id;
 
-        let page_size = if page.page_size <= 0 {
-            20
-        } else if page.page_size > 100 {
-            100
-        } else {
-            page.page_size
-        };
+        let page_size = normalize_page_size(page.page_size, 20, 100);
 
         let cursor = if page.page_token.is_empty() {
             None
@@ -201,25 +197,10 @@ impl AdminService for AdminServiceImpl {
             page.page_size
         };
 
-        let cursor = if page.page_token.is_empty() {
+        let cursor: Option<kagzi_store::StepCursor> = if page.page_token.is_empty() {
             None
         } else {
-            let mut parts = page.page_token.splitn(2, ':');
-            let created_at_ms = parts
-                .next()
-                .and_then(|p| p.parse::<i64>().ok())
-                .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-            let attempt_id_str = parts
-                .next()
-                .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-
-            let created_at = Utc
-                .timestamp_millis_opt(created_at_ms)
-                .single()
-                .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-            let attempt_id = Uuid::parse_str(attempt_id_str)
-                .map_err(|_| invalid_argument_error("Invalid page_token"))?;
-
+            let (created_at, attempt_id) = decode_cursor(&page.page_token)?;
             Some(kagzi_store::StepCursor {
                 created_at,
                 attempt_id,
@@ -248,7 +229,7 @@ impl AdminService for AdminServiceImpl {
         let page_info = PageInfo {
             next_page_token: steps_result
                 .next_cursor
-                .map(|c| format!("{}:{}", c.created_at.timestamp_millis(), c.attempt_id))
+                .map(|c| encode_cursor(c.created_at.timestamp_millis(), &c.attempt_id))
                 .unwrap_or_default(),
             has_more: steps_result.has_more,
             total_count: 0,

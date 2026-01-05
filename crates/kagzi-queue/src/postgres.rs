@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use backon::BackoffBuilder;
 use dashmap::DashMap;
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
@@ -124,12 +125,11 @@ impl QueueNotifier for PostgresNotifier {
                         Err(e) => {
                             error!(error = %e, "Error receiving notification, attempting to reconnect");
 
-                            let mut backoff = backoff::ExponentialBackoff {
-                                initial_interval: std::time::Duration::from_secs(1),
-                                max_interval: std::time::Duration::from_secs(30),
-                                max_elapsed_time: Some(std::time::Duration::from_secs(self.max_reconnect_secs)),
-                                ..Default::default()
-                            };
+                            let mut backoff_strategy = backon::ExponentialBuilder::default()
+                                .with_min_delay(std::time::Duration::from_secs(1))
+                                .with_max_delay(std::time::Duration::from_secs(30))
+                                .with_jitter()
+                                .build();
 
                             loop {
                                 if shutdown.is_cancelled() {
@@ -140,7 +140,7 @@ impl QueueNotifier for PostgresNotifier {
                                     Ok(mut new_listener) => {
                                         if let Err(e) = new_listener.listen("kagzi_work").await {
                                             warn!(error = %e, "Failed to re-listen after reconnect, retrying");
-                                            if let Some(delay) = backoff::backoff::Backoff::next_backoff(&mut backoff) {
+                                            if let Some(delay) = backoff_strategy.next() {
                                                 tokio::time::sleep(delay).await;
                                                 continue;
                                             } else {
@@ -157,7 +157,7 @@ impl QueueNotifier for PostgresNotifier {
                                     }
                                     Err(e) => {
                                         warn!(error = %e, "Failed to reconnect listener, retrying");
-                                        if let Some(delay) = backoff::backoff::Backoff::next_backoff(&mut backoff) {
+                                        if let Some(delay) = backoff_strategy.next() {
                                             tokio::time::sleep(delay).await;
                                             continue;
                                         } else {

@@ -1,23 +1,19 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
 use kagzi_proto::kagzi::{ErrorCode, ErrorDetail};
 use prost::Message;
+use thiserror::Error;
 use tonic::{Code, Status};
 
-#[derive(Debug)]
+/// Error returned when a workflow is paused (e.g., during sleep)
+#[derive(Debug, Error)]
+#[error("Workflow paused")]
 pub struct WorkflowPaused;
 
-impl Display for WorkflowPaused {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Workflow paused")
-    }
-}
-
-impl std::error::Error for WorkflowPaused {}
-
-#[derive(Debug, Clone)]
+/// Kagzi workflow error with detailed error information
+#[derive(Debug, Clone, Error)]
+#[error("{message} ({code:?})")]
 pub struct KagziError {
     pub code: ErrorCode,
     pub message: String,
@@ -84,14 +80,6 @@ impl KagziError {
     }
 }
 
-impl Display for KagziError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({:?})", self.message, self.code)
-    }
-}
-
-impl std::error::Error for KagziError {}
-
 fn error_code_from_status(code: Code) -> ErrorCode {
     match code {
         Code::NotFound => ErrorCode::NotFound,
@@ -150,8 +138,4 @@ impl From<Status> for KagziError {
             metadata: HashMap::new(),
         }
     }
-}
-
-pub(crate) fn map_grpc_error(status: Status) -> anyhow::Error {
-    anyhow::Error::new(KagziError::from(status))
 }

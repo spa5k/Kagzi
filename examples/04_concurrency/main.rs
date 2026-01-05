@@ -53,10 +53,11 @@ async fn local_concurrency(server: String, namespace: String) -> anyhow::Result<
 
     let client = Kagzi::connect(&server).await?;
     for id in 0..10 {
+        let input = Input { id };
         let run = client
             .start("short_task")
             .namespace(&namespace)
-            .input(Input { id })
+            .input(&input)?
             .send()
             .await?;
         println!("📝 Queued short task run={} id={}", run.id, id);
@@ -93,10 +94,11 @@ async fn multi_worker_demo(server: String, namespace: String) -> anyhow::Result<
         let client = Kagzi::connect(&server).await?;
         println!("📝 Creating 20 tasks...");
         for id in 0..20 {
+            let input = Input { id };
             client
                 .start("parallel_task")
                 .namespace(&namespace)
-                .input(Input { id })
+                .input(&input)?
                 .send()
                 .await?;
         }

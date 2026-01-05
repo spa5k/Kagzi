@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::convert::TryInto;
 use std::time::Duration;
 
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
@@ -25,7 +23,7 @@ use uuid::Uuid;
 use crate::config::WorkerSettings;
 use crate::helpers::{
     bytes_to_payload, invalid_argument_error, map_store_error, merge_proto_policy, not_found_error,
-    payload_to_optional_bytes, precondition_failed_error,
+    payload_to_optional_bytes, precondition_failed_error, require_non_empty,
 };
 use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
 use crate::telemetry::extract_context;
@@ -63,7 +61,50 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
             queue,
         }
     }
+
+    async fn validate_workflow_action(
+        &self,
+        run_id: Uuid,
+        allow_terminal: bool,
+    ) -> Result<String, Status> {
+        let namespace_id = self
+            .store
+            .workflows()
+            .get_namespace(run_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
+
+        let workflow_check = self
+            .store
+            .workflows()
+            .check_status(run_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?;
+
+        if !workflow_check.exists {
+            return Err(not_found_error(
+                format!("Workflow not found: run_id={}", run_id),
+                "workflow",
+                run_id.to_string(),
+            ));
+        }
+
+        if !allow_terminal
+            && let Some(status) = workflow_check.status
+            && status.is_terminal()
+        {
+            return Err(precondition_failed_error(format!(
+                "Cannot perform action on workflow with terminal status '{:?}'",
+                status
+            )));
+        }
+
+        Ok(namespace_id)
+    }
 }
+
+// StringExt trait removed - use Option::filter instead
 
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
@@ -78,10 +119,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
         let workflow_types = req.workflow_types;
 
         // Clone for logging after worker_id is assigned
@@ -95,17 +133,9 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 namespace_id,
                 task_queue: req.task_queue,
                 workflow_types,
-                hostname: if req.hostname.is_empty() {
-                    None
-                } else {
-                    Some(req.hostname)
-                },
-                pid: if req.pid == 0 { None } else { Some(req.pid) },
-                version: if req.version.is_empty() {
-                    None
-                } else {
-                    Some(req.version)
-                },
+                hostname: Some(req.hostname).filter(|s| !s.is_empty()),
+                pid: (req.pid != 0).then_some(req.pid),
+                version: Some(req.version).filter(|s| !s.is_empty()),
                 labels: serde_json::to_value(&req.labels).unwrap_or_default(),
                 queue_concurrency_limit: req
                     .queue_concurrency_limit
@@ -185,9 +215,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        let should_drain = worker
-            .map(|w| w.status == StoreWorkerStatus::Draining)
-            .unwrap_or(false);
+        let should_drain = matches!(
+            worker,
+            Some(w) if w.status == StoreWorkerStatus::Draining
+        );
 
         Ok(Response::new(HeartbeatResponse {
             accepted: true,
@@ -253,10 +284,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let worker = self
             .store
@@ -385,39 +413,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let namespace_id = self
-            .store
-            .workflows()
-            .get_namespace(run_id)
-            .await
-            .map_err(map_store_error)?
-            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
-
-        // Validate workflow exists and is in a valid state for steps
-        let workflow_check = self
-            .store
-            .workflows()
-            .check_status(run_id, &namespace_id)
-            .await
-            .map_err(map_store_error)?;
-
-        if !workflow_check.exists {
-            return Err(not_found_error(
-                format!("Workflow not found: run_id={}", run_id),
-                "workflow",
-                run_id.to_string(),
-            ));
-        }
-
-        // Only allow steps on RUNNING workflows
-        if let Some(status) = workflow_check.status
-            && status.is_terminal()
-        {
-            return Err(precondition_failed_error(format!(
-                "Cannot begin step on workflow with terminal status '{:?}'",
-                status
-            )));
-        }
+        let _ = self.validate_workflow_action(run_id, false).await?;
 
         let workflow_retry = self
             .store
@@ -479,13 +475,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let namespace_id = self
-            .store
-            .workflows()
-            .get_namespace(run_id)
-            .await
-            .map_err(map_store_error)?
-            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
+        let namespace_id = self.validate_workflow_action(run_id, false).await?;
 
         let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
@@ -540,18 +530,11 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        if req.step_id.is_empty() {
-            return Err(invalid_argument_error("step_id is required"));
-        }
+        let step_id = require_non_empty(req.step_id, "step_id")?;
 
         let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
             code: ErrorCode::Unspecified as i32,
-            message: String::new(),
-            non_retryable: false,
-            retry_after_ms: 0,
-            subject: String::new(),
-            subject_id: String::new(),
-            metadata: HashMap::new(),
+            ..Default::default()
         });
 
         let result = self
@@ -559,7 +542,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .steps()
             .fail(FailStepParams {
                 run_id,
-                step_id: req.step_id.clone(),
+                step_id: step_id.clone(),
                 error: error_detail.message.clone(),
                 non_retryable: error_detail.non_retryable,
                 retry_after_ms: if error_detail.retry_after_ms > 0 {
@@ -600,38 +583,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let namespace_id = self
-            .store
-            .workflows()
-            .get_namespace(run_id)
-            .await
-            .map_err(map_store_error)?
-            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
-
-        // Verify workflow exists and is in a completable state
-        let workflow_check = self
-            .store
-            .workflows()
-            .check_status(run_id, &namespace_id)
-            .await
-            .map_err(map_store_error)?;
-
-        if !workflow_check.exists {
-            return Err(not_found_error(
-                format!("Workflow not found: run_id={}", run_id),
-                "workflow",
-                run_id.to_string(),
-            ));
-        }
-
-        if let Some(status) = workflow_check.status
-            && status.is_terminal()
-        {
-            return Err(precondition_failed_error(format!(
-                "Cannot complete workflow with terminal status '{:?}'",
-                status
-            )));
-        }
+        let _ = self.validate_workflow_action(run_id, false).await?;
 
         let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
@@ -662,33 +614,12 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let namespace_id = self
-            .store
-            .workflows()
-            .get_namespace(run_id)
-            .await
-            .map_err(map_store_error)?
-            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
+        let _ = self.validate_workflow_action(run_id, false).await?;
 
         let error_detail = req.error.unwrap_or_else(|| ErrorDetail {
             code: ErrorCode::Unspecified as i32,
-            message: String::new(),
-            non_retryable: false,
-            retry_after_ms: 0,
-            subject: String::new(),
-            subject_id: String::new(),
-            metadata: HashMap::new(),
+            ..Default::default()
         });
-
-        let workflow_status = self
-            .store
-            .workflows()
-            .check_status(run_id, &namespace_id)
-            .await
-            .map_err(map_store_error)?;
-
-        // Silence unused variable warning - we verified workflow exists above
-        let _ = workflow_status;
 
         self.store
             .workflows()

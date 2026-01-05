@@ -86,12 +86,13 @@ async fn main() -> anyhow::Result<()> {
 
     // 1. Create schedule (fires every 10 seconds)
     let client = Kagzi::connect(&server).await?;
+    let input = PingInput { seq: 1 };
     let schedule = client
         .schedule("ping_workflow")
         .namespace(&namespace)
         .workflow("ping_workflow")
         .cron("*/10 * * * * *") // every 10 seconds
-        .input(PingInput { seq: 1 })
+        .input(&input)?
         .catchup(50) // Catch up to 50 missed runs (prevents resource exhaustion)
         .send()
         .await?;

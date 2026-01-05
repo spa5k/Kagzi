@@ -7,13 +7,15 @@ async fn main() -> anyhow::Result<()> {
 
     let client = Kagzi::connect("http://localhost:50051").await?;
 
+    let input = SendWelcomeEmailInput {
+        user_id: "123".to_string(),
+        user_email: "alice@example.com".to_string(),
+    };
+
     let run = client
         .start("send-welcome-email")
         .namespace("email")
-        .input(SendWelcomeEmailInput {
-            user_id: "123".to_string(),
-            user_email: "alice@example.com".to_string(),
-        })
+        .input(&input)?
         .send()
         .await?;
 

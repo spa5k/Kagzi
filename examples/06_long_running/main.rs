@@ -52,12 +52,13 @@ async fn run_polling(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = JobInput {
+        job_id: "job-42".into(),
+    };
     let run = client
         .start("poll_job")
         .namespace(namespace)
-        .input(JobInput {
-            job_id: "job-42".into(),
-        })
+        .input(&input)?
         .send()
         .await?;
 
@@ -89,12 +90,13 @@ async fn run_timeout(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = JobInput {
+        job_id: "job-timeout".into(),
+    };
     let run = client
         .start("poll_with_timeout")
         .namespace(namespace)
-        .input(JobInput {
-            job_id: "job-timeout".into(),
-        })
+        .input(&input)?
         .send()
         .await?;
 

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use kagzi::{Kagzi, Retry, Worker};
@@ -13,7 +14,9 @@ pub async fn connect_client(server: &str) -> Result<Kagzi> {
 }
 
 pub fn default_retry() -> Retry {
-    Retry::exponential(3).initial("300ms").max("5s")
+    Retry::exponential(3)
+        .with_initial(Duration::from_millis(300))
+        .with_max(Duration::from_secs(5))
 }
 
 /// Build a worker with sensible defaults (retry/backoff). Caller registers workflows.

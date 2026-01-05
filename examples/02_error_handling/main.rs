@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Duration;
 
 use kagzi::{Context, Kagzi, KagziError, Retry, Worker};
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,11 @@ async fn run_flaky(server: &str, namespace: &str) -> anyhow::Result<()> {
 
     let mut worker = Worker::new(server)
         .namespace(namespace)
-        .retry(Retry::exponential(3).initial("300ms").max("5s"))
+        .retry(
+            Retry::exponential(3)
+                .with_initial(Duration::from_millis(300))
+                .with_max(Duration::from_secs(5)),
+        )
         .workflows([("flaky_step", move |mut ctx: Context, input: Input| {
             let flaky = flaky.clone();
             async move {
@@ -60,12 +65,13 @@ async fn run_flaky(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = Input {
+        label: "sometimes fails".into(),
+    };
     let run = client
         .start("flaky_step")
         .namespace(namespace)
-        .input(Input {
-            label: "sometimes fails".into(),
-        })
+        .input(&input)?
         .send()
         .await?;
 
@@ -96,12 +102,13 @@ async fn run_fatal(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = Input {
+        label: "bad-key".into(),
+    };
     let run = client
         .start("fatal_step")
         .namespace(namespace)
-        .input(Input {
-            label: "bad-key".into(),
-        })
+        .input(&input)?
         .send()
         .await?;
 
@@ -119,11 +126,17 @@ async fn run_override(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("⚙️  Retry Override Example - demonstrates per-step retry configuration\n");
 
     let flaky = common::FlakyStep::succeed_after(4);
-    let step_retry = Retry::exponential(5).initial("200ms").max("3s");
+    let step_retry = Retry::exponential(5)
+        .with_initial(Duration::from_millis(200))
+        .with_max(Duration::from_secs(3));
 
     let mut worker = Worker::new(server)
         .namespace(namespace)
-        .retry(Retry::exponential(2).initial("500ms").max("2s"))
+        .retry(
+            Retry::exponential(2)
+                .with_initial(Duration::from_millis(500))
+                .with_max(Duration::from_secs(2)),
+        )
         .workflows([("override_step", move |mut ctx: Context, _input: Input| {
             let flaky = flaky.clone();
             let step_retry = step_retry.clone();
@@ -142,12 +155,13 @@ async fn run_override(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = Input {
+        label: "override".into(),
+    };
     let run = client
         .start("override_step")
         .namespace(namespace)
-        .input(Input {
-            label: "override".into(),
-        })
+        .input(&input)?
         .send()
         .await?;
 

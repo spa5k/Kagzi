@@ -1,11 +1,41 @@
+//! Worker implementation for executing Kagzi workflows.
+//!
+//! # Architecture Overview
+//!
+//! The worker polls the Kagzi server for workflow tasks, executes them using
+//! registered handler functions, and reports results back to the server.
+//!
+//! # Type Erasure with BoxFuture
+//!
+//! Workflow handlers have different input/output types, but we need to store
+//! them uniformly in a `HashMap`. We use `BoxFuture` for type erasure:
+//!
+//! ```rust
+//! use std::pin::Pin;
+//! type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+//! ```
+//!
+//! This allows us to:
+//! 1. Store handlers with different signatures in the same map
+//! 2. Pass them across async boundaries
+//! 3. Execute them dynamically based on workflow type
+//!
+//! The `'static` lifetime is required because handlers are stored in the worker
+//! and can be called at any time in the future.
+//!
+//! # Why Arc?
+//!
+//! - `Arc<Semaphore>`: Shared across concurrent task executions to limit parallelism
+//! - `Arc<WorkflowFn>`: Handlers are cloned into each spawned task
+//! - `Arc<AtomicU32>`: Poll failure counter shared between main loop and tasks
+
 use std::collections::HashMap;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use anyhow::anyhow;
+use backon::{BackoffBuilder, ExponentialBuilder};
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
     CompleteWorkflowRequest, DeregisterRequest, ErrorCode, FailWorkflowRequest, HeartbeatRequest,
@@ -17,24 +47,41 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tonic::transport::Channel;
-use tracing::{Instrument, error, info, info_span, warn};
+use tower::ServiceBuilder;
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::BoxFuture;
 use crate::context::Context;
-use crate::errors::{KagziError, WorkflowPaused, map_grpc_error};
+use crate::errors::{KagziError, WorkflowPaused};
 use crate::propagation::inject_context;
 use crate::retry::Retry;
 
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+/// Default maximum number of concurrent workflow executions
+const DEFAULT_MAX_CONCURRENT_WORKFLOWS: usize = 100;
 
+/// Default heartbeat interval in seconds
+const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 10;
+
+/// Long poll timeout for task polling (slightly longer than server hold time)
+const POLL_TIMEOUT_SECS: u64 = 65;
+
+/// Workflow handler function type.
+///
+/// Wraps user-provided workflow functions with type erasure so they can be
+/// stored and executed dynamically. The Arc allows sharing across concurrent
+/// task executions.
+///
+/// # Type Parameters
+/// - Input is deserialized from `serde_json::Value`
+/// - Output is serialized back to `serde_json::Value`
 type WorkflowFn = Box<
     dyn Fn(Context, serde_json::Value) -> BoxFuture<'static, anyhow::Result<serde_json::Value>>
         + Send
         + Sync,
 >;
 
-const DEFAULT_MAX_CONCURRENT_WORKFLOWS: usize = 100;
-
+/// Builder for configuring and constructing a Worker
 pub struct WorkerBuilder {
     addr: String,
     namespace_id: String,
@@ -47,9 +94,9 @@ pub struct WorkerBuilder {
 }
 
 impl WorkerBuilder {
-    pub fn new(addr: &str) -> Self {
+    pub fn new(addr: impl Into<String>) -> Self {
         Self {
-            addr: addr.to_string(),
+            addr: addr.into(),
             namespace_id: "default".to_string(),
             max_concurrent: DEFAULT_MAX_CONCURRENT_WORKFLOWS,
             default_retry: None,
@@ -60,8 +107,8 @@ impl WorkerBuilder {
         }
     }
 
-    pub fn namespace(mut self, ns: &str) -> Self {
-        self.namespace_id = ns.to_string();
+    pub fn namespace(mut self, ns: impl Into<String>) -> Self {
+        self.namespace_id = ns.into();
         self
     }
 
@@ -82,18 +129,18 @@ impl WorkerBuilder {
         self
     }
 
-    pub fn hostname(mut self, h: &str) -> Self {
-        self.hostname = Some(h.to_string());
+    pub fn hostname(mut self, h: impl Into<String>) -> Self {
+        self.hostname = Some(h.into());
         self
     }
 
-    pub fn version(mut self, v: &str) -> Self {
-        self.version = Some(v.to_string());
+    pub fn version(mut self, v: impl Into<String>) -> Self {
+        self.version = Some(v.into());
         self
     }
 
-    pub fn label(mut self, key: &str, value: &str) -> Self {
-        self.labels.insert(key.to_string(), value.to_string());
+    pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.labels.insert(key.into(), value.into());
         self
     }
 
@@ -121,10 +168,9 @@ impl WorkerBuilder {
                             })
                         }
                         Err(e) => Box::pin(async move {
-                            Err(anyhow!(
-                                "Failed to deserialize workflow '{}' input: {}",
+                            Err(anyhow::anyhow!(
+                                "Failed to deserialize workflow '{}' input: {e}",
                                 workflow_name,
-                                e
                             ))
                         }),
                     }
@@ -135,12 +181,56 @@ impl WorkerBuilder {
         self
     }
 
+    /// Validate the worker configuration before building
+    ///
+    /// # Errors
+    /// Returns `anyhow::Error` if the configuration is invalid
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.max_concurrent == 0 {
+            anyhow::bail!("max_concurrent must be greater than 0");
+        }
+
+        if let Some(ref retry) = self.default_retry {
+            retry
+                .validate()
+                .map_err(|e| anyhow::anyhow!("Invalid retry configuration: {e}"))?;
+        }
+
+        for (name, _) in &self.workflows {
+            if name.is_empty() {
+                anyhow::bail!("Workflow names cannot be empty");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Build the worker and connect to the server
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - No workflows are registered
+    /// - Configuration is invalid
+    /// - Connection to the server fails
+    #[tracing::instrument(skip(self))]
     pub async fn build(self) -> anyhow::Result<Worker> {
+        self.validate()?;
+
         if self.workflows.is_empty() {
             anyhow::bail!("At least one workflow must be registered");
         }
 
-        let client = WorkerServiceClient::connect(self.addr.clone()).await?;
+        let channel = Channel::from_shared(self.addr.clone())
+            .map_err(|e| anyhow::anyhow!("Invalid server address: {e}"))?
+            .connect()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to connect to worker service: {e}"))?;
+
+        let channel = ServiceBuilder::new()
+            .timeout(Duration::from_secs(POLL_TIMEOUT_SECS))
+            .service(channel);
+
+        let client = WorkerServiceClient::new(channel);
 
         // Build workflow map and collect types
         let mut workflow_map = HashMap::new();
@@ -161,7 +251,7 @@ impl WorkerBuilder {
             workflows: workflow_map,
             workflow_types,
             worker_id: None,
-            heartbeat_interval: Duration::from_secs(10),
+            heartbeat_interval: Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS),
             semaphore: Arc::new(Semaphore::new(self.max_concurrent)),
             shutdown: CancellationToken::new(),
             consecutive_poll_failures: Arc::new(AtomicU32::new(0)),
@@ -170,19 +260,25 @@ impl WorkerBuilder {
 }
 
 pub struct Worker {
-    pub(crate) client: WorkerServiceClient<Channel>,
+    pub(crate) client: WorkerServiceClient<tower::timeout::Timeout<Channel>>,
     namespace_id: String,
     max_concurrent: usize,
     hostname: Option<String>,
     version: Option<String>,
     labels: HashMap<String, String>,
     default_retry: Option<Retry>,
+    /// Workflow handlers by type name.
+    /// Arc is used to clone handlers into each spawned task for concurrent execution.
     workflows: HashMap<String, Arc<WorkflowFn>>,
     workflow_types: Vec<String>,
     worker_id: Option<Uuid>,
     heartbeat_interval: Duration,
+    /// Semaphore limits concurrent workflow executions.
+    /// Arc allows cloning permits into spawned tasks.
     semaphore: Arc<Semaphore>,
     shutdown: CancellationToken,
+    /// Counter for exponential backoff on poll failures.
+    /// Arc allows atomic updates from both main loop and spawned tasks.
     consecutive_poll_failures: Arc<AtomicU32>,
 }
 
@@ -212,15 +308,17 @@ impl Worker {
         self.shutdown.clone()
     }
 
+    /// Run the worker main loop
+    ///
+    /// This method will:
+    /// 1. Register the worker with the server
+    /// 2. Start a heartbeat task
+    /// 3. Poll for tasks and execute them
+    /// 4. Handle graceful shutdown
+    #[tracing::instrument(skip(self))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
         if self.workflows.is_empty() {
             anyhow::bail!("No workflows registered. Call workflows() before run()");
-        }
-
-        // For each workflow type, use it as its own queue
-        let mut all_queues = Vec::new();
-        for workflow_type in &self.workflow_types {
-            all_queues.push(workflow_type.clone());
         }
 
         // Use first workflow type as primary queue for registration
@@ -248,20 +346,26 @@ impl Worker {
                 workflow_type_concurrency: Vec::new(),
             })
             .await
-            .map_err(map_grpc_error)?
+            .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?
             .into_inner();
 
         self.worker_id = Some(Uuid::parse_str(&resp.worker_id)?);
         self.heartbeat_interval = Duration::from_secs(resp.heartbeat_interval_secs as u64);
 
         info!(
-            worker_id = %self.worker_id.unwrap(),
+            worker_id = %self.worker_id.map(|id| id.to_string()).unwrap_or_else(|| "unregistered".to_string()),
             task_queue = %primary_queue,
-            workflows = ?self.workflow_types,
+            workflow_count = %self.workflow_types.len(),
             "Worker registered"
         );
 
-        let heartbeat_handle = self.spawn_heartbeat_task();
+        let heartbeat_handle = match self.spawn_heartbeat_task() {
+            Some(handle) => handle,
+            None => {
+                warn!("Cannot spawn heartbeat task: worker not registered");
+                return Ok(());
+            }
+        };
 
         let primary_queue_clone = primary_queue.clone();
         let shutdown = self.shutdown.clone();
@@ -275,7 +379,10 @@ impl Worker {
             }
         }
 
-        info!(active = self.active_count(), "Draining active workflows...");
+        info!(
+            active_count = self.active_count(),
+            "Draining active workflows..."
+        );
         while self.active_count() > 0 {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -295,13 +402,14 @@ impl Worker {
         Ok(())
     }
 
-    fn spawn_heartbeat_task(&self) -> tokio::task::JoinHandle<()> {
+    /// Spawn a background task to send periodic heartbeats to the server
+    fn spawn_heartbeat_task(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let worker_id = self.worker_id?;
         let mut client = self.client.clone();
-        let worker_id = self.worker_id.unwrap();
         let interval = self.heartbeat_interval;
         let shutdown = self.shutdown.clone();
 
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
 
             loop {
@@ -329,36 +437,45 @@ impl Worker {
                                     || e.code() == tonic::Code::FailedPrecondition
                                 {
                                     error!(
-                                        "Worker rejected by server (offline), triggering shutdown: {:?}",
-                                        e
+                                        error = %e,
+                                        "Worker rejected by server (offline), triggering shutdown"
                                     );
                                     shutdown.cancel();
                                 } else {
-                                    error!("Heartbeat failed: {:?}", e);
+                                    error!(error = %e, "Heartbeat failed");
                                 }
                             }
                         }
                     }
                 }
             }
-        })
+        }))
     }
 
+    /// Poll for a task from the server and execute it
+    #[tracing::instrument(skip(self))]
     async fn poll_and_execute(&mut self, task_queue: String) {
         let permit = match self.semaphore.clone().acquire_owned().await {
             Ok(p) => p,
             Err(_) => return,
         };
 
-        // Add client-side timeout slightly longer than server hold time
-        // to ensure responsive shutdown during long-polling
-        let mut request = Request::new(PollTaskRequest {
+        let worker_id = match &self.worker_id {
+            Some(id) => id,
+            None => {
+                warn!("Worker not registered, skipping poll");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                return;
+            }
+        };
+
+        // Timeout is handled by tower middleware at the channel level
+        let request = Request::new(PollTaskRequest {
             task_queue,
-            worker_id: self.worker_id.unwrap().to_string(),
+            worker_id: worker_id.to_string(),
             namespace_id: self.namespace_id.clone(),
             workflow_types: self.workflow_types.clone(),
         });
-        request.set_timeout(Duration::from_secs(65));
 
         let resp = self.client.poll_task(request).await;
 
@@ -399,119 +516,105 @@ impl Worker {
                         execute_workflow(client, handler, run_id, input, default_retry).await;
                     });
                 } else {
-                    error!("No handler for workflow type: {}", task.workflow_type);
+                    error!(workflow_type = %task.workflow_type, "No handler for workflow type");
                     drop(permit);
                 }
             }
             Err(e) => {
                 drop(permit);
                 if e.code() != tonic::Code::DeadlineExceeded {
-                    error!("Poll failed: {:?}", e);
-                    // Exponential backoff on poll failures to prevent tight error loops
-                    let failures = self
+                    error!(error = %e, "Poll failed");
+                    let _failures = self
                         .consecutive_poll_failures
                         .fetch_add(1, Ordering::Relaxed)
                         + 1;
-                    let backoff_ms = std::cmp::min(100 * 2u64.pow(failures.min(10)), 30_000);
-                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                    let mut backoff = ExponentialBuilder::default()
+                        .with_min_delay(Duration::from_millis(100))
+                        .with_max_delay(Duration::from_secs(30))
+                        .with_jitter()
+                        .build();
+
+                    let backoff_duration = backoff.next().unwrap_or(Duration::from_secs(30));
+                    tokio::time::sleep(backoff_duration).await;
                 }
             }
         }
     }
 }
 
+/// Execute a workflow task and report the result to the server
+#[tracing::instrument(
+    name = "workflow_execution",
+    skip(client, handler),
+    fields(run_id = %run_id, otel.kind = "client")
+)]
 async fn execute_workflow(
-    mut client: WorkerServiceClient<Channel>,
+    mut client: WorkerServiceClient<tower::timeout::Timeout<Channel>>,
     handler: Arc<WorkflowFn>,
     run_id: String,
     input: serde_json::Value,
     default_retry: Option<Retry>,
 ) {
-    // Create a span for the entire workflow execution
-    let span = info_span!(
-        "workflow_execution",
-        run_id = %run_id,
-        otel.kind = "client",
-    );
+    let ctx = Context {
+        client: client.clone(),
+        run_id: run_id.clone(),
+        default_retry,
+    };
 
-    async {
-        let ctx = Context {
-            client: client.clone(),
-            run_id: run_id.clone(),
-            default_retry,
-        };
+    // Execute workflow in a separate task so panics are captured as JoinError
+    // instead of crashing the runtime. JoinError is converted into a failure.
+    let task = tokio::spawn(async move { handler(ctx, input).await });
 
-        // Execute workflow in a separate task so panics are captured as JoinError
-        // instead of crashing the runtime. JoinError is converted into a failure.
-        let task = tokio::spawn(async move { handler(ctx, input).await }.in_current_span());
+    let result = match task.await {
+        Ok(r) => r,
+        Err(join_err) => {
+            error!(error = %join_err, "Workflow panicked");
+            Err(anyhow::anyhow!("workflow panicked: {join_err}"))
+        }
+    };
 
-        let result = match task.await {
-            Ok(r) => r,
-            Err(join_err) => {
-                error!(
-                    run_id = %run_id,
-                    error = %join_err,
-                    "Workflow panicked"
-                );
-                Err(anyhow::anyhow!(format!("workflow panicked: {join_err}")))
-            }
-        };
-
-        match result {
-            Ok(output) => {
-                let data = match serde_json::to_vec(&output) {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        error!(
-                            run_id = %run_id,
-                            error = %e,
-                            "Failed to serialize workflow output"
-                        );
-                        return; // Let workflow retry or fail explicitly
-                    }
-                };
-
-                let mut complete_request = Request::new(CompleteWorkflowRequest {
-                    run_id,
-                    output: Some(ProtoPayload {
-                        data,
-                        metadata: HashMap::new(),
-                    }),
-                });
-                inject_context(complete_request.metadata_mut());
-
-                let _ = client.complete_workflow(complete_request).await;
-            }
-            Err(e) => {
-                if e.downcast_ref::<WorkflowPaused>().is_some() {
-                    info!(
-                        run_id = %run_id,
-                        "Workflow paused (sleeping)"
-                    );
-                    return;
+    match result {
+        Ok(output) => {
+            let data = match serde_json::to_vec(&output) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    error!(error = %e, "Failed to serialize workflow output");
+                    return; // Let workflow retry or fail explicitly
                 }
+            };
 
-                error!(
-                    run_id = %run_id,
-                    error = %e,
-                    "Workflow failed"
-                );
+            let mut complete_request = Request::new(CompleteWorkflowRequest {
+                run_id,
+                output: Some(ProtoPayload {
+                    data,
+                    metadata: HashMap::new(),
+                }),
+            });
+            inject_context(complete_request.metadata_mut());
 
-                let kagzi_err = e
-                    .downcast_ref::<KagziError>()
-                    .cloned()
-                    .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
-
-                let mut fail_request = Request::new(FailWorkflowRequest {
-                    run_id,
-                    error: Some(kagzi_err.to_detail()),
-                });
-                inject_context(fail_request.metadata_mut());
-
-                let _ = client.fail_workflow(fail_request).await;
+            let _ = client.complete_workflow(complete_request).await;
+        }
+        Err(e) => {
+            if e.downcast_ref::<WorkflowPaused>().is_some() {
+                info!("Workflow paused (sleeping)");
+                return;
             }
+
+            error!(error = %e, "Workflow failed");
+
+            let kagzi_err = e
+                .downcast_ref::<KagziError>()
+                .cloned()
+                .unwrap_or_else(|| KagziError::new(ErrorCode::Internal, e.to_string()));
+
+            let mut fail_request = Request::new(FailWorkflowRequest {
+                run_id,
+                error: Some(kagzi_err.to_detail()),
+            });
+            inject_context(fail_request.metadata_mut());
+
+            let _ = client.fail_workflow(fail_request).await;
         }
     }
-    .instrument(span)
-    .await
 }

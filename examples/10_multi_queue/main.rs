@@ -71,20 +71,22 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
     handles.push(tokio::spawn(async move { high_worker.run().await }));
     handles.push(tokio::spawn(async move { low_worker.run().await }));
 
+    let high_input = TaskInput {
+        label: "urgent-report".into(),
+    };
     let high = client
         .start("priority_task")
         .namespace("high-priority")
-        .input(TaskInput {
-            label: "urgent-report".into(),
-        })
+        .input(&high_input)?
         .send()
         .await?;
+    let low_input = TaskInput {
+        label: "weekly-digest".into(),
+    };
     let low = client
         .start("priority_task")
         .namespace("low-priority")
-        .input(TaskInput {
-            label: "weekly-digest".into(),
-        })
+        .input(&low_input)?
         .send()
         .await?;
 
@@ -135,20 +137,22 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
     handles.push(tokio::spawn(async move { prod_worker.run().await }));
     handles.push(tokio::spawn(async move { staging_worker.run().await }));
 
+    let prod_input = TaskInput {
+        label: "prod-task".into(),
+    };
     let prod_run = client
         .start("ns_task")
         .namespace("production")
-        .input(TaskInput {
-            label: "prod-task".into(),
-        })
+        .input(&prod_input)?
         .send()
         .await?;
+    let staging_input = TaskInput {
+        label: "staging-task".into(),
+    };
     let staging_run = client
         .start("ns_task")
         .namespace("staging")
-        .input(TaskInput {
-            label: "staging-task".into(),
-        })
+        .input(&staging_input)?
         .send()
         .await?;
 

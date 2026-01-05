@@ -60,14 +60,15 @@ async fn run_saga(
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = TripRequest {
+        destination: "SFO".into(),
+        fail_car,
+        fail_hotel,
+    };
     let run = client
         .start("trip_booking")
         .namespace(namespace)
-        .input(TripRequest {
-            destination: "SFO".into(),
-            fail_car,
-            fail_hotel,
-        })
+        .input(&input)?
         .send()
         .await?;
 

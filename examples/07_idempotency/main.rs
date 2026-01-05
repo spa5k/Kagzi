@@ -53,22 +53,21 @@ async fn external_id_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
 
     let client = Kagzi::connect(server).await?;
     let external_id = "order-123";
+    let input = PaymentInput {
+        order_id: external_id.into(),
+    };
     let run1 = client
         .start("charge_payment")
         .namespace(namespace)
-        .input(PaymentInput {
-            order_id: external_id.into(),
-        })
-        .id(external_id)
+        .idempotency_key(external_id)
+        .input(&input)?
         .send()
         .await?;
     let run2 = client
         .start("charge_payment")
         .namespace(namespace)
-        .input(PaymentInput {
-            order_id: external_id.into(),
-        })
-        .id(external_id)
+        .idempotency_key(external_id)
+        .input(&input)?
         .send()
         .await?;
 
@@ -98,10 +97,11 @@ async fn memoization_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
     println!("👷 Worker started");
 
     let client = Kagzi::connect(server).await?;
+    let input = MemoInput { value: 5 };
     let run = client
         .start("memoized_workflow")
         .namespace(namespace)
-        .input(MemoInput { value: 5 })
+        .input(&input)?
         .send()
         .await?;
 
