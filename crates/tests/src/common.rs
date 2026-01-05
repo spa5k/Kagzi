@@ -122,7 +122,7 @@ impl TestHarness {
 
         let shutdown = CancellationToken::new();
 
-        let queue = kagzi_queue::PostgresNotifier::new(pool.clone(), 300, 300);
+        let queue = kagzi_queue::PostgresNotifier::new(pool.clone(), 64, 300, 300);
         let queue_listener = queue.clone();
         let queue_listener_token = shutdown.child_token();
         tokio::spawn(async move {

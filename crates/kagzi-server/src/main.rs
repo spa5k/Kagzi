@@ -59,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the queue notifier and start background listener
     let queue = kagzi_queue::PostgresNotifier::new(
         store.pool().clone(),
+        64, // channel_capacity
         queue_settings.cleanup_interval_secs,
         queue_settings.max_reconnect_secs,
     );
