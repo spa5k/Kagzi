@@ -68,7 +68,7 @@ async fn run_saga(
     let run = client
         .start("trip_booking")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

@@ -20,6 +20,7 @@ base64 = "0.22"
 chrono.workspace = true
 config.workspace = true
 cron.workspace = true
+governor = "0.10.4"
 kagzi-proto = { path = "../kagzi-proto" }
 kagzi-queue = { path = "../kagzi-queue" }
 kagzi-store = { path = "../kagzi-store" }

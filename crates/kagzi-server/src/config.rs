@@ -157,14 +157,14 @@ impl Default for TelemetrySettings {
 
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
-        // Get database URL from environment first (required field)
-        let db_url = std::env::var("KAGZI_DB_URL")
-            .map_err(|_| ConfigError::NotFound("database_url (set KAGZI_DB_URL)".into()))?;
-
-        let builder = Config::builder()
-            .set_default("database_url", db_url)?
+        let mut builder = Config::builder()
             .add_source(config::File::with_name("config/default").required(false))
             .add_source(Environment::with_prefix("KAGZI").separator("_"));
+
+        // Support KAGZI_DB_URL explicitly if not handled by standard mapping
+        if let Ok(url) = std::env::var("KAGZI_DB_URL") {
+            builder = builder.set_override("database_url", url)?;
+        }
 
         builder.build()?.try_deserialize()
     }

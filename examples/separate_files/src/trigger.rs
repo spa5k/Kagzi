@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
     let run = client
         .start("send-welcome-email")
         .namespace("email")
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

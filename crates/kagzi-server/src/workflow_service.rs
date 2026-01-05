@@ -14,8 +14,9 @@ use uuid::Uuid;
 
 use crate::constants::DEFAULT_VERSION;
 use crate::helpers::{
-    invalid_argument_error, map_store_error, merge_proto_policy, not_found_error, payload_to_bytes,
-    precondition_failed_error,
+    decode_cursor, encode_cursor, invalid_argument_error, map_store_error, merge_proto_policy,
+    normalize_page_size, not_found_error, payload_to_bytes, precondition_failed_error,
+    require_non_empty,
 };
 use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
 use crate::telemetry::extract_context;
@@ -53,22 +54,13 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         tracing::Span::current().record("workflow_type", &req.workflow_type);
         tracing::Span::current().record("external_id", &req.external_id);
 
-        if req.external_id.is_empty() {
-            return Err(invalid_argument_error("external_id is required"));
-        }
-        if req.task_queue.is_empty() {
-            return Err(invalid_argument_error("task_queue is required"));
-        }
-        if req.workflow_type.is_empty() {
-            return Err(invalid_argument_error("workflow_type is required"));
-        }
+        let external_id = require_non_empty(req.external_id, "external_id")?;
+        let task_queue = require_non_empty(req.task_queue, "task_queue")?;
+        let workflow_type = require_non_empty(req.workflow_type, "workflow_type")?;
 
         let input_bytes = payload_to_bytes(req.input);
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
         tracing::Span::current().record("namespace_id", &namespace_id);
 
         let version = if req.version.is_empty() {
@@ -79,14 +71,14 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let workflows = self.store.workflows();
 
-        let task_queue = req.task_queue.clone();
+        // task_queue clone line removed - using task_queue.clone() in struct instead
 
         let create_result = workflows
             .create(CreateWorkflow {
                 run_id: Uuid::now_v7(),
-                external_id: req.external_id.clone(),
-                task_queue,
-                workflow_type: req.workflow_type,
+                external_id: external_id.clone(),
+                task_queue: task_queue.clone(),
+                workflow_type,
                 input: input_bytes,
                 namespace_id: namespace_id.clone(),
                 version,
@@ -100,7 +92,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             Ok(id) => (id, false),
             Err(ref e) if e.is_unique_violation() => {
                 let existing_id = workflows
-                    .find_active_by_external_id(&namespace_id, &req.external_id)
+                    .find_active_by_external_id(&namespace_id, &external_id)
                     .await
                     .map_err(map_store_error)?
                     .ok_or_else(|| map_store_error(create_result.unwrap_err()))?;
@@ -110,7 +102,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         };
 
         if !already_exists {
-            let _ = self.queue.notify(&namespace_id, &req.task_queue).await;
+            let _ = self.queue.notify(&namespace_id, &task_queue).await;
         }
 
         Ok(Response::new(StartWorkflowResponse {
@@ -128,10 +120,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let workflow = self
             .store
@@ -163,49 +152,22 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         &self,
         request: Request<ListWorkflowsRequest>,
     ) -> Result<Response<ListWorkflowsResponse>, Status> {
-        use base64::Engine;
+        // removed base64 engine import
 
         let req = request.into_inner();
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         tracing::Span::current().record("namespace_id", &namespace_id);
 
         let page = req.page.unwrap_or_default();
-        let page_size = if page.page_size <= 0 {
-            20
-        } else if page.page_size > 100 {
-            100
-        } else {
-            page.page_size
-        };
+        let page_size = normalize_page_size(page.page_size, 20, 100);
 
         let cursor: Option<WorkflowCursor> = if page.page_token.is_empty() {
             None
         } else {
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(&page.page_token)
-                .map_err(|_| invalid_argument_error("Invalid page_token"))?;
-            let cursor_str = String::from_utf8(decoded)
-                .map_err(|_| invalid_argument_error("Invalid page_token encoding"))?;
-            let parts: Vec<&str> = cursor_str.splitn(2, ':').collect();
-            if parts.len() != 2 {
-                return Err(invalid_argument_error("Invalid page_token format"));
-            }
-            let millis: i64 = parts[0]
-                .parse()
-                .map_err(|_| invalid_argument_error("Invalid page_token timestamp"))?;
-            let run_id = uuid::Uuid::parse_str(parts[1])
-                .map_err(|_| invalid_argument_error("Invalid page_token run_id"))?;
-            let cursor_time = chrono::DateTime::from_timestamp_millis(millis)
-                .ok_or_else(|| invalid_argument_error("Invalid cursor timestamp"))?;
-            Some(WorkflowCursor {
-                created_at: cursor_time,
-                run_id,
-            })
+            let (created_at, run_id) = decode_cursor(&page.page_token)?;
+            Some(WorkflowCursor { created_at, run_id })
         };
 
         let filter_status = req
@@ -244,10 +206,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let next_page_token = result
             .next_cursor
-            .map(|c| {
-                let cursor_str = format!("{}:{}", c.created_at.timestamp_millis(), c.run_id);
-                base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
-            })
+            .map(|c| encode_cursor(c.created_at.timestamp_millis(), &c.run_id))
             .unwrap_or_default();
 
         let workflows: Result<Vec<_>, Status> =
@@ -276,10 +235,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let workflows = self.store.workflows();
 

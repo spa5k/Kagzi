@@ -57,7 +57,7 @@ async fn local_concurrency(server: String, namespace: String) -> anyhow::Result<
         let run = client
             .start("short_task")
             .namespace(&namespace)
-            .input(&input)
+            .input(&input)?
             .send()
             .await?;
         println!("📝 Queued short task run={} id={}", run.id, id);
@@ -98,7 +98,7 @@ async fn multi_worker_demo(server: String, namespace: String) -> anyhow::Result<
             client
                 .start("parallel_task")
                 .namespace(&namespace)
-                .input(&input)
+                .input(&input)?
                 .send()
                 .await?;
         }

@@ -134,51 +134,87 @@ pub fn merge_proto_policy(
     proto: Option<RetryPolicy>,
     fallback: Option<&kagzi_store::RetryPolicy>,
 ) -> Option<kagzi_store::RetryPolicy> {
-    match (proto, fallback.cloned()) {
-        (None, None) => None,
-        (None, Some(base)) => Some(base),
-        (Some(p), Some(mut base)) => {
-            if p.maximum_attempts != 0 {
-                base.maximum_attempts = p.maximum_attempts;
-            }
-            if p.initial_interval_ms != 0 {
-                base.initial_interval_ms = p.initial_interval_ms;
-            }
-            if p.backoff_coefficient != 0.0 {
-                base.backoff_coefficient = p.backoff_coefficient;
-            }
-            if p.maximum_interval_ms != 0 {
-                base.maximum_interval_ms = p.maximum_interval_ms;
-            }
-            if !p.non_retryable_errors.is_empty() {
-                base.non_retryable_errors = p.non_retryable_errors;
-            }
-            Some(base)
-        }
-        (Some(p), None) => Some(kagzi_store::RetryPolicy {
-            maximum_attempts: if p.maximum_attempts == 0 {
-                5
-            } else {
-                p.maximum_attempts
-            },
-            initial_interval_ms: if p.initial_interval_ms == 0 {
-                1000
-            } else {
-                p.initial_interval_ms
-            },
-            backoff_coefficient: if p.backoff_coefficient == 0.0 {
-                2.0
-            } else {
-                p.backoff_coefficient
-            },
-            maximum_interval_ms: if p.maximum_interval_ms == 0 {
-                60000
-            } else {
-                p.maximum_interval_ms
-            },
-            non_retryable_errors: p.non_retryable_errors,
-        }),
+    let proto = match proto {
+        None => return fallback.cloned(),
+        Some(p) => p,
+    };
+
+    // Start with fallback or default, then override with proto
+    let mut policy = fallback.cloned().unwrap_or_default();
+
+    if proto.maximum_attempts != 0 {
+        policy.maximum_attempts = proto.maximum_attempts;
     }
+    if proto.initial_interval_ms != 0 {
+        policy.initial_interval_ms = proto.initial_interval_ms;
+    }
+    if proto.backoff_coefficient != 0.0 {
+        policy.backoff_coefficient = proto.backoff_coefficient;
+    }
+    if proto.maximum_interval_ms != 0 {
+        policy.maximum_interval_ms = proto.maximum_interval_ms;
+    }
+    if !proto.non_retryable_errors.is_empty() {
+        policy.non_retryable_errors = proto.non_retryable_errors;
+    }
+
+    Some(policy)
+}
+
+pub fn require_non_empty(value: String, field: &str) -> Result<String, Status> {
+    if value.is_empty() {
+        Err(invalid_argument_error(format!("{} is required", field)))
+    } else {
+        Ok(value)
+    }
+}
+
+pub fn normalize_page_size(requested: i32, default: i32, max: i32) -> i32 {
+    if requested <= 0 {
+        default
+    } else {
+        requested.min(max)
+    }
+}
+
+pub fn encode_cursor(timestamp_ms: i64, id: &uuid::Uuid) -> String {
+    use base64::Engine;
+    let cursor_str = format!("{}:{}", timestamp_ms, id);
+    base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
+}
+
+pub fn decode_cursor(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, uuid::Uuid), Status> {
+    use base64::Engine;
+    use chrono::TimeZone;
+
+    if token.is_empty() {
+        return Err(invalid_argument_error("Invalid page_token: empty"));
+    }
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(token)
+        .map_err(|_| invalid_argument_error("Invalid page_token: base64 decode failed"))?;
+
+    let token_str = std::str::from_utf8(&decoded)
+        .map_err(|_| invalid_argument_error("Invalid page_token: utf8 decode failed"))?;
+
+    let mut parts = token_str.splitn(2, ':');
+    let created_at_ms = parts
+        .next()
+        .and_then(|p| p.parse::<i64>().ok())
+        .ok_or_else(|| invalid_argument_error("Invalid page_token: missing timestamp"))?;
+    let id_str = parts
+        .next()
+        .ok_or_else(|| invalid_argument_error("Invalid page_token: missing id"))?;
+
+    let created_at = chrono::Utc
+        .timestamp_millis_opt(created_at_ms)
+        .single()
+        .ok_or_else(|| invalid_argument_error("Invalid page_token: invalid timestamp"))?;
+    let id = uuid::Uuid::parse_str(id_str)
+        .map_err(|_| invalid_argument_error("Invalid page_token: invalid uuid"))?;
+
+    Ok((created_at, id))
 }
 
 pub fn map_store_error(e: kagzi_store::StoreError) -> Status {

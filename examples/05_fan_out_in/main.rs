@@ -69,7 +69,7 @@ async fn static_fanout(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("profile_aggregate")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
     println!("🚀 Started static fan-out workflow: {}", run.id);
@@ -98,7 +98,7 @@ async fn dynamic_mapreduce(server: &str, namespace: &str) -> anyhow::Result<()> 
     let run = client
         .start("square_and_sum")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
     println!("🚀 Started dynamic map-reduce workflow: {}", run.id);

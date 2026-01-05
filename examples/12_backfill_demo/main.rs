@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
         .namespace(&namespace)
         .workflow("ping_workflow")
         .cron("*/10 * * * * *") // every 10 seconds
-        .input(&input)
+        .input(&input)?
         .catchup(50) // Catch up to 50 missed runs (prevents resource exhaustion)
         .send()
         .await?;

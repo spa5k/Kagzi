@@ -39,7 +39,7 @@ async fn welcome_user_route(user_id: String, user_email: String) -> anyhow::Resu
     let run = client
         .start("send-welcome-email")
         .namespace("email")
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

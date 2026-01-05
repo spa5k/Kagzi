@@ -294,7 +294,7 @@ impl StartWorkflowBuilder {
 
     /// Set the input payload for the workflow
     ///
-    /// The input must be serializable as JSON. Serialization errors will panic.
+    /// The input must be serializable as JSON.
     ///
     /// # Type Parameters
     ///
@@ -303,6 +303,10 @@ impl StartWorkflowBuilder {
     /// # Arguments
     ///
     /// * `input` - Reference to the input data (will be JSON serialized)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input cannot be serialized to JSON.
     ///
     /// # Example
     ///
@@ -317,18 +321,15 @@ impl StartWorkflowBuilder {
     /// let input = MyInput { value: 42 };
     /// let run = client
     ///     .start("my_workflow")
-    ///     .input(&input)
+    ///     .input(&input)?
     ///     .send()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn input<T: Serialize>(mut self, input: &T) -> Self {
-        self.input = Some(
-            serde_json::to_vec(input)
-                .expect("Failed to serialize workflow input"),
-        );
-        self
+    pub fn input<T: Serialize>(mut self, input: &T) -> anyhow::Result<Self> {
+        self.input = Some(serde_json::to_vec(input)?);
+        Ok(self)
     }
 
     /// Set an idempotency key to prevent duplicate workflow executions
@@ -528,12 +529,9 @@ impl ScheduleBuilder {
     /// # Arguments
     ///
     /// * `input` - Reference to the input data (will be JSON serialized)
-    pub fn input<T: Serialize>(mut self, input: &T) -> Self {
-        self.input = Some(
-            serde_json::to_vec(input)
-                .expect("Failed to serialize schedule input"),
-        );
-        self
+    pub fn input<T: Serialize>(mut self, input: &T) -> anyhow::Result<Self> {
+        self.input = Some(serde_json::to_vec(input)?);
+        Ok(self)
     }
 
     /// Set the maximum catchup for missed executions

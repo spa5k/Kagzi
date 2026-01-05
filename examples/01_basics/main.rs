@@ -170,7 +170,7 @@ async fn run_hello(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("hello_workflow")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -204,7 +204,7 @@ async fn run_chain(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("chain_workflow")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -238,7 +238,7 @@ async fn run_context(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("context_workflow")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -272,7 +272,7 @@ async fn run_sleep(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("sleep_workflow")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

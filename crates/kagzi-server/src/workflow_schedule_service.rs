@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
-use base64::Engine;
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleService;
 use kagzi_proto::kagzi::{
     CreateWorkflowScheduleRequest, CreateWorkflowScheduleResponse, DeleteWorkflowScheduleRequest,
@@ -14,9 +13,10 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::helpers::{
-    bytes_to_payload, invalid_argument_error, map_store_error, not_found_error,
-    payload_to_optional_bytes,
+    bytes_to_payload, decode_cursor, encode_cursor, invalid_argument_error, map_store_error,
+    normalize_page_size, not_found_error, payload_to_optional_bytes, require_non_empty,
 };
+use crate::proto_convert::timestamp_from;
 
 fn parse_cron_expr(expr: &str) -> Result<cron::Schedule, Status> {
     if expr.trim().is_empty() {
@@ -52,12 +52,7 @@ fn next_fire_from_now(
     Ok(next.with_timezone(&chrono::Utc))
 }
 
-fn to_proto_timestamp(ts: chrono::DateTime<chrono::Utc>) -> prost_types::Timestamp {
-    prost_types::Timestamp {
-        seconds: ts.timestamp(),
-        nanos: ts.timestamp_subsec_nanos() as i32,
-    }
-}
+// to_proto_timestamp removed
 
 fn workflow_run_to_schedule_proto(w: WorkflowRun) -> Result<WorkflowSchedule, Status> {
     let input = bytes_to_payload(Some(w.input));
@@ -83,10 +78,10 @@ fn workflow_run_to_schedule_proto(w: WorkflowRun) -> Result<WorkflowSchedule, St
         input: Some(input),
         enabled: w.status == kagzi_store::WorkflowStatus::Scheduled,
         max_catchup: w.max_catchup,
-        next_fire_at: Some(to_proto_timestamp(next_fire_at)),
-        last_fired_at: w.last_fired_at.map(to_proto_timestamp),
+        next_fire_at: Some(timestamp_from(next_fire_at)),
+        last_fired_at: w.last_fired_at.map(timestamp_from),
         version: w.version.unwrap_or_default(),
-        created_at: Some(to_proto_timestamp(created_at)),
+        created_at: Some(timestamp_from(created_at)),
         updated_at: None,
     })
 }
@@ -114,24 +109,15 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
     ) -> Result<Response<CreateWorkflowScheduleResponse>, Status> {
         let req = request.into_inner();
 
-        if req.task_queue.is_empty() {
-            return Err(invalid_argument_error("task_queue is required"));
-        }
-        if req.workflow_type.is_empty() {
-            return Err(invalid_argument_error("workflow_type is required"));
-        }
-        if req.cron_expr.is_empty() {
-            return Err(invalid_argument_error("cron_expr is required"));
-        }
+        let task_queue = require_non_empty(req.task_queue, "task_queue")?;
+        let workflow_type = require_non_empty(req.workflow_type, "workflow_type")?;
+        let cron_expr = require_non_empty(req.cron_expr, "cron_expr")?;
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
 
-        let first_fire = next_fire_from_now(&req.cron_expr, Utc::now())?;
+        let first_fire = next_fire_from_now(&cron_expr, Utc::now())?;
 
         let run_id = Uuid::now_v7();
 
@@ -140,13 +126,13 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .create(CreateWorkflow {
                 run_id,
                 external_id: format!("schedule-{}", run_id),
-                task_queue: req.task_queue,
-                workflow_type: req.workflow_type,
+                task_queue,
+                workflow_type,
                 input,
                 namespace_id: namespace_id.clone(),
                 version: req.version.unwrap_or_default(),
                 retry_policy: None,
-                cron_expr: Some(req.cron_expr.clone()),
+                cron_expr: Some(cron_expr),
                 schedule_id: None,
             })
             .await
@@ -186,10 +172,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let schedule = self
             .store
@@ -211,50 +194,19 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         request: Request<ListWorkflowSchedulesRequest>,
     ) -> Result<Response<ListWorkflowSchedulesResponse>, Status> {
         let req = request.into_inner();
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let page_size = req
             .page
             .as_ref()
-            .and_then(|p| {
-                if p.page_size <= 0 {
-                    None
-                } else {
-                    Some(p.page_size)
-                }
-            })
-            .unwrap_or(100)
-            .min(500);
+            .map(|p| normalize_page_size(p.page_size, 100, 500))
+            .unwrap_or(100);
 
         let cursor = if let Some(page) = req.page.as_ref() {
             if page.page_token.is_empty() {
                 None
             } else {
-                let decoded = base64::engine::general_purpose::STANDARD
-                    .decode(&page.page_token)
-                    .map_err(|_| invalid_argument_error("Invalid page_token"))?;
-                let token_str = std::str::from_utf8(&decoded)
-                    .map_err(|_| invalid_argument_error("Invalid page_token"))?;
-
-                let mut parts = token_str.splitn(2, ':');
-                let created_at_ms = parts
-                    .next()
-                    .and_then(|p| p.parse::<i64>().ok())
-                    .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-                let run_id_str = parts
-                    .next()
-                    .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-
-                let created_at = Utc
-                    .timestamp_millis_opt(created_at_ms)
-                    .single()
-                    .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-                let run_id = uuid::Uuid::parse_str(run_id_str)
-                    .map_err(|_| invalid_argument_error("Invalid page_token"))?;
-
+                let (created_at, run_id) = decode_cursor(&page.page_token)?;
                 Some(kagzi_store::WorkflowCursor { created_at, run_id })
             }
         } else {
@@ -281,10 +233,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         let next_page_token = workflows_result
             .next_cursor
-            .map(|c| {
-                let cursor_str = format!("{}:{}", c.created_at.timestamp_millis(), c.run_id);
-                base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
-            })
+            .map(|c| encode_cursor(c.created_at.timestamp_millis(), &c.run_id))
             .unwrap_or_default();
 
         Ok(Response::new(ListWorkflowSchedulesResponse {
@@ -306,10 +255,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let current = self
             .store
@@ -389,10 +335,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
-        }
-        let namespace_id = req.namespace_id;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
 
         let result = self
             .store

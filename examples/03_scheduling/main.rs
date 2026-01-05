@@ -49,7 +49,7 @@ async fn cron_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .namespace(namespace)
         .workflow("cleanup_workflow")
         .cron("*/1 * * * * *") // every second for demo
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -88,7 +88,7 @@ async fn durable_sleep_demo(server: &str, namespace: &str) -> anyhow::Result<()>
     let run = client
         .start("sleep_demo")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -115,7 +115,7 @@ async fn catchup_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .workflow("catchup_workflow")
         .cron("*/5 * * * * *") // every 5 seconds
         .catchup(10)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

@@ -62,7 +62,7 @@ async fn transform_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("json_transform")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -113,7 +113,7 @@ async fn large_payload_demo(server: &str, namespace: &str) -> anyhow::Result<()>
     let run = client
         .start("large_payload")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

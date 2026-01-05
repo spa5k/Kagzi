@@ -58,7 +58,7 @@ async fn run_polling(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("poll_job")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -96,7 +96,7 @@ async fn run_timeout(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("poll_with_timeout")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

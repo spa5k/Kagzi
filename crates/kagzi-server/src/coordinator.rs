@@ -4,21 +4,20 @@
 //! - Firing due cron schedules
 //! - Marking stale workers offline
 
+use std::num::NonZeroU32;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
+use governor::clock::DefaultClock;
+use governor::state::{InMemoryState, NotKeyed};
+use governor::{Quota, RateLimiter};
 use kagzi_queue::QueueNotifier;
 use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::config::CoordinatorSettings;
-
-/// Global rate limiter for schedule instance creation
-/// Tracks how many instances have been created in the current second
-static BACKFILL_COUNTER: AtomicI32 = AtomicI32::new(0);
 
 /// Run the coordinator loop.
 ///
@@ -36,20 +35,11 @@ pub async fn run<Q: QueueNotifier>(
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    // Spawn a background task to reset the rate limit counter every second
-    let shutdown_clone = shutdown.clone();
-    let _reset_handle = tokio::spawn(async move {
-        let mut reset_interval = tokio::time::interval(Duration::from_secs(1));
-        reset_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                _ = shutdown_clone.cancelled() => break,
-                _ = reset_interval.tick() => {
-                    BACKFILL_COUNTER.store(0, Ordering::Relaxed);
-                }
-            }
-        }
-    });
+    // Initialize rate limiter for schedule backfilling
+    let rate_limiter = RateLimiter::direct(Quota::per_second(
+        NonZeroU32::new(settings.max_backfill_per_second.max(1) as u32)
+            .expect("max(1) guarantees non-zero"),
+    ));
 
     info!(
         interval_secs = settings.interval_secs,
@@ -64,13 +54,10 @@ pub async fn run<Q: QueueNotifier>(
         tokio::select! {
             _ = shutdown.cancelled() => {
                 info!("Coordinator shutting down");
-                // Note: _reset_handle is dropped here and will be aborted.
-                // If panic detection is desired, await it explicitly:
-                // let _ = tokio::time::timeout(Duration::from_secs(1), _reset_handle).await;
                 break;
             }
             _ = ticker.tick() => {
-                if let Err(e) = fire_due_schedules(&store, &queue, &settings).await {
+                if let Err(e) = fire_due_schedules(&store, &queue, &settings, &rate_limiter).await {
                     error!("Failed to fire schedules: {:?}", e);
                 }
 
@@ -86,6 +73,7 @@ async fn fire_due_schedules<Q: QueueNotifier>(
     store: &PgStore,
     queue: &Q,
     settings: &CoordinatorSettings,
+    rate_limiter: &RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
 ) -> Result<(), kagzi_store::StoreError> {
     let now = Utc::now();
     let templates = store
@@ -103,7 +91,6 @@ async fn fire_due_schedules<Q: QueueNotifier>(
     }
 
     let mut fired = 0;
-    let mut skipped_rate_limit = 0;
 
     for template in templates {
         let Some(current_fire_at) = template.available_at else {
@@ -178,17 +165,11 @@ async fn fire_due_schedules<Q: QueueNotifier>(
         }
 
         // Check global rate limit before creating instance
-        let current_count = BACKFILL_COUNTER.fetch_add(1, Ordering::Relaxed);
-        if current_count >= settings.max_backfill_per_second {
-            BACKFILL_COUNTER.fetch_sub(1, Ordering::Relaxed);
-            skipped_rate_limit += 1;
-            if skipped_rate_limit == 1 {
-                // Only log once per tick
-                warn!(
-                    max_backfill_per_second = settings.max_backfill_per_second,
-                    "Rate limit reached, will process remaining schedules next tick"
-                );
-            }
+        if rate_limiter.check().is_err() {
+            warn!(
+                max_backfill_per_second = settings.max_backfill_per_second,
+                "Rate limit reached for schedule backfill, pausing until next tick"
+            );
             // Don't process this schedule now, will be picked up next tick
             continue;
         }
@@ -244,7 +225,7 @@ async fn fire_due_schedules<Q: QueueNotifier>(
 
     // Only log if we actually fired something
     if fired > 0 {
-        info!(fired, skipped_rate_limit, "Fired scheduled workflows");
+        info!(fired, "Fired scheduled workflows");
     }
 
     Ok(())

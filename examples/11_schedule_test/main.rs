@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         .namespace(&namespace)
         .workflow("cleanup_workflow")
         .cron("0 */2 * * * *") // every 2 minutes (second minute hour day month weekday)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

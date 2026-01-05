@@ -77,7 +77,7 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
     let high = client
         .start("priority_task")
         .namespace("high-priority")
-        .input(&high_input)
+        .input(&high_input)?
         .send()
         .await?;
     let low_input = TaskInput {
@@ -86,7 +86,7 @@ async fn priority_demo(server: &str) -> anyhow::Result<()> {
     let low = client
         .start("priority_task")
         .namespace("low-priority")
-        .input(&low_input)
+        .input(&low_input)?
         .send()
         .await?;
 
@@ -143,7 +143,7 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
     let prod_run = client
         .start("ns_task")
         .namespace("production")
-        .input(&prod_input)
+        .input(&prod_input)?
         .send()
         .await?;
     let staging_input = TaskInput {
@@ -152,7 +152,7 @@ async fn namespace_demo(server: &str) -> anyhow::Result<()> {
     let staging_run = client
         .start("ns_task")
         .namespace("staging")
-        .input(&staging_input)
+        .input(&staging_input)?
         .send()
         .await?;
 

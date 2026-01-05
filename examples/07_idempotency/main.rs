@@ -60,14 +60,14 @@ async fn external_id_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
         .start("charge_payment")
         .namespace(namespace)
         .idempotency_key(external_id)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
     let run2 = client
         .start("charge_payment")
         .namespace(namespace)
         .idempotency_key(external_id)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -101,7 +101,7 @@ async fn memoization_demo(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("memoized_workflow")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 

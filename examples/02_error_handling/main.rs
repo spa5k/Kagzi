@@ -71,7 +71,7 @@ async fn run_flaky(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("flaky_step")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -108,7 +108,7 @@ async fn run_fatal(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("fatal_step")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
@@ -161,7 +161,7 @@ async fn run_override(server: &str, namespace: &str) -> anyhow::Result<()> {
     let run = client
         .start("override_step")
         .namespace(namespace)
-        .input(&input)
+        .input(&input)?
         .send()
         .await?;
 
