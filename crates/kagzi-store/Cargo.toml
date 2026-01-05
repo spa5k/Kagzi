@@ -11,10 +11,10 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-trait = "0.1"
+async-trait.workspace = true
 backon.workspace = true
 chrono.workspace = true
-md5 = "0.8.0"
+md5.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
