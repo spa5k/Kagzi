@@ -104,8 +104,6 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
     }
 }
 
-// StringExt trait removed - use Option::filter instead
-
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     #[instrument(skip(self, request), fields(task_queue = %request.get_ref().task_queue))]
@@ -415,7 +413,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         let _ = self.validate_workflow_action(run_id, false).await?;
 
-        let workflow_retry = self
+        let workflow_retry_policy = self
             .store
             .workflows()
             .get_retry_policy(run_id)
@@ -433,7 +431,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 step_id: req.step_name.clone(),
                 step_kind,
                 input,
-                retry_policy: merge_proto_policy(req.retry_policy, workflow_retry.as_ref()),
+                retry_policy: merge_proto_policy(req.retry_policy, workflow_retry_policy.as_ref()),
             })
             .await
             .map_err(map_store_error)?;
@@ -466,7 +464,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteStepRequest>,
     ) -> Result<Response<CompleteStepResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
 
@@ -521,7 +518,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<FailStepResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
 
@@ -574,7 +570,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteWorkflowRequest>,
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
 
@@ -640,11 +635,8 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
     #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
     async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
-        // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
-
-        const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 
         let req = request.into_inner();
 
@@ -663,13 +655,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         if duration_seconds == 0 {
             // Zero duration sleep is a no-op, return immediately
             return Ok(Response::new(()));
-        }
-
-        if duration_seconds > MAX_SLEEP_SECONDS {
-            return Err(invalid_argument_error(format!(
-                "Sleep duration cannot exceed {} seconds (30 days)",
-                MAX_SLEEP_SECONDS
-            )));
         }
 
         self.store

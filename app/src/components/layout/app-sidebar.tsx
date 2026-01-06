@@ -1,31 +1,38 @@
-"use client"
+"use client";
 
-import * as React from "react"
 import {
-  AudioWaveform,
+  AudioWave01FreeIcons,
   BookOpen,
   Bot,
   Command,
   Frame,
-  GalleryVerticalEnd,
   Map,
+  Picture,
   PieChart,
   Settings2,
-  SquareTerminal,
-} from "lucide-react"
+  Terminal,
+} from "@hugeicons/core-free-icons";
+import * as React from "react";
 
-import { NavMain } from "@/components/nav-main"
-import { NavProjects } from "@/components/nav-projects"
-import { NavUser } from "@/components/nav-user"
-import { TeamSwitcher } from "@/components/team-switcher"
+import { NavMain } from "@/components/layout/nav-main";
+import { NavProjects } from "@/components/layout/nav-projects";
+import { NavUser } from "@/components/layout/nav-user";
+import { TeamSwitcher } from "@/components/layout/team-switcher";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
-} from "@/components/ui/sidebar"
+} from "@/components/ui/sidebar";
+import { HugeiconsIcon } from "@hugeicons/react";
 
+// Logo wrapper components
+const AcmeLogo = () => <HugeiconsIcon icon={Picture} />;
+const AcmeCorpLogo = () => <HugeiconsIcon icon={AudioWave01FreeIcons} />;
+const EvilCorpLogo = () => <HugeiconsIcon icon={Command} />;
+
+// This is sample data.
 const data = {
   user: {
     name: "shadcn",
@@ -35,17 +42,17 @@ const data = {
   teams: [
     {
       name: "Acme Inc",
-      logo: GalleryVerticalEnd,
+      logo: AcmeLogo,
       plan: "Enterprise",
     },
     {
       name: "Acme Corp.",
-      logo: AudioWaveform,
+      logo: AcmeCorpLogo,
       plan: "Startup",
     },
     {
       name: "Evil Corp.",
-      logo: Command,
+      logo: EvilCorpLogo,
       plan: "Free",
     },
   ],
@@ -53,7 +60,7 @@ const data = {
     {
       title: "Playground",
       url: "#",
-      icon: SquareTerminal,
+      icon: Terminal,
       isActive: true,
       items: [
         {
@@ -153,7 +160,7 @@ const data = {
       icon: Map,
     },
   ],
-}
+};
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
@@ -170,5 +177,5 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
-  )
+  );
 }
