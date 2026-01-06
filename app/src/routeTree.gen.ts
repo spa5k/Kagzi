@@ -8,70 +8,106 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as AboutRouteImport } from './routes/about'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as rootRouteImport } from "./routes/__root";
+import { Route as WorkflowsRouteImport } from "./routes/workflows";
+import { Route as WorkersRouteImport } from "./routes/workers";
+import { Route as SchedulesRouteImport } from "./routes/schedules";
+import { Route as IndexRouteImport } from "./routes/index";
 
-const AboutRoute = AboutRouteImport.update({
-  id: '/about',
-  path: '/about',
+const WorkflowsRoute = WorkflowsRouteImport.update({
+  id: "/workflows",
+  path: "/workflows",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
+const WorkersRoute = WorkersRouteImport.update({
+  id: "/workers",
+  path: "/workers",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const SchedulesRoute = SchedulesRouteImport.update({
+  id: "/schedules",
+  path: "/schedules",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/about': typeof AboutRoute
+  "/": typeof IndexRoute;
+  "/schedules": typeof SchedulesRoute;
+  "/workers": typeof WorkersRoute;
+  "/workflows": typeof WorkflowsRoute;
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/about': typeof AboutRoute
+  "/": typeof IndexRoute;
+  "/schedules": typeof SchedulesRoute;
+  "/workers": typeof WorkersRoute;
+  "/workflows": typeof WorkflowsRoute;
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/about': typeof AboutRoute
+  __root__: typeof rootRouteImport;
+  "/": typeof IndexRoute;
+  "/schedules": typeof SchedulesRoute;
+  "/workers": typeof WorkersRoute;
+  "/workflows": typeof WorkflowsRoute;
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/about'
-  fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/about'
-  id: '__root__' | '/' | '/about'
-  fileRoutesById: FileRoutesById
+  fileRoutesByFullPath: FileRoutesByFullPath;
+  fullPaths: "/" | "/schedules" | "/workers" | "/workflows";
+  fileRoutesByTo: FileRoutesByTo;
+  to: "/" | "/schedules" | "/workers" | "/workflows";
+  id: "__root__" | "/" | "/schedules" | "/workers" | "/workflows";
+  fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  AboutRoute: typeof AboutRoute
+  IndexRoute: typeof IndexRoute;
+  SchedulesRoute: typeof SchedulesRoute;
+  WorkersRoute: typeof WorkersRoute;
+  WorkflowsRoute: typeof WorkflowsRoute;
 }
 
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    '/about': {
-      id: '/about'
-      path: '/about'
-      fullPath: '/about'
-      preLoaderRoute: typeof AboutRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
+    "/workflows": {
+      id: "/workflows";
+      path: "/workflows";
+      fullPath: "/workflows";
+      preLoaderRoute: typeof WorkflowsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/workers": {
+      id: "/workers";
+      path: "/workers";
+      fullPath: "/workers";
+      preLoaderRoute: typeof WorkersRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/schedules": {
+      id: "/schedules";
+      path: "/schedules";
+      fullPath: "/schedules";
+      preLoaderRoute: typeof SchedulesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/": {
+      id: "/";
+      path: "/";
+      fullPath: "/";
+      preLoaderRoute: typeof IndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AboutRoute: AboutRoute,
-}
+  SchedulesRoute: SchedulesRoute,
+  WorkersRoute: WorkersRoute,
+  WorkflowsRoute: WorkflowsRoute,
+};
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+  ._addFileTypes<FileRouteTypes>();
