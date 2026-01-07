@@ -510,10 +510,19 @@ impl Worker {
                     };
                     let run_id = task.run_id.clone();
                     let default_retry = self.default_retry.clone();
+                    let namespace_id = self.namespace_id.clone();
 
                     tokio::spawn(async move {
                         let _permit = permit;
-                        execute_workflow(client, handler, run_id, input, default_retry).await;
+                        execute_workflow(
+                            client,
+                            handler,
+                            run_id,
+                            namespace_id,
+                            input,
+                            default_retry,
+                        )
+                        .await;
                     });
                 } else {
                     error!(workflow_type = %task.workflow_type, "No handler for workflow type");
@@ -553,12 +562,15 @@ async fn execute_workflow(
     mut client: WorkerServiceClient<tower::timeout::Timeout<Channel>>,
     handler: Arc<WorkflowFn>,
     run_id: String,
+    namespace_id: String,
     input: serde_json::Value,
     default_retry: Option<Retry>,
 ) {
+    let namespace_id_for_requests = namespace_id.clone();
     let ctx = Context {
         client: client.clone(),
         run_id: run_id.clone(),
+        namespace_id,
         default_retry,
     };
 
@@ -586,6 +598,7 @@ async fn execute_workflow(
 
             let mut complete_request = Request::new(CompleteWorkflowRequest {
                 run_id,
+                namespace_id: namespace_id_for_requests.clone(),
                 output: Some(ProtoPayload {
                     data,
                     metadata: HashMap::new(),
@@ -610,6 +623,7 @@ async fn execute_workflow(
 
             let mut fail_request = Request::new(FailWorkflowRequest {
                 run_id,
+                namespace_id: namespace_id_for_requests.clone(),
                 error: Some(kagzi_err.to_detail()),
             });
             inject_context(fail_request.metadata_mut());

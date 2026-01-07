@@ -2,8 +2,9 @@ import { Badge } from "@/components/ui/badge";
 import { QueryError } from "@/components/ui/query-error";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { useSchedules } from "@/hooks/use-dashboard";
-import { createFileRoute } from "@tanstack/react-router";
 import { Timestamp } from "@bufbuild/protobuf";
+import { Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 
 function formatCron(expr: string): string {
   const parts = expr.split(" ");
@@ -34,7 +35,7 @@ function formatRelativeTime(timestamp: Timestamp | undefined): string {
   return future ? "soon" : "just now";
 }
 
-export const Route = createFileRoute("/schedules")({
+export const Route = createFileRoute("/schedules/")({
   component: SchedulesPage,
 });
 
@@ -86,10 +87,16 @@ function SchedulesPage() {
             {schedules?.map((schedule) => (
               <tr
                 key={schedule.scheduleId}
-                className="border-b border-border last:border-b-0 hover:bg-muted/20"
+                className="border-b border-border last:border-b-0 hover:bg-muted/20 cursor-pointer transition-colors"
               >
                 <td className="p-3">
-                  <span className="font-medium text-sm">{schedule.workflowType}</span>
+                  <Link
+                    to="/schedules/$id"
+                    params={{ id: schedule.scheduleId }}
+                    className="font-medium text-sm hover:text-primary transition-colors"
+                  >
+                    {schedule.workflowType}
+                  </Link>
                 </td>
                 <td className="p-3">
                   <div>

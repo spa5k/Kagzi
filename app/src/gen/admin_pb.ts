@@ -11,9 +11,9 @@ import type {
   PartialMessage,
   PlainMessage,
 } from "@bufbuild/protobuf";
-import { Message, proto3, Timestamp } from "@bufbuild/protobuf";
+import { Message, proto3, protoInt64, Timestamp } from "@bufbuild/protobuf";
 import { Step, Worker, WorkerStatus } from "./worker_pb";
-import { PageInfo, PageRequest } from "./common_pb";
+import { ErrorDetail, PageInfo, PageRequest } from "./common_pb";
 
 /**
  * @generated from enum kagzi.v1.ServingStatus
@@ -22,26 +22,28 @@ export enum ServingStatus {
   /**
    * @generated from enum value: SERVING_STATUS_UNSPECIFIED = 0;
    */
-  SERVING_STATUS_UNSPECIFIED = 0,
+  UNSPECIFIED = 0,
 
   /**
-   * @generated from enum value: SERVING = 1;
+   * @generated from enum value: SERVING_STATUS_SERVING = 1;
    */
   SERVING = 1,
 
   /**
-   * @generated from enum value: NOT_SERVING = 2;
+   * @generated from enum value: SERVING_STATUS_NOT_SERVING = 2;
    */
   NOT_SERVING = 2,
 }
 // Retrieve enum metadata with: proto3.getEnumType(ServingStatus)
 proto3.util.setEnumType(ServingStatus, "kagzi.v1.ServingStatus", [
   { no: 0, name: "SERVING_STATUS_UNSPECIFIED" },
-  { no: 1, name: "SERVING" },
-  { no: 2, name: "NOT_SERVING" },
+  { no: 1, name: "SERVING_STATUS_SERVING" },
+  { no: 2, name: "SERVING_STATUS_NOT_SERVING" },
 ]);
 
 /**
+ * ListWorkersRequest supports filtering workers by task queue and status.
+ *
  * @generated from message kagzi.v1.ListWorkersRequest
  */
 export class ListWorkersRequest extends Message<ListWorkersRequest> {
@@ -236,14 +238,14 @@ export class GetWorkerResponse extends Message<GetWorkerResponse> {
  */
 export class GetStepRequest extends Message<GetStepRequest> {
   /**
-   * @generated from field: string step_id = 1;
-   */
-  stepId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string step_id = 2;
+   */
+  stepId = "";
 
   constructor(data?: PartialMessage<GetStepRequest>) {
     super();
@@ -253,8 +255,8 @@ export class GetStepRequest extends Message<GetStepRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetStepRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetStepRequest {
@@ -318,21 +320,28 @@ export class GetStepResponse extends Message<GetStepResponse> {
 }
 
 /**
+ * ListStepsRequest retrieves steps for a workflow run, optionally filtered by step name.
+ *
  * @generated from message kagzi.v1.ListStepsRequest
  */
 export class ListStepsRequest extends Message<ListStepsRequest> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * @generated from field: optional string step_name = 2;
+   * @generated from field: optional string step_name = 3;
    */
   stepName?: string;
 
   /**
-   * @generated from field: kagzi.v1.PageRequest page = 3;
+   * @generated from field: kagzi.v1.PageRequest page = 4;
    */
   page?: PageRequest;
 
@@ -344,9 +353,10 @@ export class ListStepsRequest extends Message<ListStepsRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.ListStepsRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "step_name", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
-    { no: 3, name: "page", kind: "message", T: PageRequest },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "step_name", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 4, name: "page", kind: "message", T: PageRequest },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListStepsRequest {
@@ -465,7 +475,7 @@ export class HealthCheckResponse extends Message<HealthCheckResponse> {
   /**
    * @generated from field: kagzi.v1.ServingStatus status = 1;
    */
-  status = ServingStatus.SERVING_STATUS_UNSPECIFIED;
+  status = ServingStatus.UNSPECIFIED;
 
   /**
    * @generated from field: string message = 2;
@@ -550,6 +560,8 @@ export class GetServerInfoRequest extends Message<GetServerInfoRequest> {
 }
 
 /**
+ * GetServerInfoResponse includes version compatibility information for SDK validation.
+ *
  * @generated from message kagzi.v1.GetServerInfoResponse
  */
 export class GetServerInfoResponse extends Message<GetServerInfoResponse> {
@@ -616,5 +628,552 @@ export class GetServerInfoResponse extends Message<GetServerInfoResponse> {
     b: GetServerInfoResponse | PlainMessage<GetServerInfoResponse> | undefined,
   ): boolean {
     return proto3.util.equals(GetServerInfoResponse, a, b);
+  }
+}
+
+/**
+ * GetStatsRequest retrieves system-wide statistics, optionally scoped to a namespace.
+ *
+ * @generated from message kagzi.v1.GetStatsRequest
+ */
+export class GetStatsRequest extends Message<GetStatsRequest> {
+  /**
+   * @generated from field: optional string namespace_id = 1;
+   */
+  namespaceId?: string;
+
+  constructor(data?: PartialMessage<GetStatsRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.GetStatsRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetStatsRequest {
+    return new GetStatsRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetStatsRequest {
+    return new GetStatsRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetStatsRequest {
+    return new GetStatsRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: GetStatsRequest | PlainMessage<GetStatsRequest> | undefined,
+    b: GetStatsRequest | PlainMessage<GetStatsRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(GetStatsRequest, a, b);
+  }
+}
+
+/**
+ * GetStatsResponse provides aggregate counts and breakdowns for monitoring dashboards.
+ *
+ * @generated from message kagzi.v1.GetStatsResponse
+ */
+export class GetStatsResponse extends Message<GetStatsResponse> {
+  /**
+   * @generated from field: int64 total_workflows = 1;
+   */
+  totalWorkflows = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 pending_workflows = 2;
+   */
+  pendingWorkflows = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 running_workflows = 3;
+   */
+  runningWorkflows = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 completed_workflows = 4;
+   */
+  completedWorkflows = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 failed_workflows = 5;
+   */
+  failedWorkflows = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 total_workers = 6;
+   */
+  totalWorkers = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 online_workers = 7;
+   */
+  onlineWorkers = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 total_schedules = 8;
+   */
+  totalSchedules = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 enabled_schedules = 9;
+   */
+  enabledSchedules = protoInt64.zero;
+
+  /**
+   * @generated from field: map<string, int64> workflows_by_status = 10;
+   */
+  workflowsByStatus: { [key: string]: bigint } = {};
+
+  /**
+   * @generated from field: map<string, int64> workflows_by_type = 11;
+   */
+  workflowsByType: { [key: string]: bigint } = {};
+
+  constructor(data?: PartialMessage<GetStatsResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.GetStatsResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "total_workflows", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 2, name: "pending_workflows", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 3, name: "running_workflows", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 4, name: "completed_workflows", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 5, name: "failed_workflows", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 6, name: "total_workers", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 7, name: "online_workers", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 8, name: "total_schedules", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 9, name: "enabled_schedules", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    {
+      no: 10,
+      name: "workflows_by_status",
+      kind: "map",
+      K: 9 /* ScalarType.STRING */,
+      V: { kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    },
+    {
+      no: 11,
+      name: "workflows_by_type",
+      kind: "map",
+      K: 9 /* ScalarType.STRING */,
+      V: { kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetStatsResponse {
+    return new GetStatsResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetStatsResponse {
+    return new GetStatsResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): GetStatsResponse {
+    return new GetStatsResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: GetStatsResponse | PlainMessage<GetStatsResponse> | undefined,
+    b: GetStatsResponse | PlainMessage<GetStatsResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(GetStatsResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.DrainWorkerRequest
+ */
+export class DrainWorkerRequest extends Message<DrainWorkerRequest> {
+  /**
+   * @generated from field: string worker_id = 1;
+   */
+  workerId = "";
+
+  constructor(data?: PartialMessage<DrainWorkerRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.DrainWorkerRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "worker_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): DrainWorkerRequest {
+    return new DrainWorkerRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): DrainWorkerRequest {
+    return new DrainWorkerRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): DrainWorkerRequest {
+    return new DrainWorkerRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: DrainWorkerRequest | PlainMessage<DrainWorkerRequest> | undefined,
+    b: DrainWorkerRequest | PlainMessage<DrainWorkerRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(DrainWorkerRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.DrainWorkerResponse
+ */
+export class DrainWorkerResponse extends Message<DrainWorkerResponse> {
+  /**
+   * @generated from field: bool success = 1;
+   */
+  success = false;
+
+  /**
+   * @generated from field: string message = 2;
+   */
+  message = "";
+
+  /**
+   * @generated from field: optional kagzi.v1.ErrorDetail error = 3;
+   */
+  error?: ErrorDetail;
+
+  constructor(data?: PartialMessage<DrainWorkerResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.DrainWorkerResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "success", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "message", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "error", kind: "message", T: ErrorDetail, opt: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): DrainWorkerResponse {
+    return new DrainWorkerResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): DrainWorkerResponse {
+    return new DrainWorkerResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): DrainWorkerResponse {
+    return new DrainWorkerResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: DrainWorkerResponse | PlainMessage<DrainWorkerResponse> | undefined,
+    b: DrainWorkerResponse | PlainMessage<DrainWorkerResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(DrainWorkerResponse, a, b);
+  }
+}
+
+/**
+ * GetQueueDepthRequest retrieves task counts, optionally filtered by task queue.
+ *
+ * @generated from message kagzi.v1.GetQueueDepthRequest
+ */
+export class GetQueueDepthRequest extends Message<GetQueueDepthRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: optional string task_queue = 2;
+   */
+  taskQueue?: string;
+
+  constructor(data?: PartialMessage<GetQueueDepthRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.GetQueueDepthRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetQueueDepthRequest {
+    return new GetQueueDepthRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetQueueDepthRequest {
+    return new GetQueueDepthRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): GetQueueDepthRequest {
+    return new GetQueueDepthRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: GetQueueDepthRequest | PlainMessage<GetQueueDepthRequest> | undefined,
+    b: GetQueueDepthRequest | PlainMessage<GetQueueDepthRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(GetQueueDepthRequest, a, b);
+  }
+}
+
+/**
+ * GetQueueDepthResponse provides queue depth metrics for capacity planning and monitoring.
+ *
+ * @generated from message kagzi.v1.GetQueueDepthResponse
+ */
+export class GetQueueDepthResponse extends Message<GetQueueDepthResponse> {
+  /**
+   * @generated from field: int64 pending_count = 1;
+   */
+  pendingCount = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 running_count = 2;
+   */
+  runningCount = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 sleeping_count = 3;
+   */
+  sleepingCount = protoInt64.zero;
+
+  /**
+   * @generated from field: map<string, int64> depth_by_queue = 4;
+   */
+  depthByQueue: { [key: string]: bigint } = {};
+
+  constructor(data?: PartialMessage<GetQueueDepthResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.GetQueueDepthResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "pending_count", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 2, name: "running_count", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 3, name: "sleeping_count", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    {
+      no: 4,
+      name: "depth_by_queue",
+      kind: "map",
+      K: 9 /* ScalarType.STRING */,
+      V: { kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): GetQueueDepthResponse {
+    return new GetQueueDepthResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): GetQueueDepthResponse {
+    return new GetQueueDepthResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): GetQueueDepthResponse {
+    return new GetQueueDepthResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: GetQueueDepthResponse | PlainMessage<GetQueueDepthResponse> | undefined,
+    b: GetQueueDepthResponse | PlainMessage<GetQueueDepthResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(GetQueueDepthResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.ListWorkflowTypesRequest
+ */
+export class ListWorkflowTypesRequest extends Message<ListWorkflowTypesRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: kagzi.v1.PageRequest page = 2;
+   */
+  page?: PageRequest;
+
+  constructor(data?: PartialMessage<ListWorkflowTypesRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.ListWorkflowTypesRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "page", kind: "message", T: PageRequest },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ListWorkflowTypesRequest {
+    return new ListWorkflowTypesRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ListWorkflowTypesRequest {
+    return new ListWorkflowTypesRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ListWorkflowTypesRequest {
+    return new ListWorkflowTypesRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ListWorkflowTypesRequest | PlainMessage<ListWorkflowTypesRequest> | undefined,
+    b: ListWorkflowTypesRequest | PlainMessage<ListWorkflowTypesRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(ListWorkflowTypesRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.ListWorkflowTypesResponse
+ */
+export class ListWorkflowTypesResponse extends Message<ListWorkflowTypesResponse> {
+  /**
+   * @generated from field: repeated kagzi.v1.WorkflowTypeInfo workflow_types = 1;
+   */
+  workflowTypes: WorkflowTypeInfo[] = [];
+
+  /**
+   * @generated from field: kagzi.v1.PageInfo page = 2;
+   */
+  page?: PageInfo;
+
+  constructor(data?: PartialMessage<ListWorkflowTypesResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.ListWorkflowTypesResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "workflow_types", kind: "message", T: WorkflowTypeInfo, repeated: true },
+    { no: 2, name: "page", kind: "message", T: PageInfo },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ListWorkflowTypesResponse {
+    return new ListWorkflowTypesResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ListWorkflowTypesResponse {
+    return new ListWorkflowTypesResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ListWorkflowTypesResponse {
+    return new ListWorkflowTypesResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ListWorkflowTypesResponse | PlainMessage<ListWorkflowTypesResponse> | undefined,
+    b: ListWorkflowTypesResponse | PlainMessage<ListWorkflowTypesResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(ListWorkflowTypesResponse, a, b);
+  }
+}
+
+/**
+ * WorkflowTypeInfo aggregates statistics for a registered workflow type.
+ *
+ * @generated from message kagzi.v1.WorkflowTypeInfo
+ */
+export class WorkflowTypeInfo extends Message<WorkflowTypeInfo> {
+  /**
+   * @generated from field: string workflow_type = 1;
+   */
+  workflowType = "";
+
+  /**
+   * @generated from field: int64 total_runs = 2;
+   */
+  totalRuns = protoInt64.zero;
+
+  /**
+   * @generated from field: int64 active_runs = 3;
+   */
+  activeRuns = protoInt64.zero;
+
+  /**
+   * @generated from field: repeated string task_queues = 4;
+   */
+  taskQueues: string[] = [];
+
+  constructor(data?: PartialMessage<WorkflowTypeInfo>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.WorkflowTypeInfo";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "workflow_type", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "total_runs", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 3, name: "active_runs", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 4, name: "task_queues", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): WorkflowTypeInfo {
+    return new WorkflowTypeInfo().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): WorkflowTypeInfo {
+    return new WorkflowTypeInfo().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): WorkflowTypeInfo {
+    return new WorkflowTypeInfo().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: WorkflowTypeInfo | PlainMessage<WorkflowTypeInfo> | undefined,
+    b: WorkflowTypeInfo | PlainMessage<WorkflowTypeInfo> | undefined,
+  ): boolean {
+    return proto3.util.equals(WorkflowTypeInfo, a, b);
   }
 }

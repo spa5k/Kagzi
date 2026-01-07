@@ -1,7 +1,7 @@
 import { QueryError } from "@/components/ui/query-error";
 import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
 import { useSchedules, useWorkers, useWorkflows } from "@/hooks/use-dashboard";
-import { WorkerStatus } from "@/types";
+import { WorkerStatus, WorkflowStatusLabel } from "@/types";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
@@ -102,8 +102,8 @@ function Index() {
                 {workflows?.slice(0, 5).map((workflow) => (
                   <Link
                     key={workflow.runId}
-                    to="/workflows"
-                    search={{ selected: workflow.runId }}
+                    to="/workflows/$id"
+                    params={{ id: workflow.runId }}
                     className="group flex items-center justify-between py-4 border-b border-border hover:bg-muted/50 transition-colors px-2"
                   >
                     <div className="flex items-center gap-4">
@@ -118,7 +118,7 @@ function Index() {
                       </div>
                     </div>
                     <div className="font-mono text-xs opacity-50 group-hover:opacity-100 transition-opacity">
-                      Running
+                      {WorkflowStatusLabel[workflow.status]}
                     </div>
                   </Link>
                 ))}
@@ -137,14 +137,16 @@ function Index() {
                 {schedules
                   ?.filter((s) => s.enabled)
                   .map((schedule) => (
-                    <div
+                    <Link
                       key={schedule.scheduleId}
-                      className="group flex items-center justify-between py-4 border-b border-border px-2"
+                      to="/schedules/$id"
+                      params={{ id: schedule.scheduleId }}
+                      className="group flex items-center justify-between py-4 border-b border-border px-2 hover:bg-muted/50 transition-colors"
                     >
                       <div className="flex items-center gap-4">
                         <div className="size-2 bg-foreground" />
                         <div className="flex flex-col">
-                          <span className="font-bold text-sm tracking-tight uppercase">
+                          <span className="font-bold text-sm tracking-tight uppercase group-hover:text-primary transition-colors">
                             {schedule.workflowType}
                           </span>
                           <span className="font-mono text-[10px] text-muted-foreground">
@@ -155,7 +157,7 @@ function Index() {
                       <div className="px-2 py-1 bg-muted font-mono text-[10px]">
                         {schedule.cronExpr}
                       </div>
-                    </div>
+                    </Link>
                   ))}
                 {activeSchedules === 0 && (
                   <div className="py-8 text-center border-b border-border">

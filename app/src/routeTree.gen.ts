@@ -8,164 +8,213 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as WorkersRouteImport } from './routes/workers'
-import { Route as SchedulesRouteImport } from './routes/schedules'
-import { Route as WorkflowsRouteRouteImport } from './routes/workflows/route'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as WorkflowsIndexRouteImport } from './routes/workflows/index'
-import { Route as WorkflowsIdRouteImport } from './routes/workflows/$id'
+import { Route as rootRouteImport } from "./routes/__root";
+import { Route as WorkersRouteImport } from "./routes/workers";
+import { Route as WorkflowsRouteRouteImport } from "./routes/workflows/route";
+import { Route as SchedulesRouteRouteImport } from "./routes/schedules/route";
+import { Route as IndexRouteImport } from "./routes/index";
+import { Route as WorkflowsIndexRouteImport } from "./routes/workflows/index";
+import { Route as SchedulesIndexRouteImport } from "./routes/schedules/index";
+import { Route as WorkflowsIdRouteImport } from "./routes/workflows/$id";
+import { Route as SchedulesIdRouteImport } from "./routes/schedules/$id";
 
 const WorkersRoute = WorkersRouteImport.update({
-  id: '/workers',
-  path: '/workers',
+  id: "/workers",
+  path: "/workers",
   getParentRoute: () => rootRouteImport,
-} as any)
-const SchedulesRoute = SchedulesRouteImport.update({
-  id: '/schedules',
-  path: '/schedules',
-  getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const WorkflowsRouteRoute = WorkflowsRouteRouteImport.update({
-  id: '/workflows',
-  path: '/workflows',
+  id: "/workflows",
+  path: "/workflows",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
+const SchedulesRouteRoute = SchedulesRouteRouteImport.update({
+  id: "/schedules",
+  path: "/schedules",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any);
 const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
-  id: '/',
-  path: '/',
+  id: "/",
+  path: "/",
   getParentRoute: () => WorkflowsRouteRoute,
-} as any)
+} as any);
+const SchedulesIndexRoute = SchedulesIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => SchedulesRouteRoute,
+} as any);
 const WorkflowsIdRoute = WorkflowsIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
+  id: "/$id",
+  path: "/$id",
   getParentRoute: () => WorkflowsRouteRoute,
-} as any)
+} as any);
+const SchedulesIdRoute = SchedulesIdRouteImport.update({
+  id: "/$id",
+  path: "/$id",
+  getParentRoute: () => SchedulesRouteRoute,
+} as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/workflows': typeof WorkflowsRouteRouteWithChildren
-  '/schedules': typeof SchedulesRoute
-  '/workers': typeof WorkersRoute
-  '/workflows/$id': typeof WorkflowsIdRoute
-  '/workflows/': typeof WorkflowsIndexRoute
+  "/": typeof IndexRoute;
+  "/schedules": typeof SchedulesRouteRouteWithChildren;
+  "/workflows": typeof WorkflowsRouteRouteWithChildren;
+  "/workers": typeof WorkersRoute;
+  "/schedules/$id": typeof SchedulesIdRoute;
+  "/workflows/$id": typeof WorkflowsIdRoute;
+  "/schedules/": typeof SchedulesIndexRoute;
+  "/workflows/": typeof WorkflowsIndexRoute;
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/schedules': typeof SchedulesRoute
-  '/workers': typeof WorkersRoute
-  '/workflows/$id': typeof WorkflowsIdRoute
-  '/workflows': typeof WorkflowsIndexRoute
+  "/": typeof IndexRoute;
+  "/workers": typeof WorkersRoute;
+  "/schedules/$id": typeof SchedulesIdRoute;
+  "/workflows/$id": typeof WorkflowsIdRoute;
+  "/schedules": typeof SchedulesIndexRoute;
+  "/workflows": typeof WorkflowsIndexRoute;
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/workflows': typeof WorkflowsRouteRouteWithChildren
-  '/schedules': typeof SchedulesRoute
-  '/workers': typeof WorkersRoute
-  '/workflows/$id': typeof WorkflowsIdRoute
-  '/workflows/': typeof WorkflowsIndexRoute
+  __root__: typeof rootRouteImport;
+  "/": typeof IndexRoute;
+  "/schedules": typeof SchedulesRouteRouteWithChildren;
+  "/workflows": typeof WorkflowsRouteRouteWithChildren;
+  "/workers": typeof WorkersRoute;
+  "/schedules/$id": typeof SchedulesIdRoute;
+  "/workflows/$id": typeof WorkflowsIdRoute;
+  "/schedules/": typeof SchedulesIndexRoute;
+  "/workflows/": typeof WorkflowsIndexRoute;
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath
+  fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
-    | '/'
-    | '/workflows'
-    | '/schedules'
-    | '/workers'
-    | '/workflows/$id'
-    | '/workflows/'
-  fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/schedules' | '/workers' | '/workflows/$id' | '/workflows'
+    | "/"
+    | "/schedules"
+    | "/workflows"
+    | "/workers"
+    | "/schedules/$id"
+    | "/workflows/$id"
+    | "/schedules/"
+    | "/workflows/";
+  fileRoutesByTo: FileRoutesByTo;
+  to: "/" | "/workers" | "/schedules/$id" | "/workflows/$id" | "/schedules" | "/workflows";
   id:
-    | '__root__'
-    | '/'
-    | '/workflows'
-    | '/schedules'
-    | '/workers'
-    | '/workflows/$id'
-    | '/workflows/'
-  fileRoutesById: FileRoutesById
+    | "__root__"
+    | "/"
+    | "/schedules"
+    | "/workflows"
+    | "/workers"
+    | "/schedules/$id"
+    | "/workflows/$id"
+    | "/schedules/"
+    | "/workflows/";
+  fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  WorkflowsRouteRoute: typeof WorkflowsRouteRouteWithChildren
-  SchedulesRoute: typeof SchedulesRoute
-  WorkersRoute: typeof WorkersRoute
+  IndexRoute: typeof IndexRoute;
+  SchedulesRouteRoute: typeof SchedulesRouteRouteWithChildren;
+  WorkflowsRouteRoute: typeof WorkflowsRouteRouteWithChildren;
+  WorkersRoute: typeof WorkersRoute;
 }
 
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    '/workers': {
-      id: '/workers'
-      path: '/workers'
-      fullPath: '/workers'
-      preLoaderRoute: typeof WorkersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/schedules': {
-      id: '/schedules'
-      path: '/schedules'
-      fullPath: '/schedules'
-      preLoaderRoute: typeof SchedulesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/workflows': {
-      id: '/workflows'
-      path: '/workflows'
-      fullPath: '/workflows'
-      preLoaderRoute: typeof WorkflowsRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/workflows/': {
-      id: '/workflows/'
-      path: '/'
-      fullPath: '/workflows/'
-      preLoaderRoute: typeof WorkflowsIndexRouteImport
-      parentRoute: typeof WorkflowsRouteRoute
-    }
-    '/workflows/$id': {
-      id: '/workflows/$id'
-      path: '/$id'
-      fullPath: '/workflows/$id'
-      preLoaderRoute: typeof WorkflowsIdRouteImport
-      parentRoute: typeof WorkflowsRouteRoute
-    }
+    "/workers": {
+      id: "/workers";
+      path: "/workers";
+      fullPath: "/workers";
+      preLoaderRoute: typeof WorkersRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/workflows": {
+      id: "/workflows";
+      path: "/workflows";
+      fullPath: "/workflows";
+      preLoaderRoute: typeof WorkflowsRouteRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/schedules": {
+      id: "/schedules";
+      path: "/schedules";
+      fullPath: "/schedules";
+      preLoaderRoute: typeof SchedulesRouteRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/": {
+      id: "/";
+      path: "/";
+      fullPath: "/";
+      preLoaderRoute: typeof IndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/workflows/": {
+      id: "/workflows/";
+      path: "/";
+      fullPath: "/workflows/";
+      preLoaderRoute: typeof WorkflowsIndexRouteImport;
+      parentRoute: typeof WorkflowsRouteRoute;
+    };
+    "/schedules/": {
+      id: "/schedules/";
+      path: "/";
+      fullPath: "/schedules/";
+      preLoaderRoute: typeof SchedulesIndexRouteImport;
+      parentRoute: typeof SchedulesRouteRoute;
+    };
+    "/workflows/$id": {
+      id: "/workflows/$id";
+      path: "/$id";
+      fullPath: "/workflows/$id";
+      preLoaderRoute: typeof WorkflowsIdRouteImport;
+      parentRoute: typeof WorkflowsRouteRoute;
+    };
+    "/schedules/$id": {
+      id: "/schedules/$id";
+      path: "/$id";
+      fullPath: "/schedules/$id";
+      preLoaderRoute: typeof SchedulesIdRouteImport;
+      parentRoute: typeof SchedulesRouteRoute;
+    };
   }
 }
 
+interface SchedulesRouteRouteChildren {
+  SchedulesIdRoute: typeof SchedulesIdRoute;
+  SchedulesIndexRoute: typeof SchedulesIndexRoute;
+}
+
+const SchedulesRouteRouteChildren: SchedulesRouteRouteChildren = {
+  SchedulesIdRoute: SchedulesIdRoute,
+  SchedulesIndexRoute: SchedulesIndexRoute,
+};
+
+const SchedulesRouteRouteWithChildren = SchedulesRouteRoute._addFileChildren(
+  SchedulesRouteRouteChildren,
+);
+
 interface WorkflowsRouteRouteChildren {
-  WorkflowsIdRoute: typeof WorkflowsIdRoute
-  WorkflowsIndexRoute: typeof WorkflowsIndexRoute
+  WorkflowsIdRoute: typeof WorkflowsIdRoute;
+  WorkflowsIndexRoute: typeof WorkflowsIndexRoute;
 }
 
 const WorkflowsRouteRouteChildren: WorkflowsRouteRouteChildren = {
   WorkflowsIdRoute: WorkflowsIdRoute,
   WorkflowsIndexRoute: WorkflowsIndexRoute,
-}
+};
 
 const WorkflowsRouteRouteWithChildren = WorkflowsRouteRoute._addFileChildren(
   WorkflowsRouteRouteChildren,
-)
+);
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SchedulesRouteRoute: SchedulesRouteRouteWithChildren,
   WorkflowsRouteRoute: WorkflowsRouteRouteWithChildren,
-  SchedulesRoute: SchedulesRoute,
   WorkersRoute: WorkersRoute,
-}
+};
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+  ._addFileTypes<FileRouteTypes>();

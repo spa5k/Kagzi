@@ -1,13 +1,33 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { useWorkflows } from "@/hooks/use-dashboard";
+import { useListWorkflowTypes, useStartWorkflow } from "@/hooks/use-grpc-services";
+import { ListWorkflowTypesRequest } from "@/gen/admin_pb";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import { Timestamp } from "@bufbuild/protobuf";
 import {
   Alert01Icon,
-  Clock01Icon,
+  Check,
   FilterHorizontalIcon,
   FlashIcon,
   RefreshIcon,
@@ -16,6 +36,7 @@ import {
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
+import { useState } from "react";
 
 function Icon({ icon, className }: { icon: IconSvgElement; className?: string }) {
   return <HugeiconsIcon icon={icon} className={className} />;
@@ -65,16 +86,36 @@ function formatDuration(startTs?: Timestamp, endTs?: Timestamp) {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function getTimeRangeCutoff(timeRange: string): Date | undefined {
+  const now = Date.now();
+  switch (timeRange) {
+    case "1h":
+      return new Date(now - 60 * 60 * 1000);
+    case "24h":
+      return new Date(now - 24 * 60 * 60 * 1000);
+    case "7d":
+      return new Date(now - 7 * 24 * 60 * 60 * 1000);
+    case "30d":
+      return new Date(now - 30 * 24 * 60 * 60 * 1000);
+    default:
+      return undefined;
+  }
+}
+
 export const Route = createFileRoute("/workflows/")({
-  validateSearch: (search: Record<string, unknown>) => ({
-    status: (search.status as string) || "all",
-    timeRange: (search.timeRange as string) || "24h",
-  }),
+  validateSearch: (search: Record<string, unknown>) => {
+    const timeRange = search.timeRange as string;
+    const validTimeRanges = ["1h", "24h", "7d", "30d"];
+    return {
+      status: (search.status as string) || "all",
+      timeRange: validTimeRanges.includes(timeRange) ? timeRange : "24h",
+    };
+  },
   component: WorkflowsPage,
 });
 
 function WorkflowsPage() {
-  const { status } = useSearch({ from: "/workflows/" });
+  const { status, timeRange } = useSearch({ from: "/workflows/" });
   const navigate = useNavigate({ from: "/workflows/" });
 
   const {
@@ -83,6 +124,49 @@ function WorkflowsPage() {
     error,
     refetch,
   } = useWorkflows(status === "all" ? undefined : status);
+
+  // Fetch available workflow types
+  const { data: workflowTypesData } = useListWorkflowTypes(
+    new ListWorkflowTypesRequest({
+      namespaceId: "default",
+    }),
+  );
+  const workflowTypes = workflowTypesData?.workflowTypes ?? [];
+
+  // State for the new workflow form
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
+  const [workflowType, setWorkflowType] = useState("");
+  const [taskQueue, setTaskQueue] = useState("");
+  const [externalId, setExternalId] = useState("");
+  const [inputJson, setInputJson] = useState("{}");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Mutation for starting a workflow
+  const startWorkflow = useStartWorkflow();
+
+  const handleStartWorkflow = async () => {
+    try {
+      const result = await startWorkflow.mutateAsync({
+        namespaceId: "default",
+        workflowType,
+        taskQueue,
+        externalId: externalId || undefined,
+        input: { data: new TextEncoder().encode(JSON.stringify(inputJson)) },
+      });
+
+      // Close the sheet and navigate to the new workflow
+      setIsSheetOpen(false);
+      navigate({ to: "/workflows/$id", params: { id: result.runId } });
+
+      // Reset form
+      setWorkflowType("");
+      setTaskQueue("");
+      setExternalId("");
+      setInputJson("{}");
+    } catch (error) {
+      console.error("Failed to start workflow:", error);
+    }
+  };
 
   if (error) {
     return (
@@ -109,9 +193,27 @@ function WorkflowsPage() {
 
   const filteredWorkflows =
     workflows?.filter((w) => {
-      if (status === "running") return w.status === WorkflowStatus.RUNNING;
-      if (status === "failed") return w.status === WorkflowStatus.FAILED;
-      if (status === "completed") return w.status === WorkflowStatus.COMPLETED;
+      // Status filter
+      if (status === "running" && w.status !== WorkflowStatus.RUNNING) return false;
+      if (status === "failed" && w.status !== WorkflowStatus.FAILED) return false;
+      if (status === "completed" && w.status !== WorkflowStatus.COMPLETED) return false;
+
+      // Search filter
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesRunId = w.runId.toLowerCase().includes(query);
+        const matchesType = w.workflowType.toLowerCase().includes(query);
+        const matchesTaskQueue = w.taskQueue.toLowerCase().includes(query);
+        if (!matchesRunId && !matchesType && !matchesTaskQueue) return false;
+      }
+
+      // Time range filter
+      const cutoff = getTimeRangeCutoff(timeRange);
+      if (cutoff && w.createdAt) {
+        const createdAt = new Date(w.createdAt.toDate()).getTime();
+        if (createdAt < cutoff.getTime()) return false;
+      }
+
       return true;
     }) ?? [];
 
@@ -181,13 +283,147 @@ function WorkflowsPage() {
               Active Workflows<span className="text-primary">.</span>
             </h1>
           </div>
-          <Button
-            className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-none h-10 px-6 font-mono text-xs uppercase tracking-wider shadow-[4px_4px_0_0_rgba(0,0,0,1)] dark:shadow-[4px_4px_0_0_rgba(255,255,255,0.2)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all"
-            disabled={isLoading}
-          >
-            <Icon icon={FlashIcon} className="size-3 mr-2" />
-            Initialize Process
-          </Button>
+          <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
+            <SheetTrigger
+              disabled={isLoading}
+              className={cn(
+                "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                "disabled:pointer-events-none disabled:opacity-50",
+                "bg-primary text-primary-foreground hover:bg-primary/90",
+                "h-10 px-6 py-2",
+                "font-mono text-xs uppercase tracking-wider",
+                "shadow-[4px_4px_0_0_rgba(0,0,0,1)] dark:shadow-[4px_4px_0_0_rgba(255,255,255,0.2)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all",
+              )}
+            >
+              <HugeiconsIcon icon={FlashIcon} className="size-3" />
+              Initialize Process
+            </SheetTrigger>
+            <SheetContent className="w-full sm:max-w-md" side="right">
+              <SheetHeader>
+                <SheetTitle className="font-mono text-sm uppercase tracking-wider">
+                  Initialize New Process
+                </SheetTitle>
+                <SheetDescription className="font-mono text-xs">
+                  Start a new workflow execution by specifying the workflow type and input
+                  parameters.
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="flex-1 py-6 space-y-4 overflow-y-auto">
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="workflow-type"
+                    className="font-mono text-xs uppercase tracking-wider"
+                  >
+                    Workflow Type <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="workflow-type"
+                    placeholder="e.g., example-workflow"
+                    value={workflowType}
+                    onChange={(e) => setWorkflowType(e.target.value)}
+                    className="font-mono text-sm"
+                    list="workflow-types"
+                  />
+                  <datalist id="workflow-types">
+                    {workflowTypes.map((type) => (
+                      <option key={type.workflowType} value={type.workflowType}>
+                        {type.workflowType}
+                      </option>
+                    ))}
+                  </datalist>
+                </div>
+
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="task-queue"
+                    className="font-mono text-xs uppercase tracking-wider"
+                  >
+                    Task Queue <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="task-queue"
+                    placeholder="e.g., main-queue"
+                    value={taskQueue}
+                    onChange={(e) => setTaskQueue(e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="external-id"
+                    className="font-mono text-xs uppercase tracking-wider"
+                  >
+                    External ID (Optional)
+                  </Label>
+                  <Input
+                    id="external-id"
+                    placeholder="e.g., unique-request-id-123"
+                    value={externalId}
+                    onChange={(e) => setExternalId(e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-[10px] text-muted-foreground font-mono">
+                    Unique identifier for idempotency. If omitted, a random ID will be generated.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="input-json"
+                    className="font-mono text-xs uppercase tracking-wider"
+                  >
+                    Input Parameters (JSON)
+                  </Label>
+                  <textarea
+                    id="input-json"
+                    value={inputJson}
+                    onChange={(e) => setInputJson(e.target.value)}
+                    className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+                    placeholder='{"key": "value"}'
+                    spellCheck={false}
+                  />
+                  <p className="text-[10px] text-muted-foreground font-mono">
+                    Valid JSON object to pass as input to the workflow.
+                  </p>
+                </div>
+              </div>
+
+              <SheetFooter>
+                <SheetClose
+                  className={cn(
+                    "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                    "disabled:pointer-events-none disabled:opacity-50",
+                    "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
+                    "h-9 px-4 py-2",
+                    "font-mono text-xs uppercase tracking-wider",
+                  )}
+                >
+                  Cancel
+                </SheetClose>
+                <Button
+                  onClick={handleStartWorkflow}
+                  disabled={startWorkflow.isPending || !workflowType || !taskQueue}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 font-mono text-xs uppercase tracking-wider"
+                >
+                  {startWorkflow.isPending ? (
+                    <>
+                      <Icon icon={RefreshIcon} className="size-3 mr-2 animate-spin" />
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <Icon icon={Check} className="size-3 mr-2" />
+                      Start Process
+                    </>
+                  )}
+                </Button>
+              </SheetFooter>
+            </SheetContent>
+          </Sheet>
         </div>
 
         <div className="p-6 md:p-8 bg-muted/5 min-h-full">
@@ -199,14 +435,28 @@ function WorkflowsPage() {
               />
               <Input
                 placeholder="Search Process ID / Type..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10 h-10 bg-background border-border rounded-none focus-visible:ring-1 focus-visible:ring-primary font-mono text-xs"
               />
             </div>
             <div className="flex items-center gap-2 ml-auto">
-              <div className="h-8 px-3 flex items-center gap-2 bg-background border border-border text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
-                <Icon icon={Clock01Icon} className="size-3" />
-                <span>24H Window</span>
-              </div>
+              <Select
+                value={timeRange}
+                onValueChange={(value) =>
+                  navigate({ search: (prev) => ({ ...prev, timeRange: value as string }) })
+                }
+              >
+                <SelectTrigger className="h-10 w-[140px] font-mono text-[10px] uppercase tracking-wider border-border">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1h">Last 1 Hour</SelectItem>
+                  <SelectItem value="24h">Last 24 Hours</SelectItem>
+                  <SelectItem value="7d">Last 7 Days</SelectItem>
+                  <SelectItem value="30d">Last 30 Days</SelectItem>
+                </SelectContent>
+              </Select>
               <Button
                 variant="outline"
                 size="icon"

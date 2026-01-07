@@ -10,17 +10,23 @@ import {
   DeleteWorkflowScheduleResponse,
   GetWorkflowScheduleRequest,
   GetWorkflowScheduleResponse,
+  ListScheduleRunsRequest,
+  ListScheduleRunsResponse,
   ListWorkflowSchedulesRequest,
   ListWorkflowSchedulesResponse,
+  PauseWorkflowScheduleRequest,
+  PauseWorkflowScheduleResponse,
+  ResumeWorkflowScheduleRequest,
+  ResumeWorkflowScheduleResponse,
+  TriggerWorkflowScheduleRequest,
+  TriggerWorkflowScheduleResponse,
   UpdateWorkflowScheduleRequest,
   UpdateWorkflowScheduleResponse,
 } from "./workflow_schedule_pb";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
- * ============================================
- * SERVICE
- * ============================================
+ * WorkflowScheduleService manages cron-based automatic workflow execution.
  *
  * @generated from service kagzi.v1.WorkflowScheduleService
  */
@@ -28,6 +34,8 @@ export const WorkflowScheduleService = {
   typeName: "kagzi.v1.WorkflowScheduleService",
   methods: {
     /**
+     * CreateWorkflowSchedule creates a new cron schedule that automatically starts workflows.
+     *
      * @generated from rpc kagzi.v1.WorkflowScheduleService.CreateWorkflowSchedule
      */
     createWorkflowSchedule: {
@@ -37,6 +45,8 @@ export const WorkflowScheduleService = {
       kind: MethodKind.Unary,
     },
     /**
+     * GetWorkflowSchedule retrieves a schedule by its ID.
+     *
      * @generated from rpc kagzi.v1.WorkflowScheduleService.GetWorkflowSchedule
      */
     getWorkflowSchedule: {
@@ -46,6 +56,8 @@ export const WorkflowScheduleService = {
       kind: MethodKind.Unary,
     },
     /**
+     * ListWorkflowSchedules returns paginated schedules with optional task queue filtering.
+     *
      * @generated from rpc kagzi.v1.WorkflowScheduleService.ListWorkflowSchedules
      */
     listWorkflowSchedules: {
@@ -55,6 +67,8 @@ export const WorkflowScheduleService = {
       kind: MethodKind.Unary,
     },
     /**
+     * UpdateWorkflowSchedule modifies an existing schedule's configuration.
+     *
      * @generated from rpc kagzi.v1.WorkflowScheduleService.UpdateWorkflowSchedule
      */
     updateWorkflowSchedule: {
@@ -64,12 +78,58 @@ export const WorkflowScheduleService = {
       kind: MethodKind.Unary,
     },
     /**
+     * DeleteWorkflowSchedule permanently removes a schedule.
+     *
      * @generated from rpc kagzi.v1.WorkflowScheduleService.DeleteWorkflowSchedule
      */
     deleteWorkflowSchedule: {
       name: "DeleteWorkflowSchedule",
       I: DeleteWorkflowScheduleRequest,
       O: DeleteWorkflowScheduleResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * TriggerWorkflowSchedule immediately fires a schedule outside its normal cron interval.
+     *
+     * @generated from rpc kagzi.v1.WorkflowScheduleService.TriggerWorkflowSchedule
+     */
+    triggerWorkflowSchedule: {
+      name: "TriggerWorkflowSchedule",
+      I: TriggerWorkflowScheduleRequest,
+      O: TriggerWorkflowScheduleResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * PauseWorkflowSchedule temporarily disables automatic execution.
+     *
+     * @generated from rpc kagzi.v1.WorkflowScheduleService.PauseWorkflowSchedule
+     */
+    pauseWorkflowSchedule: {
+      name: "PauseWorkflowSchedule",
+      I: PauseWorkflowScheduleRequest,
+      O: PauseWorkflowScheduleResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * ResumeWorkflowSchedule re-enables a paused schedule.
+     *
+     * @generated from rpc kagzi.v1.WorkflowScheduleService.ResumeWorkflowSchedule
+     */
+    resumeWorkflowSchedule: {
+      name: "ResumeWorkflowSchedule",
+      I: ResumeWorkflowScheduleRequest,
+      O: ResumeWorkflowScheduleResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * ListScheduleRuns returns workflow executions triggered by this schedule.
+     *
+     * @generated from rpc kagzi.v1.WorkflowScheduleService.ListScheduleRuns
+     */
+    listScheduleRuns: {
+      name: "ListScheduleRuns",
+      I: ListScheduleRunsRequest,
+      O: ListScheduleRunsResponse,
       kind: MethodKind.Unary,
     },
   },

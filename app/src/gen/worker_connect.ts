@@ -11,6 +11,7 @@ import {
   CompleteWorkflowRequest,
   CompleteWorkflowResponse,
   DeregisterRequest,
+  DeregisterResponse,
   FailStepRequest,
   FailStepResponse,
   FailWorkflowRequest,
@@ -22,17 +23,21 @@ import {
   RegisterRequest,
   RegisterResponse,
   SleepRequest,
+  SleepResponse,
 } from "./worker_pb";
-import { Empty, MethodKind } from "@bufbuild/protobuf";
+import { MethodKind } from "@bufbuild/protobuf";
 
 /**
+ * WorkerService manages worker lifecycle and coordinates workflow execution.
+ * Workers must register before polling for tasks and report execution results.
+ *
  * @generated from service kagzi.v1.WorkerService
  */
 export const WorkerService = {
   typeName: "kagzi.v1.WorkerService",
   methods: {
     /**
-     * Lifecycle
+     * Register creates a new worker registration and returns worker_id and heartbeat interval.
      *
      * @generated from rpc kagzi.v1.WorkerService.Register
      */
@@ -43,6 +48,8 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * Heartbeat maintains worker liveness and receives control signals like drain requests.
+     *
      * @generated from rpc kagzi.v1.WorkerService.Heartbeat
      */
     heartbeat: {
@@ -52,18 +59,18 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * Deregister removes worker registration, optionally draining in-flight workflows first.
+     *
      * @generated from rpc kagzi.v1.WorkerService.Deregister
      */
     deregister: {
       name: "Deregister",
       I: DeregisterRequest,
-      O: Empty,
+      O: DeregisterResponse,
       kind: MethodKind.Unary,
     },
     /**
-     * Execution
-     *
-     * Renamed from PollActivity
+     * PollTask blocks until a workflow task is available or timeout expires.
      *
      * @generated from rpc kagzi.v1.WorkerService.PollTask
      */
@@ -74,6 +81,8 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * BeginStep initiates a step execution with idempotency support via step name.
+     *
      * @generated from rpc kagzi.v1.WorkerService.BeginStep
      */
     beginStep: {
@@ -83,6 +92,8 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * CompleteStep marks a step as successfully completed with output data.
+     *
      * @generated from rpc kagzi.v1.WorkerService.CompleteStep
      */
     completeStep: {
@@ -92,6 +103,8 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * FailStep marks a step as failed and may trigger automatic retry based on policy.
+     *
      * @generated from rpc kagzi.v1.WorkerService.FailStep
      */
     failStep: {
@@ -101,6 +114,8 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * CompleteWorkflow marks the entire workflow as successfully completed.
+     *
      * @generated from rpc kagzi.v1.WorkerService.CompleteWorkflow
      */
     completeWorkflow: {
@@ -110,6 +125,8 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * FailWorkflow marks the entire workflow as failed with error details.
+     *
      * @generated from rpc kagzi.v1.WorkerService.FailWorkflow
      */
     failWorkflow: {
@@ -119,12 +136,14 @@ export const WorkerService = {
       kind: MethodKind.Unary,
     },
     /**
+     * Sleep creates a timer step that completes automatically after the specified duration.
+     *
      * @generated from rpc kagzi.v1.WorkerService.Sleep
      */
     sleep: {
       name: "Sleep",
       I: SleepRequest,
-      O: Empty,
+      O: SleepResponse,
       kind: MethodKind.Unary,
     },
   },

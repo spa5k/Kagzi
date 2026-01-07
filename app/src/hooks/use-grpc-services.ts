@@ -1,19 +1,33 @@
 import { AdminService } from "@/gen/admin_connect";
 import {
+  DrainWorkerRequest,
+  GetQueueDepthRequest,
   GetServerInfoRequest,
+  GetStatsRequest,
   GetStepRequest,
   GetWorkerRequest,
   HealthCheckRequest,
   ListStepsRequest,
   ListWorkersRequest,
+  ListWorkflowTypesRequest,
 } from "@/gen/admin_pb";
 import { WorkerService } from "@/gen/worker_connect";
 import { WorkflowService } from "@/gen/workflow_connect";
-import type { GetWorkflowRequest, ListWorkflowsRequest } from "@/gen/workflow_pb";
+import type {
+  GetWorkflowByExternalIdRequest,
+  GetWorkflowRequest,
+  ListWorkflowsRequest,
+  RetryWorkflowRequest,
+  TerminateWorkflowRequest,
+} from "@/gen/workflow_pb";
 import { WorkflowScheduleService } from "@/gen/workflow_schedule_connect";
 import {
   GetWorkflowScheduleRequest,
+  ListScheduleRunsRequest,
   ListWorkflowSchedulesRequest,
+  PauseWorkflowScheduleRequest,
+  ResumeWorkflowScheduleRequest,
+  TriggerWorkflowScheduleRequest,
 } from "@/gen/workflow_schedule_pb";
 import { getGrpcTransport } from "@/lib/grpc-client";
 import { createPromiseClient } from "@connectrpc/connect";
@@ -79,6 +93,47 @@ export function useCancelWorkflow() {
   return useTanstackMutation({
     mutationFn: (request: Parameters<typeof workflowClient.cancelWorkflow>[0]) =>
       workflowClient.cancelWorkflow(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["workflow", variables.runId] });
+      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+    },
+  });
+}
+
+/**
+ * Hook to get a workflow by external_id (idempotency key)
+ */
+export function useGetWorkflowByExternalId(request: GetWorkflowByExternalIdRequest) {
+  return useTanstackQuery({
+    queryKey: ["workflow", "externalId", request.externalId, request.namespaceId],
+    queryFn: () => workflowClient.getWorkflowByExternalId(request),
+    enabled: !!request.externalId && !!request.namespaceId,
+  });
+}
+
+/**
+ * Hook to retry a failed workflow
+ */
+export function useRetryWorkflow() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: RetryWorkflowRequest) => workflowClient.retryWorkflow(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["workflow", variables.runId] });
+      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+    },
+  });
+}
+
+/**
+ * Hook to terminate a workflow forcefully
+ */
+export function useTerminateWorkflow() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: TerminateWorkflowRequest) => workflowClient.terminateWorkflow(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["workflow", variables.runId] });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
@@ -154,6 +209,55 @@ export function useListSteps(request: ListStepsRequest) {
   });
 }
 
+/**
+ * Hook to get aggregate statistics about workflows and workers
+ */
+export function useGetStats(request?: GetStatsRequest) {
+  return useTanstackQuery({
+    queryKey: ["stats", request?.namespaceId],
+    queryFn: () => adminClient.getStats(request || new GetStatsRequest()),
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+}
+
+/**
+ * Hook to get queue depth (pending/running task counts)
+ */
+export function useGetQueueDepth(request: GetQueueDepthRequest) {
+  return useTanstackQuery({
+    queryKey: ["queueDepth", request.namespaceId, request.taskQueue],
+    queryFn: () => adminClient.getQueueDepth(request),
+    enabled: !!request.namespaceId,
+    refetchInterval: 10000, // Refresh every 10 seconds
+  });
+}
+
+/**
+ * Hook to list workflow types with statistics
+ */
+export function useListWorkflowTypes(request: ListWorkflowTypesRequest) {
+  return useTanstackQuery({
+    queryKey: ["workflowTypes", request.namespaceId],
+    queryFn: () => adminClient.listWorkflowTypes(request),
+    enabled: !!request.namespaceId,
+  });
+}
+
+/**
+ * Hook to drain a worker (graceful shutdown)
+ */
+export function useDrainWorker() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: DrainWorkerRequest) => adminClient.drainWorker(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["worker", variables.workerId] });
+      queryClient.invalidateQueries({ queryKey: ["workers"] });
+    },
+  });
+}
+
 // ============================================
 // SCHEDULE SERVICE HOOKS
 // ============================================
@@ -223,6 +327,66 @@ export function useListSchedules(request: ListWorkflowSchedulesRequest) {
     queryKey: ["schedules", request.namespaceId, request.taskQueue],
     queryFn: () => scheduleClient.listWorkflowSchedules(request),
     enabled: !!request.namespaceId,
+  });
+}
+
+/**
+ * Hook to trigger a schedule immediately
+ */
+export function useTriggerSchedule() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: TriggerWorkflowScheduleRequest) =>
+      scheduleClient.triggerWorkflowSchedule(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["schedule", variables.scheduleId] });
+      queryClient.invalidateQueries({ queryKey: ["schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+    },
+  });
+}
+
+/**
+ * Hook to pause a schedule
+ */
+export function usePauseSchedule() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: PauseWorkflowScheduleRequest) =>
+      scheduleClient.pauseWorkflowSchedule(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["schedule", variables.scheduleId] });
+      queryClient.invalidateQueries({ queryKey: ["schedules"] });
+    },
+  });
+}
+
+/**
+ * Hook to resume a paused schedule
+ */
+export function useResumeSchedule() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: ResumeWorkflowScheduleRequest) =>
+      scheduleClient.resumeWorkflowSchedule(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["schedule", variables.scheduleId] });
+      queryClient.invalidateQueries({ queryKey: ["schedules"] });
+    },
+  });
+}
+
+/**
+ * Hook to list workflow runs triggered by a schedule
+ */
+export function useListScheduleRuns(request: ListScheduleRunsRequest) {
+  return useTanstackQuery({
+    queryKey: ["scheduleRuns", request.scheduleId, request.namespaceId],
+    queryFn: () => scheduleClient.listScheduleRuns(request),
+    enabled: !!request.scheduleId && !!request.namespaceId,
   });
 }
 

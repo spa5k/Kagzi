@@ -9,29 +9,28 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { Calendar, Clock1, Cpu, Home } from "@hugeicons/core-free-icons";
-import type { IconSvgElement } from "@hugeicons/react";
 import type * as React from "react";
 
 const monitorItems: NavItem[] = [
   {
     title: "Overview",
     url: "/",
-    icon: Home as IconSvgElement,
+    icon: Home,
   },
   {
     title: "Workflows",
     url: "/workflows",
-    icon: Clock1 as IconSvgElement,
+    icon: Clock1,
   },
   {
     title: "Schedules",
     url: "/schedules",
-    icon: Calendar as IconSvgElement,
+    icon: Calendar,
   },
   {
     title: "Workers",
     url: "/workers",
-    icon: Cpu as IconSvgElement,
+    icon: Cpu,
   },
 ];
 

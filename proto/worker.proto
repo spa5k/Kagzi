@@ -3,33 +3,36 @@ package kagzi.v1;
 
 import "common.proto";
 import "google/protobuf/duration.proto";
-import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "workflow.proto";
 
-// ============================================
-// SERVICE
-// ============================================
-
+// WorkerService manages worker lifecycle and coordinates workflow execution.
+// Workers must register before polling for tasks and report execution results.
 service WorkerService {
-  // Lifecycle
+  // Register creates a new worker registration and returns worker_id and heartbeat interval.
   rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Heartbeat maintains worker liveness and receives control signals like drain requests.
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-  rpc Deregister(DeregisterRequest) returns (google.protobuf.Empty);
+  // Deregister removes worker registration, optionally draining in-flight workflows first.
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
 
-  // Execution
-  rpc PollTask(PollTaskRequest) returns (PollTaskResponse); // Renamed from PollActivity
+  // PollTask blocks until a workflow task is available or timeout expires.
+  rpc PollTask(PollTaskRequest) returns (PollTaskResponse);
+  // BeginStep initiates a step execution with idempotency support via step name.
   rpc BeginStep(BeginStepRequest) returns (BeginStepResponse);
+  // CompleteStep marks a step as successfully completed with output data.
   rpc CompleteStep(CompleteStepRequest) returns (CompleteStepResponse);
+  // FailStep marks a step as failed and may trigger automatic retry based on policy.
   rpc FailStep(FailStepRequest) returns (FailStepResponse);
-  rpc CompleteWorkflow(CompleteWorkflowRequest) returns (CompleteWorkflowResponse);
-  rpc FailWorkflow(FailWorkflowRequest) returns (FailWorkflowResponse);
-  rpc Sleep(SleepRequest) returns (google.protobuf.Empty);
-}
 
-// ============================================
-// ENUMS
-// ============================================
+  // CompleteWorkflow marks the entire workflow as successfully completed.
+  rpc CompleteWorkflow(CompleteWorkflowRequest) returns (CompleteWorkflowResponse);
+  // FailWorkflow marks the entire workflow as failed with error details.
+  rpc FailWorkflow(FailWorkflowRequest) returns (FailWorkflowResponse);
+
+  // Sleep creates a timer step that completes automatically after the specified duration.
+  rpc Sleep(SleepRequest) returns (SleepResponse);
+}
 
 enum WorkerStatus {
   WORKER_STATUS_UNSPECIFIED = 0;
@@ -42,6 +45,7 @@ enum StepKind {
   STEP_KIND_UNSPECIFIED = 0;
   STEP_KIND_FUNCTION = 1;
   STEP_KIND_SLEEP = 2;
+  STEP_KIND_CHILD_WORKFLOW = 3;
 }
 
 enum StepStatus {
@@ -52,50 +56,49 @@ enum StepStatus {
   STEP_STATUS_FAILED = 4;
 }
 
-// ============================================
-// MESSAGES
-// ============================================
-
+// Worker represents a registered workflow executor with concurrency limits and metadata.
 message Worker {
   string worker_id = 1;
-  string namespace_id = 2;
-  string task_queue = 3;
-  WorkerStatus status = 4;
-  string hostname = 5;
-  int32 pid = 6;
-  string version = 7;
-  repeated string workflow_types = 8;
-  google.protobuf.Timestamp registered_at = 9;
-  google.protobuf.Timestamp last_heartbeat_at = 10;
-  map<string, string> labels = 11;
-  optional int32 queue_concurrency_limit = 12;
-  repeated WorkflowTypeConcurrency workflow_type_concurrency = 13;
+  string task_queue = 2;
+  WorkerStatus status = 3;
+  string version = 4;
+  repeated string workflow_types = 5;
+  string hostname = 6;
+  int32 pid = 7;
+  optional int32 queue_concurrency_limit = 8;
+  repeated WorkflowTypeConcurrency workflow_type_concurrency = 9;
+  int32 active_workflow_count = 10;
+  google.protobuf.Timestamp registered_at = 11;
+  google.protobuf.Timestamp last_heartbeat_at = 12;
+  map<string, string> labels = 13;
+  map<string, string> capabilities = 14;
 }
 
+// WorkflowTypeConcurrency configures per-workflow-type concurrency limits.
 message WorkflowTypeConcurrency {
   string workflow_type = 1;
   int32 max_concurrent = 2;
 }
 
+// Step represents a single execution unit within a workflow with retry tracking.
 message Step {
-  string step_id = 1;
-  string run_id = 2;
-  string namespace_id = 3;
+  string namespace_id = 1;
+  string step_id = 2;
+  string run_id = 3;
   string name = 4;
   StepKind kind = 5;
   StepStatus status = 6;
   int32 attempt_number = 7;
   Payload input = 8;
-  Payload output = 9;
-  ErrorDetail error = 10;
+  optional Payload output = 9;
+  optional ErrorDetail error = 10;
   google.protobuf.Timestamp created_at = 11;
-  google.protobuf.Timestamp started_at = 12;
-  google.protobuf.Timestamp finished_at = 13;
+  optional google.protobuf.Timestamp started_at = 12;
+  optional google.protobuf.Timestamp finished_at = 13;
   optional string child_run_id = 14;
 }
 
-// --- Lifecycle Requests ---
-
+// RegisterRequest declares worker capabilities and concurrency limits.
 message RegisterRequest {
   string namespace_id = 1;
   string task_queue = 2;
@@ -108,6 +111,7 @@ message RegisterRequest {
   repeated WorkflowTypeConcurrency workflow_type_concurrency = 9;
 }
 
+// RegisterResponse returns the assigned worker_id and required heartbeat interval.
 message RegisterResponse {
   string worker_id = 1;
   int32 heartbeat_interval_secs = 2;
@@ -117,6 +121,7 @@ message HeartbeatRequest {
   string worker_id = 1;
 }
 
+// HeartbeatResponse signals whether the worker should drain and stop accepting new tasks.
 message HeartbeatResponse {
   bool accepted = 1;
   bool should_drain = 2;
@@ -127,11 +132,9 @@ message DeregisterRequest {
   bool drain = 2;
 }
 
-// --- Execution Requests ---
-
 message PollTaskRequest {
-  string worker_id = 1;
-  string namespace_id = 2;
+  string namespace_id = 1;
+  string worker_id = 2;
   string task_queue = 3;
   repeated string workflow_types = 4;
 }
@@ -143,13 +146,15 @@ message PollTaskResponse {
 }
 
 message BeginStepRequest {
-  string run_id = 1;
-  string step_name = 2;
-  StepKind kind = 3; // Explicit, no more inference
-  Payload input = 4;
-  RetryPolicy retry_policy = 5;
+  string namespace_id = 1;
+  string run_id = 2;
+  string step_name = 3;
+  StepKind kind = 4;
+  Payload input = 5;
+  RetryPolicy retry_policy = 6;
 }
 
+// BeginStepResponse indicates if execution is needed or if cached output exists.
 message BeginStepResponse {
   string step_id = 1;
   bool should_execute = 2;
@@ -157,9 +162,10 @@ message BeginStepResponse {
 }
 
 message CompleteStepRequest {
-  string run_id = 1;
-  string step_id = 2;
-  Payload output = 3;
+  string namespace_id = 1;
+  string run_id = 2;
+  string step_id = 3;
+  Payload output = 4;
 }
 
 message CompleteStepResponse {
@@ -167,19 +173,22 @@ message CompleteStepResponse {
 }
 
 message FailStepRequest {
-  string run_id = 1;
-  string step_id = 2;
-  ErrorDetail error = 3;
+  string namespace_id = 1;
+  string run_id = 2;
+  string step_id = 3;
+  ErrorDetail error = 4;
 }
 
+// FailStepResponse indicates if an automatic retry was scheduled.
 message FailStepResponse {
   bool scheduled_retry = 1;
   google.protobuf.Timestamp retry_at = 2;
 }
 
 message CompleteWorkflowRequest {
-  string run_id = 1;
-  Payload output = 2;
+  string namespace_id = 1;
+  string run_id = 2;
+  Payload output = 3;
 }
 
 message CompleteWorkflowResponse {
@@ -187,8 +196,9 @@ message CompleteWorkflowResponse {
 }
 
 message FailWorkflowRequest {
-  string run_id = 1;
-  ErrorDetail error = 2;
+  string namespace_id = 1;
+  string run_id = 2;
+  ErrorDetail error = 3;
 }
 
 message FailWorkflowResponse {
@@ -196,7 +206,14 @@ message FailWorkflowResponse {
 }
 
 message SleepRequest {
-  string run_id = 1;
-  string step_id = 2;
-  google.protobuf.Duration duration = 3;
+  string namespace_id = 1;
+  string run_id = 2;
+  string step_id = 3;
+  google.protobuf.Duration duration = 4;
+}
+
+message SleepResponse {}
+
+message DeregisterResponse {
+  bool drained = 1;
 }

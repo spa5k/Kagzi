@@ -3,37 +3,51 @@ package kagzi.v1;
 
 import "common.proto";
 import "google/protobuf/timestamp.proto";
+import "workflow.proto";
 
-// ============================================
-// SERVICE
-// ============================================
+// WorkflowScheduleService manages cron-based automatic workflow execution.
 service WorkflowScheduleService {
+  // CreateWorkflowSchedule creates a new cron schedule that automatically starts workflows.
   rpc CreateWorkflowSchedule(CreateWorkflowScheduleRequest) returns (CreateWorkflowScheduleResponse);
+  // GetWorkflowSchedule retrieves a schedule by its ID.
   rpc GetWorkflowSchedule(GetWorkflowScheduleRequest) returns (GetWorkflowScheduleResponse);
+  // ListWorkflowSchedules returns paginated schedules with optional task queue filtering.
   rpc ListWorkflowSchedules(ListWorkflowSchedulesRequest) returns (ListWorkflowSchedulesResponse);
+  // UpdateWorkflowSchedule modifies an existing schedule's configuration.
   rpc UpdateWorkflowSchedule(UpdateWorkflowScheduleRequest) returns (UpdateWorkflowScheduleResponse);
+  // DeleteWorkflowSchedule permanently removes a schedule.
   rpc DeleteWorkflowSchedule(DeleteWorkflowScheduleRequest) returns (DeleteWorkflowScheduleResponse);
+  // TriggerWorkflowSchedule immediately fires a schedule outside its normal cron interval.
+  rpc TriggerWorkflowSchedule(TriggerWorkflowScheduleRequest) returns (TriggerWorkflowScheduleResponse);
+  // PauseWorkflowSchedule temporarily disables automatic execution.
+  rpc PauseWorkflowSchedule(PauseWorkflowScheduleRequest) returns (PauseWorkflowScheduleResponse);
+  // ResumeWorkflowSchedule re-enables a paused schedule.
+  rpc ResumeWorkflowSchedule(ResumeWorkflowScheduleRequest) returns (ResumeWorkflowScheduleResponse);
+  // ListScheduleRuns returns workflow executions triggered by this schedule.
+  rpc ListScheduleRuns(ListScheduleRunsRequest) returns (ListScheduleRunsResponse);
 }
 
-// ============================================
-// MESSAGES
-// ============================================
+// WorkflowSchedule represents a cron schedule with execution statistics.
 message WorkflowSchedule {
-  string schedule_id = 1;
-  string namespace_id = 2;
+  string namespace_id = 1;
+  string schedule_id = 2;
   string task_queue = 3;
   string workflow_type = 4;
   string cron_expr = 5;
-  Payload input = 6;
+  string version = 6;
   bool enabled = 7;
-  int32 max_catchup = 8;
-  google.protobuf.Timestamp next_fire_at = 9;
-  google.protobuf.Timestamp last_fired_at = 10;
-  string version = 11;
-  google.protobuf.Timestamp created_at = 12;
-  google.protobuf.Timestamp updated_at = 13;
+  Payload input = 8;
+  int32 max_catchup = 9;
+  int64 total_runs = 10;
+  int64 successful_runs = 11;
+  int64 failed_runs = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+  optional google.protobuf.Timestamp next_fire_at = 15;
+  optional google.protobuf.Timestamp last_fired_at = 16;
 }
 
+// CreateWorkflowScheduleRequest defines a cron expression and workflow configuration.
 message CreateWorkflowScheduleRequest {
   string namespace_id = 1;
   string task_queue = 2;
@@ -50,8 +64,8 @@ message CreateWorkflowScheduleResponse {
 }
 
 message GetWorkflowScheduleRequest {
-  string schedule_id = 1;
-  string namespace_id = 2;
+  string namespace_id = 1;
+  string schedule_id = 2;
 }
 
 message GetWorkflowScheduleResponse {
@@ -69,9 +83,10 @@ message ListWorkflowSchedulesResponse {
   PageInfo page = 2;
 }
 
+// UpdateWorkflowScheduleRequest allows modification of any schedule field.
 message UpdateWorkflowScheduleRequest {
-  string schedule_id = 1;
-  string namespace_id = 2;
+  string namespace_id = 1;
+  string schedule_id = 2;
   optional string task_queue = 3;
   optional string workflow_type = 4;
   optional string cron_expr = 5;
@@ -87,10 +102,49 @@ message UpdateWorkflowScheduleResponse {
 }
 
 message DeleteWorkflowScheduleRequest {
-  string schedule_id = 1;
-  string namespace_id = 2;
+  string namespace_id = 1;
+  string schedule_id = 2;
 }
 
 message DeleteWorkflowScheduleResponse {
   bool deleted = 1;
+  string message = 2;
+}
+
+message TriggerWorkflowScheduleRequest {
+  string namespace_id = 1;
+  string schedule_id = 2;
+}
+
+message TriggerWorkflowScheduleResponse {
+  string run_id = 1;
+}
+
+message PauseWorkflowScheduleRequest {
+  string namespace_id = 1;
+  string schedule_id = 2;
+}
+
+message PauseWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
+
+message ResumeWorkflowScheduleRequest {
+  string namespace_id = 1;
+  string schedule_id = 2;
+}
+
+message ResumeWorkflowScheduleResponse {
+  WorkflowSchedule schedule = 1;
+}
+
+message ListScheduleRunsRequest {
+  string namespace_id = 1;
+  string schedule_id = 2;
+  PageRequest page = 3;
+}
+
+message ListScheduleRunsResponse {
+  repeated Workflow runs = 1;
+  PageInfo page = 2;
 }

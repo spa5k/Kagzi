@@ -8,16 +8,23 @@ export type {
   StepStatus as StepStatusEnum,
 } from "@/gen/worker_pb";
 export type { WorkflowSchedule } from "@/gen/workflow_schedule_pb";
+export type {
+  ServingStatus as ServingStatusEnum,
+  WorkflowTypeInfo,
+  GetStatsResponse,
+  GetQueueDepthResponse,
+  DrainWorkerResponse,
+} from "@/gen/admin_pb";
 
 // Import and export the proto enums as values
 import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
-import { WorkerStatus as ProtoWorkerStatus } from "@/gen/worker_pb";
-import { StepStatus, StepKind } from "@/gen/worker_pb";
+import { WorkerStatus as ProtoWorkerStatus, StepStatus, StepKind } from "@/gen/worker_pb";
+import { ServingStatus } from "@/gen/admin_pb";
 
 // Export the proto enums
 export const WorkflowStatus = ProtoWorkflowStatus;
 export const WorkerStatus = ProtoWorkerStatus;
-export { StepStatus, StepKind };
+export { StepStatus, StepKind, ServingStatus };
 
 // Label mapping for workflow statuses (includes all enum values)
 export const WorkflowStatusLabel: Record<number, string> = {
@@ -54,6 +61,14 @@ export const StepKindLabel: Record<number, string> = {
   [StepKind.UNSPECIFIED]: "Unspecified",
   [StepKind.FUNCTION]: "Function",
   [StepKind.SLEEP]: "Sleep",
+  [StepKind.CHILD_WORKFLOW]: "Child Workflow",
+};
+
+// Label mapping for serving status
+export const ServingStatusLabel: Record<number, string> = {
+  [ServingStatus.UNSPECIFIED]: "Unspecified",
+  [ServingStatus.SERVING]: "Serving",
+  [ServingStatus.NOT_SERVING]: "Not Serving",
 };
 
 // Namespace type (not in protobufs, used for mock data)

@@ -4,8 +4,14 @@
 // @ts-nocheck
 
 import {
+  DrainWorkerRequest,
+  DrainWorkerResponse,
+  GetQueueDepthRequest,
+  GetQueueDepthResponse,
   GetServerInfoRequest,
   GetServerInfoResponse,
+  GetStatsRequest,
+  GetStatsResponse,
   GetStepRequest,
   GetStepResponse,
   GetWorkerRequest,
@@ -16,17 +22,22 @@ import {
   ListStepsResponse,
   ListWorkersRequest,
   ListWorkersResponse,
+  ListWorkflowTypesRequest,
+  ListWorkflowTypesResponse,
 } from "./admin_pb";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
+ * AdminService provides observability and operational control for monitoring
+ * and managing the Kagzi workflow engine.
+ *
  * @generated from service kagzi.v1.AdminService
  */
 export const AdminService = {
   typeName: "kagzi.v1.AdminService",
   methods: {
     /**
-     * Discovery
+     * ListWorkers retrieves registered workers with optional filtering by task queue and status.
      *
      * @generated from rpc kagzi.v1.AdminService.ListWorkers
      */
@@ -37,6 +48,8 @@ export const AdminService = {
       kind: MethodKind.Unary,
     },
     /**
+     * GetWorker retrieves details for a specific worker by ID.
+     *
      * @generated from rpc kagzi.v1.AdminService.GetWorker
      */
     getWorker: {
@@ -46,6 +59,8 @@ export const AdminService = {
       kind: MethodKind.Unary,
     },
     /**
+     * GetStep retrieves execution details for a specific workflow step.
+     *
      * @generated from rpc kagzi.v1.AdminService.GetStep
      */
     getStep: {
@@ -55,6 +70,8 @@ export const AdminService = {
       kind: MethodKind.Unary,
     },
     /**
+     * ListSteps retrieves all steps for a workflow run, optionally filtered by step name.
+     *
      * @generated from rpc kagzi.v1.AdminService.ListSteps
      */
     listSteps: {
@@ -64,7 +81,7 @@ export const AdminService = {
       kind: MethodKind.Unary,
     },
     /**
-     * Health & Info
+     * HealthCheck verifies server availability and serving status.
      *
      * @generated from rpc kagzi.v1.AdminService.HealthCheck
      */
@@ -75,12 +92,58 @@ export const AdminService = {
       kind: MethodKind.Unary,
     },
     /**
+     * GetServerInfo returns server version, API version, and supported features.
+     *
      * @generated from rpc kagzi.v1.AdminService.GetServerInfo
      */
     getServerInfo: {
       name: "GetServerInfo",
       I: GetServerInfoRequest,
       O: GetServerInfoResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * GetStats returns aggregate statistics for workflows, workers, and schedules.
+     *
+     * @generated from rpc kagzi.v1.AdminService.GetStats
+     */
+    getStats: {
+      name: "GetStats",
+      I: GetStatsRequest,
+      O: GetStatsResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * DrainWorker gracefully stops a worker from accepting new tasks.
+     *
+     * @generated from rpc kagzi.v1.AdminService.DrainWorker
+     */
+    drainWorker: {
+      name: "DrainWorker",
+      I: DrainWorkerRequest,
+      O: DrainWorkerResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * GetQueueDepth returns pending, running, and sleeping task counts by queue.
+     *
+     * @generated from rpc kagzi.v1.AdminService.GetQueueDepth
+     */
+    getQueueDepth: {
+      name: "GetQueueDepth",
+      I: GetQueueDepthRequest,
+      O: GetQueueDepthResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * ListWorkflowTypes returns registered workflow types with run statistics.
+     *
+     * @generated from rpc kagzi.v1.AdminService.ListWorkflowTypes
+     */
+    listWorkflowTypes: {
+      name: "ListWorkflowTypes",
+      I: ListWorkflowTypesRequest,
+      O: ListWorkflowTypesResponse,
       kind: MethodKind.Unary,
     },
   },

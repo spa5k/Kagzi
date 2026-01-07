@@ -1,7 +1,10 @@
 use kagzi_proto::kagzi::workflow_service_server::WorkflowService;
 use kagzi_proto::kagzi::{
-    CancelWorkflowRequest, GetWorkflowRequest, GetWorkflowResponse, ListWorkflowsRequest,
-    ListWorkflowsResponse, PageInfo, StartWorkflowRequest, StartWorkflowResponse, WorkflowStatus,
+    CancelWorkflowRequest, CancelWorkflowResponse, GetWorkflowByExternalIdRequest,
+    GetWorkflowByExternalIdResponse, GetWorkflowRequest, GetWorkflowResponse, ListWorkflowsRequest,
+    ListWorkflowsResponse, PageInfo, RetryWorkflowRequest, RetryWorkflowResponse,
+    StartWorkflowRequest, StartWorkflowResponse, TerminateWorkflowRequest,
+    TerminateWorkflowResponse, WorkflowStatus,
 };
 use kagzi_queue::QueueNotifier;
 use kagzi_store::{
@@ -229,7 +232,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
     async fn cancel_workflow(
         &self,
         request: Request<CancelWorkflowRequest>,
-    ) -> Result<Response<()>, Status> {
+    ) -> Result<Response<CancelWorkflowResponse>, Status> {
         let req = request.into_inner();
 
         let run_id = uuid::Uuid::parse_str(&req.run_id)
@@ -245,7 +248,10 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             .map_err(map_store_error)?;
 
         if cancelled {
-            Ok(Response::new(()))
+            Ok(Response::new(CancelWorkflowResponse {
+                cancelled: true,
+                status: kagzi_proto::kagzi::WorkflowStatus::Cancelled as i32,
+            }))
         } else {
             let exists = workflows
                 .check_exists(run_id, &namespace_id)
@@ -268,5 +274,114 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
                 ))
             }
         }
+    }
+
+    #[instrument(skip(self, request), fields(external_id = %request.get_ref().external_id))]
+    async fn get_workflow_by_external_id(
+        &self,
+        request: Request<GetWorkflowByExternalIdRequest>,
+    ) -> Result<Response<GetWorkflowByExternalIdResponse>, Status> {
+        let req = request.into_inner();
+        let external_id = require_non_empty(req.external_id, "external_id")?;
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let run_id = self
+            .store
+            .workflows()
+            .find_active_by_external_id(&namespace_id, &external_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", external_id))?;
+
+        let workflow = self
+            .store
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
+
+        let proto = workflow_to_proto(workflow)?;
+
+        Ok(Response::new(GetWorkflowByExternalIdResponse {
+            workflow: Some(proto),
+        }))
+    }
+
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
+    async fn retry_workflow(
+        &self,
+        request: Request<RetryWorkflowRequest>,
+    ) -> Result<Response<RetryWorkflowResponse>, Status> {
+        let req = request.into_inner();
+        let run_id = uuid::Uuid::parse_str(&req.run_id)
+            .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
+
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let workflow = self
+            .store
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
+
+        // Check if workflow is still running
+        if !workflow.status.is_terminal() {
+            return Ok(Response::new(RetryWorkflowResponse {
+                new_run_id: String::new(),
+                already_running: true,
+            }));
+        }
+
+        // Create a new workflow run with the same input
+        let new_run_id = self
+            .store
+            .workflows()
+            .create(CreateWorkflow {
+                run_id: Uuid::now_v7(),
+                external_id: format!("retry-{}", workflow.external_id),
+                task_queue: workflow.task_queue.clone(),
+                workflow_type: workflow.workflow_type.clone(),
+                input: workflow.input.clone(),
+                namespace_id: namespace_id.clone(),
+                version: workflow.version.clone().unwrap_or_default(),
+                retry_policy: None,
+                cron_expr: None,
+                schedule_id: None,
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(RetryWorkflowResponse {
+            new_run_id: new_run_id.to_string(),
+            already_running: false,
+        }))
+    }
+
+    #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
+    async fn terminate_workflow(
+        &self,
+        request: Request<TerminateWorkflowRequest>,
+    ) -> Result<Response<TerminateWorkflowResponse>, Status> {
+        let req = request.into_inner();
+        let run_id = uuid::Uuid::parse_str(&req.run_id)
+            .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
+
+        let _namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let workflows = self.store.workflows();
+
+        // Fail the workflow with the termination reason
+        workflows
+            .fail(run_id, &req.reason)
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(TerminateWorkflowResponse {
+            terminated: true,
+            status: kagzi_proto::kagzi::WorkflowStatus::Failed as i32,
+        }))
     }
 }

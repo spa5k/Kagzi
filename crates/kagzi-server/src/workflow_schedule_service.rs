@@ -5,8 +5,11 @@ use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServic
 use kagzi_proto::kagzi::{
     CreateWorkflowScheduleRequest, CreateWorkflowScheduleResponse, DeleteWorkflowScheduleRequest,
     DeleteWorkflowScheduleResponse, GetWorkflowScheduleRequest, GetWorkflowScheduleResponse,
-    ListWorkflowSchedulesRequest, ListWorkflowSchedulesResponse, PageInfo,
-    UpdateWorkflowScheduleRequest, UpdateWorkflowScheduleResponse, WorkflowSchedule,
+    ListScheduleRunsRequest, ListScheduleRunsResponse, ListWorkflowSchedulesRequest,
+    ListWorkflowSchedulesResponse, PageInfo, PauseWorkflowScheduleRequest,
+    PauseWorkflowScheduleResponse, ResumeWorkflowScheduleRequest, ResumeWorkflowScheduleResponse,
+    TriggerWorkflowScheduleRequest, TriggerWorkflowScheduleResponse, UpdateWorkflowScheduleRequest,
+    UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
 use kagzi_store::{CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowRepository, WorkflowRun};
 use tonic::{Request, Response, Status};
@@ -83,6 +86,9 @@ fn workflow_run_to_schedule_proto(w: WorkflowRun) -> Result<WorkflowSchedule, St
         version: w.version.unwrap_or_default(),
         created_at: Some(timestamp_from(created_at)),
         updated_at: None,
+        total_runs: 0,
+        successful_runs: 0,
+        failed_runs: 0,
     })
 }
 
@@ -360,6 +366,182 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
 
         Ok(Response::new(DeleteWorkflowScheduleResponse {
             deleted: true,
+            message: "Schedule deleted successfully".to_string(),
+        }))
+    }
+
+    async fn trigger_workflow_schedule(
+        &self,
+        request: Request<TriggerWorkflowScheduleRequest>,
+    ) -> Result<Response<TriggerWorkflowScheduleResponse>, Status> {
+        let req = request.into_inner();
+        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+            .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
+
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let schedule = self
+            .store
+            .workflows()
+            .find_by_id(schedule_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
+
+        // Create a new workflow run based on the schedule
+        let run_id = Uuid::now_v7();
+        self.store
+            .workflows()
+            .create(CreateWorkflow {
+                run_id,
+                external_id: format!("schedule-{}-{}", schedule_id, run_id),
+                task_queue: schedule.task_queue.clone(),
+                workflow_type: schedule.workflow_type.clone(),
+                input: schedule.input.clone(),
+                namespace_id: namespace_id.clone(),
+                version: schedule.version.clone().unwrap_or_default(),
+                retry_policy: None,
+                cron_expr: None,
+                schedule_id: Some(schedule_id),
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(TriggerWorkflowScheduleResponse {
+            run_id: run_id.to_string(),
+        }))
+    }
+
+    async fn pause_workflow_schedule(
+        &self,
+        request: Request<PauseWorkflowScheduleRequest>,
+    ) -> Result<Response<PauseWorkflowScheduleResponse>, Status> {
+        let req = request.into_inner();
+        let run_id = uuid::Uuid::parse_str(&req.schedule_id)
+            .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
+
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let mut schedule = self
+            .store
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
+
+        schedule.status = kagzi_store::WorkflowStatus::Paused;
+        self.store
+            .workflows()
+            .update(run_id, schedule.clone())
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(PauseWorkflowScheduleResponse {
+            schedule: Some(workflow_run_to_schedule_proto(schedule)?),
+        }))
+    }
+
+    async fn resume_workflow_schedule(
+        &self,
+        request: Request<ResumeWorkflowScheduleRequest>,
+    ) -> Result<Response<ResumeWorkflowScheduleResponse>, Status> {
+        let req = request.into_inner();
+        let run_id = uuid::Uuid::parse_str(&req.schedule_id)
+            .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
+
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let mut schedule = self
+            .store
+            .workflows()
+            .find_by_id(run_id, &namespace_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
+
+        // Calculate next fire time
+        let cron_expr = schedule.cron_expr.as_ref().ok_or_else(|| {
+            invalid_argument_error("Cannot resume schedule without cron expression")
+        })?;
+        let cron = parse_cron_expr(cron_expr)?;
+        let next_fire = cron
+            .after(&Utc::now())
+            .next()
+            .ok_or_else(|| invalid_argument_error("Cron expression has no future occurrences"))?;
+
+        schedule.status = kagzi_store::WorkflowStatus::Scheduled;
+        schedule.available_at = Some(next_fire);
+        self.store
+            .workflows()
+            .update(run_id, schedule.clone())
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(ResumeWorkflowScheduleResponse {
+            schedule: Some(workflow_run_to_schedule_proto(schedule)?),
+        }))
+    }
+
+    async fn list_schedule_runs(
+        &self,
+        request: Request<ListScheduleRunsRequest>,
+    ) -> Result<Response<ListScheduleRunsResponse>, Status> {
+        let req = request.into_inner();
+        let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
+            .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
+
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let page_size = req
+            .page
+            .as_ref()
+            .map(|p| normalize_page_size(p.page_size, 100, 500))
+            .unwrap_or(100);
+
+        let cursor = if let Some(page) = req.page.as_ref() {
+            if page.page_token.is_empty() {
+                None
+            } else {
+                let (created_at, run_id) = decode_cursor(&page.page_token)?;
+                Some(kagzi_store::WorkflowCursor { created_at, run_id })
+            }
+        } else {
+            None
+        };
+
+        let workflows_result = self
+            .store
+            .workflows()
+            .list(ListWorkflowsParams {
+                namespace_id,
+                filter_status: None,
+                page_size,
+                cursor,
+                schedule_id: Some(schedule_id),
+            })
+            .await
+            .map_err(map_store_error)?;
+
+        let workflows: Result<Vec<_>, Status> = workflows_result
+            .items
+            .into_iter()
+            .map(crate::proto_convert::workflow_to_proto)
+            .collect();
+        let workflows = workflows?;
+
+        let next_page_token = workflows_result
+            .next_cursor
+            .map(|c| encode_cursor(c.created_at.timestamp_millis(), &c.run_id))
+            .unwrap_or_default();
+
+        Ok(Response::new(ListScheduleRunsResponse {
+            runs: workflows,
+            page: Some(PageInfo {
+                next_page_token,
+                has_more: workflows_result.has_more,
+                total_count: 0,
+            }),
         }))
     }
 }

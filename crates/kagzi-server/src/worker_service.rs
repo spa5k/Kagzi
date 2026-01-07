@@ -3,10 +3,10 @@ use std::time::Duration;
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
-    CompleteWorkflowRequest, CompleteWorkflowResponse, DeregisterRequest, ErrorCode, ErrorDetail,
-    FailStepRequest, FailStepResponse, FailWorkflowRequest, FailWorkflowResponse, HeartbeatRequest,
-    HeartbeatResponse, PollTaskRequest, PollTaskResponse, RegisterRequest, RegisterResponse,
-    SleepRequest,
+    CompleteWorkflowRequest, CompleteWorkflowResponse, DeregisterRequest, DeregisterResponse,
+    ErrorCode, ErrorDetail, FailStepRequest, FailStepResponse, FailWorkflowRequest,
+    FailWorkflowResponse, HeartbeatRequest, HeartbeatResponse, PollTaskRequest, PollTaskResponse,
+    RegisterRequest, RegisterResponse, SleepRequest, SleepResponse,
 };
 use kagzi_queue::QueueNotifier;
 use kagzi_store::{
@@ -228,7 +228,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     async fn deregister(
         &self,
         request: Request<DeregisterRequest>,
-    ) -> Result<Response<()>, Status> {
+    ) -> Result<Response<DeregisterResponse>, Status> {
         let req = request.into_inner();
         let worker_id = Uuid::parse_str(&req.worker_id)
             .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
@@ -259,7 +259,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             info!(worker_id = %worker_id, namespace = %namespace_id, "Worker disconnected");
         }
 
-        Ok(Response::new(()))
+        Ok(Response::new(DeregisterResponse { drained: req.drain }))
     }
 
     #[instrument(
@@ -634,7 +634,10 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     }
 
     #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
-    async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
+    async fn sleep(
+        &self,
+        request: Request<SleepRequest>,
+    ) -> Result<Response<SleepResponse>, Status> {
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
 
@@ -654,7 +657,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         // Validate duration
         if duration_seconds == 0 {
             // Zero duration sleep is a no-op, return immediately
-            return Ok(Response::new(()));
+            return Ok(Response::new(SleepResponse {}));
         }
 
         self.store
@@ -663,7 +666,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        Ok(Response::new(()))
+        Ok(Response::new(SleepResponse {}))
     }
 }
 

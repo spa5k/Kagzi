@@ -15,10 +15,6 @@ import { Message, proto3, Timestamp } from "@bufbuild/protobuf";
 import { ErrorDetail, PageInfo, PageRequest, Payload, RetryPolicy } from "./common_pb";
 
 /**
- * ============================================
- * ENUMS
- * ============================================
- *
  * @generated from enum kagzi.v1.WorkflowStatus
  */
 export enum WorkflowStatus {
@@ -81,29 +77,25 @@ proto3.util.setEnumType(WorkflowStatus, "kagzi.v1.WorkflowStatus", [
 ]);
 
 /**
- * ============================================
- * MESSAGES
- * ============================================
+ * Workflow represents a workflow execution instance with its current state and metadata.
  *
  * @generated from message kagzi.v1.Workflow
  */
 export class Workflow extends Message<Workflow> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * User-provided, acts as idempotency key
-   *
-   * @generated from field: string external_id = 2;
+   * @generated from field: string external_id = 3;
    */
   externalId = "";
-
-  /**
-   * @generated from field: string namespace_id = 3;
-   */
-  namespaceId = "";
 
   /**
    * @generated from field: string task_queue = 4;
@@ -121,73 +113,84 @@ export class Workflow extends Message<Workflow> {
   status = WorkflowStatus.UNSPECIFIED;
 
   /**
-   * @generated from field: kagzi.v1.Payload input = 7;
-   */
-  input?: Payload;
-
-  /**
-   * @generated from field: kagzi.v1.Payload output = 8;
-   */
-  output?: Payload;
-
-  /**
-   * @generated from field: kagzi.v1.ErrorDetail error = 9;
-   */
-  error?: ErrorDetail;
-
-  /**
-   * @generated from field: int32 attempts = 10;
-   */
-  attempts = 0;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp created_at = 11;
-   */
-  createdAt?: Timestamp;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp started_at = 12;
-   */
-  startedAt?: Timestamp;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp finished_at = 13;
-   */
-  finishedAt?: Timestamp;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp wake_up_at = 14;
-   */
-  wakeUpAt?: Timestamp;
-
-  /**
-   * @generated from field: string worker_id = 16;
-   */
-  workerId = "";
-
-  /**
-   * @generated from field: string version = 17;
+   * @generated from field: string version = 7;
    */
   version = "";
 
   /**
-   * @generated from field: string parent_step_id = 18;
+   * @generated from field: kagzi.v1.Payload input = 8;
    */
-  parentStepId = "";
+  input?: Payload;
 
   /**
-   * For schedule templates only
-   *
-   * @generated from field: optional string cron_expr = 19;
+   * @generated from field: optional kagzi.v1.Payload output = 9;
    */
-  cronExpr?: string;
+  output?: Payload;
 
   /**
-   * For fired instances only
-   *
-   * @generated from field: optional string schedule_id = 20;
+   * @generated from field: optional kagzi.v1.ErrorDetail error = 10;
+   */
+  error?: ErrorDetail;
+
+  /**
+   * @generated from field: int32 attempts = 11;
+   */
+  attempts = 0;
+
+  /**
+   * @generated from field: optional int32 priority = 12;
+   */
+  priority?: number;
+
+  /**
+   * @generated from field: optional int64 timeout_ms = 13;
+   */
+  timeoutMs?: bigint;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp created_at = 14;
+   */
+  createdAt?: Timestamp;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp started_at = 15;
+   */
+  startedAt?: Timestamp;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp finished_at = 16;
+   */
+  finishedAt?: Timestamp;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp wake_up_at = 17;
+   */
+  wakeUpAt?: Timestamp;
+
+  /**
+   * @generated from field: optional string worker_id = 18;
+   */
+  workerId?: string;
+
+  /**
+   * @generated from field: optional string parent_run_id = 19;
+   */
+  parentRunId?: string;
+
+  /**
+   * @generated from field: optional string parent_step_id = 20;
+   */
+  parentStepId?: string;
+
+  /**
+   * @generated from field: optional string schedule_id = 21;
    */
   scheduleId?: string;
+
+  /**
+   * @generated from field: optional string cron_expr = 22;
+   */
+  cronExpr?: string;
 
   constructor(data?: PartialMessage<Workflow>) {
     super();
@@ -197,25 +200,28 @@ export class Workflow extends Message<Workflow> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.Workflow";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 5, name: "workflow_type", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 6, name: "status", kind: "enum", T: proto3.getEnumType(WorkflowStatus) },
-    { no: 7, name: "input", kind: "message", T: Payload },
-    { no: 8, name: "output", kind: "message", T: Payload },
-    { no: 9, name: "error", kind: "message", T: ErrorDetail },
-    { no: 10, name: "attempts", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
-    { no: 11, name: "created_at", kind: "message", T: Timestamp },
-    { no: 12, name: "started_at", kind: "message", T: Timestamp },
-    { no: 13, name: "finished_at", kind: "message", T: Timestamp },
-    { no: 14, name: "wake_up_at", kind: "message", T: Timestamp },
-    { no: 16, name: "worker_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 17, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 18, name: "parent_step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 19, name: "cron_expr", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
-    { no: 20, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 7, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 8, name: "input", kind: "message", T: Payload },
+    { no: 9, name: "output", kind: "message", T: Payload, opt: true },
+    { no: 10, name: "error", kind: "message", T: ErrorDetail, opt: true },
+    { no: 11, name: "attempts", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 12, name: "priority", kind: "scalar", T: 5 /* ScalarType.INT32 */, opt: true },
+    { no: 13, name: "timeout_ms", kind: "scalar", T: 3 /* ScalarType.INT64 */, opt: true },
+    { no: 14, name: "created_at", kind: "message", T: Timestamp },
+    { no: 15, name: "started_at", kind: "message", T: Timestamp, opt: true },
+    { no: 16, name: "finished_at", kind: "message", T: Timestamp, opt: true },
+    { no: 17, name: "wake_up_at", kind: "message", T: Timestamp, opt: true },
+    { no: 18, name: "worker_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 19, name: "parent_run_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 20, name: "parent_step_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 21, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 22, name: "cron_expr", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Workflow {
@@ -239,22 +245,20 @@ export class Workflow extends Message<Workflow> {
 }
 
 /**
- * --- Requests/Responses ---
+ * StartWorkflowRequest initiates a workflow with idempotency via external_id.
  *
  * @generated from message kagzi.v1.StartWorkflowRequest
  */
 export class StartWorkflowRequest extends Message<StartWorkflowRequest> {
   /**
-   * Acts as idempotency key
-   *
-   * @generated from field: string external_id = 1;
-   */
-  externalId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string external_id = 2;
+   */
+  externalId = "";
 
   /**
    * @generated from field: string task_queue = 3;
@@ -289,8 +293,8 @@ export class StartWorkflowRequest extends Message<StartWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.StartWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "workflow_type", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 5, name: "input", kind: "message", T: Payload },
@@ -322,6 +326,8 @@ export class StartWorkflowRequest extends Message<StartWorkflowRequest> {
 }
 
 /**
+ * StartWorkflowResponse returns run_id and indicates if this was a duplicate request.
+ *
  * @generated from message kagzi.v1.StartWorkflowResponse
  */
 export class StartWorkflowResponse extends Message<StartWorkflowResponse> {
@@ -378,14 +384,14 @@ export class StartWorkflowResponse extends Message<StartWorkflowResponse> {
  */
 export class GetWorkflowRequest extends Message<GetWorkflowRequest> {
   /**
-   * @generated from field: string run_id = 1;
-   */
-  runId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
+   */
+  runId = "";
 
   constructor(data?: PartialMessage<GetWorkflowRequest>) {
     super();
@@ -395,8 +401,8 @@ export class GetWorkflowRequest extends Message<GetWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetWorkflowRequest {
@@ -466,6 +472,8 @@ export class GetWorkflowResponse extends Message<GetWorkflowResponse> {
 }
 
 /**
+ * ListWorkflowsRequest supports filtering by status, type, queue, and date range.
+ *
  * @generated from message kagzi.v1.ListWorkflowsRequest
  */
 export class ListWorkflowsRequest extends Message<ListWorkflowsRequest> {
@@ -484,6 +492,26 @@ export class ListWorkflowsRequest extends Message<ListWorkflowsRequest> {
    */
   page?: PageRequest;
 
+  /**
+   * @generated from field: optional string workflow_type = 4;
+   */
+  workflowType?: string;
+
+  /**
+   * @generated from field: optional string task_queue = 5;
+   */
+  taskQueue?: string;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp created_after = 6;
+   */
+  createdAfter?: Timestamp;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp created_before = 7;
+   */
+  createdBefore?: Timestamp;
+
   constructor(data?: PartialMessage<ListWorkflowsRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -501,6 +529,10 @@ export class ListWorkflowsRequest extends Message<ListWorkflowsRequest> {
       opt: true,
     },
     { no: 3, name: "page", kind: "message", T: PageRequest },
+    { no: 4, name: "workflow_type", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 5, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 6, name: "created_after", kind: "message", T: Timestamp, opt: true },
+    { no: 7, name: "created_before", kind: "message", T: Timestamp, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListWorkflowsRequest {
@@ -583,14 +615,14 @@ export class ListWorkflowsResponse extends Message<ListWorkflowsResponse> {
  */
 export class CancelWorkflowRequest extends Message<CancelWorkflowRequest> {
   /**
-   * @generated from field: string run_id = 1;
-   */
-  runId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
+   */
+  runId = "";
 
   constructor(data?: PartialMessage<CancelWorkflowRequest>) {
     super();
@@ -600,8 +632,8 @@ export class CancelWorkflowRequest extends Message<CancelWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.CancelWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(
@@ -627,5 +659,385 @@ export class CancelWorkflowRequest extends Message<CancelWorkflowRequest> {
     b: CancelWorkflowRequest | PlainMessage<CancelWorkflowRequest> | undefined,
   ): boolean {
     return proto3.util.equals(CancelWorkflowRequest, a, b);
+  }
+}
+
+/**
+ * CancelWorkflowResponse indicates if cancellation succeeded and the resulting status.
+ *
+ * @generated from message kagzi.v1.CancelWorkflowResponse
+ */
+export class CancelWorkflowResponse extends Message<CancelWorkflowResponse> {
+  /**
+   * @generated from field: bool cancelled = 1;
+   */
+  cancelled = false;
+
+  /**
+   * @generated from field: kagzi.v1.WorkflowStatus status = 2;
+   */
+  status = WorkflowStatus.UNSPECIFIED;
+
+  constructor(data?: PartialMessage<CancelWorkflowResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.CancelWorkflowResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "cancelled", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "status", kind: "enum", T: proto3.getEnumType(WorkflowStatus) },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): CancelWorkflowResponse {
+    return new CancelWorkflowResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): CancelWorkflowResponse {
+    return new CancelWorkflowResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): CancelWorkflowResponse {
+    return new CancelWorkflowResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: CancelWorkflowResponse | PlainMessage<CancelWorkflowResponse> | undefined,
+    b: CancelWorkflowResponse | PlainMessage<CancelWorkflowResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(CancelWorkflowResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.RetryWorkflowRequest
+ */
+export class RetryWorkflowRequest extends Message<RetryWorkflowRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
+   */
+  runId = "";
+
+  constructor(data?: PartialMessage<RetryWorkflowRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.RetryWorkflowRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): RetryWorkflowRequest {
+    return new RetryWorkflowRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): RetryWorkflowRequest {
+    return new RetryWorkflowRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): RetryWorkflowRequest {
+    return new RetryWorkflowRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: RetryWorkflowRequest | PlainMessage<RetryWorkflowRequest> | undefined,
+    b: RetryWorkflowRequest | PlainMessage<RetryWorkflowRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(RetryWorkflowRequest, a, b);
+  }
+}
+
+/**
+ * RetryWorkflowResponse returns the new run_id or indicates the workflow is still running.
+ *
+ * @generated from message kagzi.v1.RetryWorkflowResponse
+ */
+export class RetryWorkflowResponse extends Message<RetryWorkflowResponse> {
+  /**
+   * @generated from field: string new_run_id = 1;
+   */
+  newRunId = "";
+
+  /**
+   * @generated from field: bool already_running = 2;
+   */
+  alreadyRunning = false;
+
+  constructor(data?: PartialMessage<RetryWorkflowResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.RetryWorkflowResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "new_run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "already_running", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): RetryWorkflowResponse {
+    return new RetryWorkflowResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): RetryWorkflowResponse {
+    return new RetryWorkflowResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): RetryWorkflowResponse {
+    return new RetryWorkflowResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: RetryWorkflowResponse | PlainMessage<RetryWorkflowResponse> | undefined,
+    b: RetryWorkflowResponse | PlainMessage<RetryWorkflowResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(RetryWorkflowResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.GetWorkflowByExternalIdRequest
+ */
+export class GetWorkflowByExternalIdRequest extends Message<GetWorkflowByExternalIdRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string external_id = 2;
+   */
+  externalId = "";
+
+  constructor(data?: PartialMessage<GetWorkflowByExternalIdRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.GetWorkflowByExternalIdRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): GetWorkflowByExternalIdRequest {
+    return new GetWorkflowByExternalIdRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): GetWorkflowByExternalIdRequest {
+    return new GetWorkflowByExternalIdRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): GetWorkflowByExternalIdRequest {
+    return new GetWorkflowByExternalIdRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: GetWorkflowByExternalIdRequest | PlainMessage<GetWorkflowByExternalIdRequest> | undefined,
+    b: GetWorkflowByExternalIdRequest | PlainMessage<GetWorkflowByExternalIdRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(GetWorkflowByExternalIdRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.GetWorkflowByExternalIdResponse
+ */
+export class GetWorkflowByExternalIdResponse extends Message<GetWorkflowByExternalIdResponse> {
+  /**
+   * @generated from field: kagzi.v1.Workflow workflow = 1;
+   */
+  workflow?: Workflow;
+
+  constructor(data?: PartialMessage<GetWorkflowByExternalIdResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.GetWorkflowByExternalIdResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "workflow", kind: "message", T: Workflow },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): GetWorkflowByExternalIdResponse {
+    return new GetWorkflowByExternalIdResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): GetWorkflowByExternalIdResponse {
+    return new GetWorkflowByExternalIdResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): GetWorkflowByExternalIdResponse {
+    return new GetWorkflowByExternalIdResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: GetWorkflowByExternalIdResponse | PlainMessage<GetWorkflowByExternalIdResponse> | undefined,
+    b: GetWorkflowByExternalIdResponse | PlainMessage<GetWorkflowByExternalIdResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(GetWorkflowByExternalIdResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.TerminateWorkflowRequest
+ */
+export class TerminateWorkflowRequest extends Message<TerminateWorkflowRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
+   */
+  runId = "";
+
+  /**
+   * @generated from field: string reason = 3;
+   */
+  reason = "";
+
+  constructor(data?: PartialMessage<TerminateWorkflowRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.TerminateWorkflowRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "reason", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): TerminateWorkflowRequest {
+    return new TerminateWorkflowRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): TerminateWorkflowRequest {
+    return new TerminateWorkflowRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): TerminateWorkflowRequest {
+    return new TerminateWorkflowRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: TerminateWorkflowRequest | PlainMessage<TerminateWorkflowRequest> | undefined,
+    b: TerminateWorkflowRequest | PlainMessage<TerminateWorkflowRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(TerminateWorkflowRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.TerminateWorkflowResponse
+ */
+export class TerminateWorkflowResponse extends Message<TerminateWorkflowResponse> {
+  /**
+   * @generated from field: bool terminated = 1;
+   */
+  terminated = false;
+
+  /**
+   * @generated from field: kagzi.v1.WorkflowStatus status = 2;
+   */
+  status = WorkflowStatus.UNSPECIFIED;
+
+  constructor(data?: PartialMessage<TerminateWorkflowResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.TerminateWorkflowResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "terminated", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "status", kind: "enum", T: proto3.getEnumType(WorkflowStatus) },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): TerminateWorkflowResponse {
+    return new TerminateWorkflowResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): TerminateWorkflowResponse {
+    return new TerminateWorkflowResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): TerminateWorkflowResponse {
+    return new TerminateWorkflowResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: TerminateWorkflowResponse | PlainMessage<TerminateWorkflowResponse> | undefined,
+    b: TerminateWorkflowResponse | PlainMessage<TerminateWorkflowResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(TerminateWorkflowResponse, a, b);
   }
 }

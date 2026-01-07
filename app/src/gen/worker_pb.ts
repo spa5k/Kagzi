@@ -65,12 +65,18 @@ export enum StepKind {
    * @generated from enum value: STEP_KIND_SLEEP = 2;
    */
   SLEEP = 2,
+
+  /**
+   * @generated from enum value: STEP_KIND_CHILD_WORKFLOW = 3;
+   */
+  CHILD_WORKFLOW = 3,
 }
 // Retrieve enum metadata with: proto3.getEnumType(StepKind)
 proto3.util.setEnumType(StepKind, "kagzi.v1.StepKind", [
   { no: 0, name: "STEP_KIND_UNSPECIFIED" },
   { no: 1, name: "STEP_KIND_FUNCTION" },
   { no: 2, name: "STEP_KIND_SLEEP" },
+  { no: 3, name: "STEP_KIND_CHILD_WORKFLOW" },
 ]);
 
 /**
@@ -112,6 +118,8 @@ proto3.util.setEnumType(StepStatus, "kagzi.v1.StepStatus", [
 ]);
 
 /**
+ * Worker represents a registered workflow executor with concurrency limits and metadata.
+ *
  * @generated from message kagzi.v1.Worker
  */
 export class Worker extends Message<Worker> {
@@ -121,64 +129,69 @@ export class Worker extends Message<Worker> {
   workerId = "";
 
   /**
-   * @generated from field: string namespace_id = 2;
-   */
-  namespaceId = "";
-
-  /**
-   * @generated from field: string task_queue = 3;
+   * @generated from field: string task_queue = 2;
    */
   taskQueue = "";
 
   /**
-   * @generated from field: kagzi.v1.WorkerStatus status = 4;
+   * @generated from field: kagzi.v1.WorkerStatus status = 3;
    */
   status = WorkerStatus.UNSPECIFIED;
 
   /**
-   * @generated from field: string hostname = 5;
-   */
-  hostname = "";
-
-  /**
-   * @generated from field: int32 pid = 6;
-   */
-  pid = 0;
-
-  /**
-   * @generated from field: string version = 7;
+   * @generated from field: string version = 4;
    */
   version = "";
 
   /**
-   * @generated from field: repeated string workflow_types = 8;
+   * @generated from field: repeated string workflow_types = 5;
    */
   workflowTypes: string[] = [];
 
   /**
-   * @generated from field: google.protobuf.Timestamp registered_at = 9;
+   * @generated from field: string hostname = 6;
    */
-  registeredAt?: Timestamp;
+  hostname = "";
 
   /**
-   * @generated from field: google.protobuf.Timestamp last_heartbeat_at = 10;
+   * @generated from field: int32 pid = 7;
    */
-  lastHeartbeatAt?: Timestamp;
+  pid = 0;
 
   /**
-   * @generated from field: map<string, string> labels = 11;
-   */
-  labels: { [key: string]: string } = {};
-
-  /**
-   * @generated from field: optional int32 queue_concurrency_limit = 12;
+   * @generated from field: optional int32 queue_concurrency_limit = 8;
    */
   queueConcurrencyLimit?: number;
 
   /**
-   * @generated from field: repeated kagzi.v1.WorkflowTypeConcurrency workflow_type_concurrency = 13;
+   * @generated from field: repeated kagzi.v1.WorkflowTypeConcurrency workflow_type_concurrency = 9;
    */
   workflowTypeConcurrency: WorkflowTypeConcurrency[] = [];
+
+  /**
+   * @generated from field: int32 active_workflow_count = 10;
+   */
+  activeWorkflowCount = 0;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp registered_at = 11;
+   */
+  registeredAt?: Timestamp;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp last_heartbeat_at = 12;
+   */
+  lastHeartbeatAt?: Timestamp;
+
+  /**
+   * @generated from field: map<string, string> labels = 13;
+   */
+  labels: { [key: string]: string } = {};
+
+  /**
+   * @generated from field: map<string, string> capabilities = 14;
+   */
+  capabilities: { [key: string]: string } = {};
 
   constructor(data?: PartialMessage<Worker>) {
     super();
@@ -189,35 +202,42 @@ export class Worker extends Message<Worker> {
   static readonly typeName = "kagzi.v1.Worker";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "worker_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 4, name: "status", kind: "enum", T: proto3.getEnumType(WorkerStatus) },
-    { no: 5, name: "hostname", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 6, name: "pid", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
-    { no: 7, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 8, name: "workflow_types", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
-    { no: 9, name: "registered_at", kind: "message", T: Timestamp },
-    { no: 10, name: "last_heartbeat_at", kind: "message", T: Timestamp },
+    { no: 2, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "status", kind: "enum", T: proto3.getEnumType(WorkerStatus) },
+    { no: 4, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 5, name: "workflow_types", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 6, name: "hostname", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 7, name: "pid", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     {
-      no: 11,
-      name: "labels",
-      kind: "map",
-      K: 9 /* ScalarType.STRING */,
-      V: { kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    },
-    {
-      no: 12,
+      no: 8,
       name: "queue_concurrency_limit",
       kind: "scalar",
       T: 5 /* ScalarType.INT32 */,
       opt: true,
     },
     {
-      no: 13,
+      no: 9,
       name: "workflow_type_concurrency",
       kind: "message",
       T: WorkflowTypeConcurrency,
       repeated: true,
+    },
+    { no: 10, name: "active_workflow_count", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 11, name: "registered_at", kind: "message", T: Timestamp },
+    { no: 12, name: "last_heartbeat_at", kind: "message", T: Timestamp },
+    {
+      no: 13,
+      name: "labels",
+      kind: "map",
+      K: 9 /* ScalarType.STRING */,
+      V: { kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    },
+    {
+      no: 14,
+      name: "capabilities",
+      kind: "map",
+      K: 9 /* ScalarType.STRING */,
+      V: { kind: "scalar", T: 9 /* ScalarType.STRING */ },
     },
   ]);
 
@@ -242,6 +262,8 @@ export class Worker extends Message<Worker> {
 }
 
 /**
+ * WorkflowTypeConcurrency configures per-workflow-type concurrency limits.
+ *
  * @generated from message kagzi.v1.WorkflowTypeConcurrency
  */
 export class WorkflowTypeConcurrency extends Message<WorkflowTypeConcurrency> {
@@ -297,23 +319,25 @@ export class WorkflowTypeConcurrency extends Message<WorkflowTypeConcurrency> {
 }
 
 /**
+ * Step represents a single execution unit within a workflow with retry tracking.
+ *
  * @generated from message kagzi.v1.Step
  */
 export class Step extends Message<Step> {
   /**
-   * @generated from field: string step_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string step_id = 2;
    */
   stepId = "";
 
   /**
-   * @generated from field: string run_id = 2;
+   * @generated from field: string run_id = 3;
    */
   runId = "";
-
-  /**
-   * @generated from field: string namespace_id = 3;
-   */
-  namespaceId = "";
 
   /**
    * @generated from field: string name = 4;
@@ -341,12 +365,12 @@ export class Step extends Message<Step> {
   input?: Payload;
 
   /**
-   * @generated from field: kagzi.v1.Payload output = 9;
+   * @generated from field: optional kagzi.v1.Payload output = 9;
    */
   output?: Payload;
 
   /**
-   * @generated from field: kagzi.v1.ErrorDetail error = 10;
+   * @generated from field: optional kagzi.v1.ErrorDetail error = 10;
    */
   error?: ErrorDetail;
 
@@ -356,12 +380,12 @@ export class Step extends Message<Step> {
   createdAt?: Timestamp;
 
   /**
-   * @generated from field: google.protobuf.Timestamp started_at = 12;
+   * @generated from field: optional google.protobuf.Timestamp started_at = 12;
    */
   startedAt?: Timestamp;
 
   /**
-   * @generated from field: google.protobuf.Timestamp finished_at = 13;
+   * @generated from field: optional google.protobuf.Timestamp finished_at = 13;
    */
   finishedAt?: Timestamp;
 
@@ -378,19 +402,19 @@ export class Step extends Message<Step> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.Step";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 5, name: "kind", kind: "enum", T: proto3.getEnumType(StepKind) },
     { no: 6, name: "status", kind: "enum", T: proto3.getEnumType(StepStatus) },
     { no: 7, name: "attempt_number", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 8, name: "input", kind: "message", T: Payload },
-    { no: 9, name: "output", kind: "message", T: Payload },
-    { no: 10, name: "error", kind: "message", T: ErrorDetail },
+    { no: 9, name: "output", kind: "message", T: Payload, opt: true },
+    { no: 10, name: "error", kind: "message", T: ErrorDetail, opt: true },
     { no: 11, name: "created_at", kind: "message", T: Timestamp },
-    { no: 12, name: "started_at", kind: "message", T: Timestamp },
-    { no: 13, name: "finished_at", kind: "message", T: Timestamp },
+    { no: 12, name: "started_at", kind: "message", T: Timestamp, opt: true },
+    { no: 13, name: "finished_at", kind: "message", T: Timestamp, opt: true },
     { no: 14, name: "child_run_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
   ]);
 
@@ -415,6 +439,8 @@ export class Step extends Message<Step> {
 }
 
 /**
+ * RegisterRequest declares worker capabilities and concurrency limits.
+ *
  * @generated from message kagzi.v1.RegisterRequest
  */
 export class RegisterRequest extends Message<RegisterRequest> {
@@ -521,6 +547,8 @@ export class RegisterRequest extends Message<RegisterRequest> {
 }
 
 /**
+ * RegisterResponse returns the assigned worker_id and required heartbeat interval.
+ *
  * @generated from message kagzi.v1.RegisterResponse
  */
 export class RegisterResponse extends Message<RegisterResponse> {
@@ -607,6 +635,8 @@ export class HeartbeatRequest extends Message<HeartbeatRequest> {
 }
 
 /**
+ * HeartbeatResponse signals whether the worker should drain and stop accepting new tasks.
+ *
  * @generated from message kagzi.v1.HeartbeatResponse
  */
 export class HeartbeatResponse extends Message<HeartbeatResponse> {
@@ -703,14 +733,14 @@ export class DeregisterRequest extends Message<DeregisterRequest> {
  */
 export class PollTaskRequest extends Message<PollTaskRequest> {
   /**
-   * @generated from field: string worker_id = 1;
-   */
-  workerId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string worker_id = 2;
+   */
+  workerId = "";
 
   /**
    * @generated from field: string task_queue = 3;
@@ -730,8 +760,8 @@ export class PollTaskRequest extends Message<PollTaskRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.PollTaskRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "worker_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "worker_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "workflow_types", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
   ]);
@@ -813,29 +843,32 @@ export class PollTaskResponse extends Message<PollTaskResponse> {
  */
 export class BeginStepRequest extends Message<BeginStepRequest> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * @generated from field: string step_name = 2;
+   * @generated from field: string step_name = 3;
    */
   stepName = "";
 
   /**
-   * Explicit, no more inference
-   *
-   * @generated from field: kagzi.v1.StepKind kind = 3;
+   * @generated from field: kagzi.v1.StepKind kind = 4;
    */
   kind = StepKind.UNSPECIFIED;
 
   /**
-   * @generated from field: kagzi.v1.Payload input = 4;
+   * @generated from field: kagzi.v1.Payload input = 5;
    */
   input?: Payload;
 
   /**
-   * @generated from field: kagzi.v1.RetryPolicy retry_policy = 5;
+   * @generated from field: kagzi.v1.RetryPolicy retry_policy = 6;
    */
   retryPolicy?: RetryPolicy;
 
@@ -847,11 +880,12 @@ export class BeginStepRequest extends Message<BeginStepRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.BeginStepRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "step_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "kind", kind: "enum", T: proto3.getEnumType(StepKind) },
-    { no: 4, name: "input", kind: "message", T: Payload },
-    { no: 5, name: "retry_policy", kind: "message", T: RetryPolicy },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "step_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "kind", kind: "enum", T: proto3.getEnumType(StepKind) },
+    { no: 5, name: "input", kind: "message", T: Payload },
+    { no: 6, name: "retry_policy", kind: "message", T: RetryPolicy },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): BeginStepRequest {
@@ -875,6 +909,8 @@ export class BeginStepRequest extends Message<BeginStepRequest> {
 }
 
 /**
+ * BeginStepResponse indicates if execution is needed or if cached output exists.
+ *
  * @generated from message kagzi.v1.BeginStepResponse
  */
 export class BeginStepResponse extends Message<BeginStepResponse> {
@@ -931,17 +967,22 @@ export class BeginStepResponse extends Message<BeginStepResponse> {
  */
 export class CompleteStepRequest extends Message<CompleteStepRequest> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * @generated from field: string step_id = 2;
+   * @generated from field: string step_id = 3;
    */
   stepId = "";
 
   /**
-   * @generated from field: kagzi.v1.Payload output = 3;
+   * @generated from field: kagzi.v1.Payload output = 4;
    */
   output?: Payload;
 
@@ -953,9 +994,10 @@ export class CompleteStepRequest extends Message<CompleteStepRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.CompleteStepRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "output", kind: "message", T: Payload },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "output", kind: "message", T: Payload },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CompleteStepRequest {
@@ -1029,17 +1071,22 @@ export class CompleteStepResponse extends Message<CompleteStepResponse> {
  */
 export class FailStepRequest extends Message<FailStepRequest> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * @generated from field: string step_id = 2;
+   * @generated from field: string step_id = 3;
    */
   stepId = "";
 
   /**
-   * @generated from field: kagzi.v1.ErrorDetail error = 3;
+   * @generated from field: kagzi.v1.ErrorDetail error = 4;
    */
   error?: ErrorDetail;
 
@@ -1051,9 +1098,10 @@ export class FailStepRequest extends Message<FailStepRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.FailStepRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "error", kind: "message", T: ErrorDetail },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "error", kind: "message", T: ErrorDetail },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): FailStepRequest {
@@ -1077,6 +1125,8 @@ export class FailStepRequest extends Message<FailStepRequest> {
 }
 
 /**
+ * FailStepResponse indicates if an automatic retry was scheduled.
+ *
  * @generated from message kagzi.v1.FailStepResponse
  */
 export class FailStepResponse extends Message<FailStepResponse> {
@@ -1127,12 +1177,17 @@ export class FailStepResponse extends Message<FailStepResponse> {
  */
 export class CompleteWorkflowRequest extends Message<CompleteWorkflowRequest> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * @generated from field: kagzi.v1.Payload output = 2;
+   * @generated from field: kagzi.v1.Payload output = 3;
    */
   output?: Payload;
 
@@ -1144,8 +1199,9 @@ export class CompleteWorkflowRequest extends Message<CompleteWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.CompleteWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "output", kind: "message", T: Payload },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "output", kind: "message", T: Payload },
   ]);
 
   static fromBinary(
@@ -1231,12 +1287,17 @@ export class CompleteWorkflowResponse extends Message<CompleteWorkflowResponse> 
  */
 export class FailWorkflowRequest extends Message<FailWorkflowRequest> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * @generated from field: kagzi.v1.ErrorDetail error = 2;
+   * @generated from field: kagzi.v1.ErrorDetail error = 3;
    */
   error?: ErrorDetail;
 
@@ -1248,8 +1309,9 @@ export class FailWorkflowRequest extends Message<FailWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.FailWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "error", kind: "message", T: ErrorDetail },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "error", kind: "message", T: ErrorDetail },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): FailWorkflowRequest {
@@ -1323,17 +1385,22 @@ export class FailWorkflowResponse extends Message<FailWorkflowResponse> {
  */
 export class SleepRequest extends Message<SleepRequest> {
   /**
-   * @generated from field: string run_id = 1;
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string run_id = 2;
    */
   runId = "";
 
   /**
-   * @generated from field: string step_id = 2;
+   * @generated from field: string step_id = 3;
    */
   stepId = "";
 
   /**
-   * @generated from field: google.protobuf.Duration duration = 3;
+   * @generated from field: google.protobuf.Duration duration = 4;
    */
   duration?: Duration;
 
@@ -1345,9 +1412,10 @@ export class SleepRequest extends Message<SleepRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.SleepRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "duration", kind: "message", T: Duration },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "duration", kind: "message", T: Duration },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SleepRequest {
@@ -1367,5 +1435,81 @@ export class SleepRequest extends Message<SleepRequest> {
     b: SleepRequest | PlainMessage<SleepRequest> | undefined,
   ): boolean {
     return proto3.util.equals(SleepRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.SleepResponse
+ */
+export class SleepResponse extends Message<SleepResponse> {
+  constructor(data?: PartialMessage<SleepResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.SleepResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => []);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SleepResponse {
+    return new SleepResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SleepResponse {
+    return new SleepResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SleepResponse {
+    return new SleepResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: SleepResponse | PlainMessage<SleepResponse> | undefined,
+    b: SleepResponse | PlainMessage<SleepResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(SleepResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.DeregisterResponse
+ */
+export class DeregisterResponse extends Message<DeregisterResponse> {
+  /**
+   * @generated from field: bool drained = 1;
+   */
+  drained = false;
+
+  constructor(data?: PartialMessage<DeregisterResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.DeregisterResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "drained", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): DeregisterResponse {
+    return new DeregisterResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): DeregisterResponse {
+    return new DeregisterResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): DeregisterResponse {
+    return new DeregisterResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: DeregisterResponse | PlainMessage<DeregisterResponse> | undefined,
+    b: DeregisterResponse | PlainMessage<DeregisterResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(DeregisterResponse, a, b);
   }
 }

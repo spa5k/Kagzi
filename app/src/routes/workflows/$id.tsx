@@ -1,7 +1,32 @@
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ListStepsRequest } from "@/gen/admin_pb";
+import { StepStatus } from "@/gen/worker_pb";
 import type { Workflow } from "@/gen/workflow_pb";
+import {
+  CancelWorkflowRequest,
+  RetryWorkflowRequest,
+  TerminateWorkflowRequest,
+} from "@/gen/workflow_pb";
 import { useWorkflows } from "@/hooks/use-dashboard";
+import {
+  useCancelWorkflow,
+  useListSteps,
+  useRetryWorkflow,
+  useTerminateWorkflow,
+} from "@/hooks/use-grpc-services";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import { Timestamp } from "@bufbuild/protobuf";
@@ -13,6 +38,8 @@ import {
   Clock01Icon,
   Copy01Icon,
   Menu01Icon,
+  Refresh01Icon,
+  StopIcon,
   ViewIcon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
@@ -59,6 +86,21 @@ function getStatusIcon(status: number) {
   }
 }
 
+function getStepStatusColor(status: number) {
+  switch (status) {
+    case StepStatus.RUNNING:
+      return "text-primary bg-primary/10 border-primary/20";
+    case StepStatus.COMPLETED:
+      return "text-primary bg-primary/10 border-primary/20";
+    case StepStatus.FAILED:
+      return "text-destructive bg-destructive/10 border-destructive/20";
+    case StepStatus.PENDING:
+      return "text-yellow-600 bg-yellow-600/10 border-yellow-600/20";
+    default:
+      return "text-muted-foreground bg-muted/50 border-border";
+  }
+}
+
 function formatDateTime(timestamp: Timestamp | undefined) {
   if (!timestamp) return "-";
   return new Date(timestamp.toDate()).toLocaleString("en-US", {
@@ -93,8 +135,50 @@ function WorkflowDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
   const { data: workflows } = useWorkflows();
+  const terminateWorkflow = useTerminateWorkflow();
+  const cancelWorkflow = useCancelWorkflow();
+  const retryWorkflow = useRetryWorkflow();
 
   const workflow = workflows?.find((w) => w.runId === id);
+
+  const handleTerminate = async () => {
+    try {
+      await terminateWorkflow.mutateAsync(
+        new TerminateWorkflowRequest({
+          runId: id,
+          namespaceId: "default",
+        }),
+      );
+    } catch (error) {
+      console.error("Failed to terminate workflow:", error);
+    }
+  };
+
+  const handleCancel = async () => {
+    try {
+      await cancelWorkflow.mutateAsync(
+        new CancelWorkflowRequest({
+          runId: id,
+          namespaceId: "default",
+        }),
+      );
+    } catch (error) {
+      console.error("Failed to cancel workflow:", error);
+    }
+  };
+
+  const handleRetry = async () => {
+    try {
+      await retryWorkflow.mutateAsync(
+        new RetryWorkflowRequest({
+          runId: id,
+          namespaceId: "default",
+        }),
+      );
+    } catch (error) {
+      console.error("Failed to retry workflow:", error);
+    }
+  };
 
   if (!workflow) {
     return (
@@ -154,14 +238,97 @@ function WorkflowDetailPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="font-mono text-xs uppercase tracking-wider text-destructive border-destructive/30 hover:bg-destructive hover:text-white hover:border-destructive transition-colors"
-            >
-              <Icon icon={Cancel01Icon} className="size-3 mr-2" />
-              Terminate Process
-            </Button>
+            {/* Cancel button - only for running workflows */}
+            {workflow.status === WorkflowStatus.RUNNING && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCancel}
+                disabled={cancelWorkflow.isPending || terminateWorkflow.isPending}
+                className="font-mono text-xs uppercase tracking-wider"
+              >
+                <Icon icon={StopIcon} className="size-3 mr-2" />
+                {cancelWorkflow.isPending ? "Cancelling..." : "Cancel"}
+              </Button>
+            )}
+
+            {/* Retry button - only for failed workflows */}
+            {workflow.status === WorkflowStatus.FAILED && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRetry}
+                disabled={retryWorkflow.isPending}
+                className="font-mono text-xs uppercase tracking-wider"
+              >
+                <Icon icon={Refresh01Icon} className="size-3 mr-2" />
+                {retryWorkflow.isPending ? "Retrying..." : "Retry"}
+              </Button>
+            )}
+
+            <AlertDialog>
+              <AlertDialogTrigger
+                disabled={
+                  !workflow ||
+                  workflow.status === WorkflowStatus.COMPLETED ||
+                  workflow.status === WorkflowStatus.FAILED ||
+                  workflow.status === WorkflowStatus.CANCELLED ||
+                  terminateWorkflow.isPending ||
+                  cancelWorkflow.isPending
+                }
+                className={cn(
+                  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                  "disabled:pointer-events-none disabled:opacity-50",
+                  "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
+                  "h-9 px-4 py-2",
+                  "font-mono text-xs uppercase tracking-wider",
+                  "text-destructive border-destructive/30 hover:bg-destructive hover:text-white hover:border-destructive transition-colors",
+                )}
+              >
+                <HugeiconsIcon icon={Cancel01Icon} className="size-3" />
+                Terminate Process
+              </AlertDialogTrigger>
+              <AlertDialogContent size="default">
+                <AlertDialogHeader>
+                  <AlertDialogMedia>
+                    <Icon icon={Alert01Icon} className="size-6 text-destructive" />
+                  </AlertDialogMedia>
+                  <AlertDialogTitle className="font-mono text-sm uppercase tracking-wider">
+                    Terminate Process?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className="font-mono text-xs">
+                    This action will forcefully terminate the workflow execution{" "}
+                    <span className="font-bold text-foreground">{workflow?.runId.slice(0, 8)}</span>
+                    {"."}
+                    <br />
+                    <br />
+                    This cannot be undone. The process will be marked as terminated.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel className="font-mono text-xs uppercase tracking-wider">
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleTerminate}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90 font-mono text-xs uppercase tracking-wider"
+                  >
+                    {terminateWorkflow.isPending ? (
+                      <>
+                        <Icon icon={Clock01Icon} className="size-3 mr-2 animate-spin" />
+                        Terminating...
+                      </>
+                    ) : (
+                      <>
+                        <Icon icon={Cancel01Icon} className="size-3 mr-2" />
+                        Terminate
+                      </>
+                    )}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button variant="outline" size="icon" className="size-8 rounded-full">
               <Icon icon={Menu01Icon} className="size-4" />
             </Button>
@@ -178,6 +345,15 @@ function WorkflowDetailPage() {
 
 function WorkflowDetailContent({ workflow }: { workflow: Workflow }) {
   const [activeTab, setActiveTab] = useState("summary");
+
+  // Fetch workflow steps for the history tab
+  const { data: stepsData, isLoading: stepsLoading } = useListSteps(
+    new ListStepsRequest({
+      runId: workflow.runId,
+      namespaceId: "default",
+    }),
+  );
+  const steps = stepsData?.steps ?? [];
 
   return (
     <div className="space-y-12">
@@ -290,7 +466,85 @@ function WorkflowDetailContent({ workflow }: { workflow: Workflow }) {
           </div>
         )}
 
-        {activeTab !== "summary" && (
+        {activeTab === "history" && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+            {stepsLoading ? (
+              <div className="space-y-2">
+                {[...Array(5)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-24 bg-muted/20 animate-pulse w-full border border-border/50"
+                  />
+                ))}
+              </div>
+            ) : steps.length === 0 ? (
+              <div className="border-2 border-dashed border-border/50 rounded-lg bg-muted/5 p-12 text-center">
+                <Icon
+                  icon={Clock01Icon}
+                  className="size-12 mx-auto mb-4 text-muted-foreground/30"
+                />
+                <p className="font-mono text-xs text-muted-foreground uppercase tracking-widest">
+                  No execution steps recorded
+                </p>
+              </div>
+            ) : (
+              <div className="border border-border bg-background shadow-sm overflow-hidden rounded-lg">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-muted/30 text-muted-foreground font-mono text-[10px] uppercase tracking-wider border-b border-border">
+                    <tr>
+                      <th className="px-6 py-4 w-16 text-center">#</th>
+                      <th className="px-6 py-4">Step ID</th>
+                      <th className="px-6 py-4">Step Name</th>
+                      <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4">Started</th>
+                      <th className="px-6 py-4 text-right">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {steps.map((step, idx) => (
+                      <tr
+                        key={step.stepId}
+                        className="group hover:bg-muted/20 transition-all duration-200"
+                      >
+                        <td className="px-6 py-4 font-mono text-xs text-muted-foreground text-center">
+                          {(idx + 1).toString().padStart(2, "0")}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {step.stepId.slice(0, 8)}
+                            <span className="opacity-30">{step.stepId.slice(8, 16)}</span>
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-bold tracking-tight text-sm">
+                          {step.name || <span className="text-muted-foreground">Unnamed Step</span>}
+                        </td>
+                        <td className="px-6 py-4">
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "rounded-full px-2.5 py-0.5 text-[10px] font-mono uppercase tracking-wider border bg-transparent",
+                              getStepStatusColor(step.status),
+                            )}
+                          >
+                            {StepStatus[step.status] || "UNKNOWN"}
+                          </Badge>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-xs text-muted-foreground">
+                          {formatDateTime(step.createdAt)}
+                        </td>
+                        <td className="px-6 py-4 text-right font-mono text-xs font-medium">
+                          {formatDuration(step.createdAt, step.finishedAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab !== "summary" && activeTab !== "history" && (
           <div className="py-24 text-center border-2 border-dashed border-border/50 rounded-lg bg-muted/5">
             <Icon icon={ViewIcon} className="size-12 mx-auto mb-4 text-muted-foreground/30" />
             <p className="font-mono text-xs text-muted-foreground uppercase tracking-widest">
@@ -382,7 +636,9 @@ function CodeBlock({ data }: { data?: string | Uint8Array }) {
   } catch {
     try {
       content = JSON.stringify(JSON.parse(dataStr), null, 2);
-    } catch {}
+    } catch {
+      content = dataStr;
+    }
   }
 
   return <pre className="text-foreground/80">{content}</pre>;

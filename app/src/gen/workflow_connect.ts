@@ -5,19 +5,25 @@
 
 import {
   CancelWorkflowRequest,
+  CancelWorkflowResponse,
+  GetWorkflowByExternalIdRequest,
+  GetWorkflowByExternalIdResponse,
   GetWorkflowRequest,
   GetWorkflowResponse,
   ListWorkflowsRequest,
   ListWorkflowsResponse,
+  RetryWorkflowRequest,
+  RetryWorkflowResponse,
   StartWorkflowRequest,
   StartWorkflowResponse,
+  TerminateWorkflowRequest,
+  TerminateWorkflowResponse,
 } from "./workflow_pb";
-import { Empty, MethodKind } from "@bufbuild/protobuf";
+import { MethodKind } from "@bufbuild/protobuf";
 
 /**
- * ============================================
- * SERVICE
- * ============================================
+ * WorkflowService manages the full workflow lifecycle from creation to completion.
+ * All operations are namespace-isolated for multi-tenancy.
  *
  * @generated from service kagzi.v1.WorkflowService
  */
@@ -25,6 +31,8 @@ export const WorkflowService = {
   typeName: "kagzi.v1.WorkflowService",
   methods: {
     /**
+     * StartWorkflow initiates a new workflow execution using external_id for idempotency.
+     *
      * @generated from rpc kagzi.v1.WorkflowService.StartWorkflow
      */
     startWorkflow: {
@@ -34,6 +42,8 @@ export const WorkflowService = {
       kind: MethodKind.Unary,
     },
     /**
+     * GetWorkflow retrieves a workflow by its unique run_id.
+     *
      * @generated from rpc kagzi.v1.WorkflowService.GetWorkflow
      */
     getWorkflow: {
@@ -43,6 +53,19 @@ export const WorkflowService = {
       kind: MethodKind.Unary,
     },
     /**
+     * GetWorkflowByExternalId retrieves a workflow using the user-provided idempotency key.
+     *
+     * @generated from rpc kagzi.v1.WorkflowService.GetWorkflowByExternalId
+     */
+    getWorkflowByExternalId: {
+      name: "GetWorkflowByExternalId",
+      I: GetWorkflowByExternalIdRequest,
+      O: GetWorkflowByExternalIdResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * ListWorkflows returns paginated workflows with optional filtering by status, type, and date range.
+     *
      * @generated from rpc kagzi.v1.WorkflowService.ListWorkflows
      */
     listWorkflows: {
@@ -52,12 +75,36 @@ export const WorkflowService = {
       kind: MethodKind.Unary,
     },
     /**
+     * CancelWorkflow attempts graceful cancellation of a running workflow.
+     *
      * @generated from rpc kagzi.v1.WorkflowService.CancelWorkflow
      */
     cancelWorkflow: {
       name: "CancelWorkflow",
       I: CancelWorkflowRequest,
-      O: Empty,
+      O: CancelWorkflowResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * RetryWorkflow creates a new execution for a failed workflow with the same input.
+     *
+     * @generated from rpc kagzi.v1.WorkflowService.RetryWorkflow
+     */
+    retryWorkflow: {
+      name: "RetryWorkflow",
+      I: RetryWorkflowRequest,
+      O: RetryWorkflowResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * TerminateWorkflow forcefully stops a workflow with a termination reason.
+     *
+     * @generated from rpc kagzi.v1.WorkflowService.TerminateWorkflow
+     */
+    terminateWorkflow: {
+      name: "TerminateWorkflow",
+      I: TerminateWorkflowRequest,
+      O: TerminateWorkflowResponse,
       kind: MethodKind.Unary,
     },
   },

@@ -11,26 +11,25 @@ import type {
   PartialMessage,
   PlainMessage,
 } from "@bufbuild/protobuf";
-import { Message, proto3, Timestamp } from "@bufbuild/protobuf";
+import { Message, proto3, protoInt64, Timestamp } from "@bufbuild/protobuf";
 import { PageInfo, PageRequest, Payload } from "./common_pb";
+import { Workflow } from "./workflow_pb";
 
 /**
- * ============================================
- * MESSAGES
- * ============================================
+ * WorkflowSchedule represents a cron schedule with execution statistics.
  *
  * @generated from message kagzi.v1.WorkflowSchedule
  */
 export class WorkflowSchedule extends Message<WorkflowSchedule> {
   /**
-   * @generated from field: string schedule_id = 1;
-   */
-  scheduleId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
 
   /**
    * @generated from field: string task_queue = 3;
@@ -48,9 +47,9 @@ export class WorkflowSchedule extends Message<WorkflowSchedule> {
   cronExpr = "";
 
   /**
-   * @generated from field: kagzi.v1.Payload input = 6;
+   * @generated from field: string version = 6;
    */
-  input?: Payload;
+  version = "";
 
   /**
    * @generated from field: bool enabled = 7;
@@ -58,34 +57,49 @@ export class WorkflowSchedule extends Message<WorkflowSchedule> {
   enabled = false;
 
   /**
-   * @generated from field: int32 max_catchup = 8;
+   * @generated from field: kagzi.v1.Payload input = 8;
+   */
+  input?: Payload;
+
+  /**
+   * @generated from field: int32 max_catchup = 9;
    */
   maxCatchup = 0;
 
   /**
-   * @generated from field: google.protobuf.Timestamp next_fire_at = 9;
+   * @generated from field: int64 total_runs = 10;
    */
-  nextFireAt?: Timestamp;
+  totalRuns = protoInt64.zero;
 
   /**
-   * @generated from field: google.protobuf.Timestamp last_fired_at = 10;
+   * @generated from field: int64 successful_runs = 11;
    */
-  lastFiredAt?: Timestamp;
+  successfulRuns = protoInt64.zero;
 
   /**
-   * @generated from field: string version = 11;
+   * @generated from field: int64 failed_runs = 12;
    */
-  version = "";
+  failedRuns = protoInt64.zero;
 
   /**
-   * @generated from field: google.protobuf.Timestamp created_at = 12;
+   * @generated from field: google.protobuf.Timestamp created_at = 13;
    */
   createdAt?: Timestamp;
 
   /**
-   * @generated from field: google.protobuf.Timestamp updated_at = 13;
+   * @generated from field: google.protobuf.Timestamp updated_at = 14;
    */
   updatedAt?: Timestamp;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp next_fire_at = 15;
+   */
+  nextFireAt?: Timestamp;
+
+  /**
+   * @generated from field: optional google.protobuf.Timestamp last_fired_at = 16;
+   */
+  lastFiredAt?: Timestamp;
 
   constructor(data?: PartialMessage<WorkflowSchedule>) {
     super();
@@ -95,19 +109,22 @@ export class WorkflowSchedule extends Message<WorkflowSchedule> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.WorkflowSchedule";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "workflow_type", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 5, name: "cron_expr", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 6, name: "input", kind: "message", T: Payload },
+    { no: 6, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 7, name: "enabled", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
-    { no: 8, name: "max_catchup", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
-    { no: 9, name: "next_fire_at", kind: "message", T: Timestamp },
-    { no: 10, name: "last_fired_at", kind: "message", T: Timestamp },
-    { no: 11, name: "version", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 12, name: "created_at", kind: "message", T: Timestamp },
-    { no: 13, name: "updated_at", kind: "message", T: Timestamp },
+    { no: 8, name: "input", kind: "message", T: Payload },
+    { no: 9, name: "max_catchup", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 10, name: "total_runs", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 11, name: "successful_runs", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 12, name: "failed_runs", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 13, name: "created_at", kind: "message", T: Timestamp },
+    { no: 14, name: "updated_at", kind: "message", T: Timestamp },
+    { no: 15, name: "next_fire_at", kind: "message", T: Timestamp, opt: true },
+    { no: 16, name: "last_fired_at", kind: "message", T: Timestamp, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): WorkflowSchedule {
@@ -131,6 +148,8 @@ export class WorkflowSchedule extends Message<WorkflowSchedule> {
 }
 
 /**
+ * CreateWorkflowScheduleRequest defines a cron expression and workflow configuration.
+ *
  * @generated from message kagzi.v1.CreateWorkflowScheduleRequest
  */
 export class CreateWorkflowScheduleRequest extends Message<CreateWorkflowScheduleRequest> {
@@ -275,14 +294,14 @@ export class CreateWorkflowScheduleResponse extends Message<CreateWorkflowSchedu
  */
 export class GetWorkflowScheduleRequest extends Message<GetWorkflowScheduleRequest> {
   /**
-   * @generated from field: string schedule_id = 1;
-   */
-  scheduleId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
 
   constructor(data?: PartialMessage<GetWorkflowScheduleRequest>) {
     super();
@@ -292,8 +311,8 @@ export class GetWorkflowScheduleRequest extends Message<GetWorkflowScheduleReque
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetWorkflowScheduleRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(
@@ -491,18 +510,20 @@ export class ListWorkflowSchedulesResponse extends Message<ListWorkflowSchedules
 }
 
 /**
+ * UpdateWorkflowScheduleRequest allows modification of any schedule field.
+ *
  * @generated from message kagzi.v1.UpdateWorkflowScheduleRequest
  */
 export class UpdateWorkflowScheduleRequest extends Message<UpdateWorkflowScheduleRequest> {
   /**
-   * @generated from field: string schedule_id = 1;
-   */
-  scheduleId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
 
   /**
    * @generated from field: optional string task_queue = 3;
@@ -552,8 +573,8 @@ export class UpdateWorkflowScheduleRequest extends Message<UpdateWorkflowSchedul
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.UpdateWorkflowScheduleRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 4, name: "workflow_type", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 5, name: "cron_expr", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
@@ -647,14 +668,14 @@ export class UpdateWorkflowScheduleResponse extends Message<UpdateWorkflowSchedu
  */
 export class DeleteWorkflowScheduleRequest extends Message<DeleteWorkflowScheduleRequest> {
   /**
-   * @generated from field: string schedule_id = 1;
-   */
-  scheduleId = "";
-
-  /**
-   * @generated from field: string namespace_id = 2;
+   * @generated from field: string namespace_id = 1;
    */
   namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
 
   constructor(data?: PartialMessage<DeleteWorkflowScheduleRequest>) {
     super();
@@ -664,8 +685,8 @@ export class DeleteWorkflowScheduleRequest extends Message<DeleteWorkflowSchedul
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.DeleteWorkflowScheduleRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(
@@ -706,6 +727,11 @@ export class DeleteWorkflowScheduleResponse extends Message<DeleteWorkflowSchedu
    */
   deleted = false;
 
+  /**
+   * @generated from field: string message = 2;
+   */
+  message = "";
+
   constructor(data?: PartialMessage<DeleteWorkflowScheduleResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -715,6 +741,7 @@ export class DeleteWorkflowScheduleResponse extends Message<DeleteWorkflowSchedu
   static readonly typeName = "kagzi.v1.DeleteWorkflowScheduleResponse";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "deleted", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 2, name: "message", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(
@@ -743,5 +770,433 @@ export class DeleteWorkflowScheduleResponse extends Message<DeleteWorkflowSchedu
     b: DeleteWorkflowScheduleResponse | PlainMessage<DeleteWorkflowScheduleResponse> | undefined,
   ): boolean {
     return proto3.util.equals(DeleteWorkflowScheduleResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.TriggerWorkflowScheduleRequest
+ */
+export class TriggerWorkflowScheduleRequest extends Message<TriggerWorkflowScheduleRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
+
+  constructor(data?: PartialMessage<TriggerWorkflowScheduleRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.TriggerWorkflowScheduleRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): TriggerWorkflowScheduleRequest {
+    return new TriggerWorkflowScheduleRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): TriggerWorkflowScheduleRequest {
+    return new TriggerWorkflowScheduleRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): TriggerWorkflowScheduleRequest {
+    return new TriggerWorkflowScheduleRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: TriggerWorkflowScheduleRequest | PlainMessage<TriggerWorkflowScheduleRequest> | undefined,
+    b: TriggerWorkflowScheduleRequest | PlainMessage<TriggerWorkflowScheduleRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(TriggerWorkflowScheduleRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.TriggerWorkflowScheduleResponse
+ */
+export class TriggerWorkflowScheduleResponse extends Message<TriggerWorkflowScheduleResponse> {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId = "";
+
+  constructor(data?: PartialMessage<TriggerWorkflowScheduleResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.TriggerWorkflowScheduleResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): TriggerWorkflowScheduleResponse {
+    return new TriggerWorkflowScheduleResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): TriggerWorkflowScheduleResponse {
+    return new TriggerWorkflowScheduleResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): TriggerWorkflowScheduleResponse {
+    return new TriggerWorkflowScheduleResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: TriggerWorkflowScheduleResponse | PlainMessage<TriggerWorkflowScheduleResponse> | undefined,
+    b: TriggerWorkflowScheduleResponse | PlainMessage<TriggerWorkflowScheduleResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(TriggerWorkflowScheduleResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.PauseWorkflowScheduleRequest
+ */
+export class PauseWorkflowScheduleRequest extends Message<PauseWorkflowScheduleRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
+
+  constructor(data?: PartialMessage<PauseWorkflowScheduleRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.PauseWorkflowScheduleRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): PauseWorkflowScheduleRequest {
+    return new PauseWorkflowScheduleRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): PauseWorkflowScheduleRequest {
+    return new PauseWorkflowScheduleRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): PauseWorkflowScheduleRequest {
+    return new PauseWorkflowScheduleRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: PauseWorkflowScheduleRequest | PlainMessage<PauseWorkflowScheduleRequest> | undefined,
+    b: PauseWorkflowScheduleRequest | PlainMessage<PauseWorkflowScheduleRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(PauseWorkflowScheduleRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.PauseWorkflowScheduleResponse
+ */
+export class PauseWorkflowScheduleResponse extends Message<PauseWorkflowScheduleResponse> {
+  /**
+   * @generated from field: kagzi.v1.WorkflowSchedule schedule = 1;
+   */
+  schedule?: WorkflowSchedule;
+
+  constructor(data?: PartialMessage<PauseWorkflowScheduleResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.PauseWorkflowScheduleResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "schedule", kind: "message", T: WorkflowSchedule },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): PauseWorkflowScheduleResponse {
+    return new PauseWorkflowScheduleResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): PauseWorkflowScheduleResponse {
+    return new PauseWorkflowScheduleResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): PauseWorkflowScheduleResponse {
+    return new PauseWorkflowScheduleResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: PauseWorkflowScheduleResponse | PlainMessage<PauseWorkflowScheduleResponse> | undefined,
+    b: PauseWorkflowScheduleResponse | PlainMessage<PauseWorkflowScheduleResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(PauseWorkflowScheduleResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.ResumeWorkflowScheduleRequest
+ */
+export class ResumeWorkflowScheduleRequest extends Message<ResumeWorkflowScheduleRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
+
+  constructor(data?: PartialMessage<ResumeWorkflowScheduleRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.ResumeWorkflowScheduleRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ResumeWorkflowScheduleRequest {
+    return new ResumeWorkflowScheduleRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ResumeWorkflowScheduleRequest {
+    return new ResumeWorkflowScheduleRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ResumeWorkflowScheduleRequest {
+    return new ResumeWorkflowScheduleRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ResumeWorkflowScheduleRequest | PlainMessage<ResumeWorkflowScheduleRequest> | undefined,
+    b: ResumeWorkflowScheduleRequest | PlainMessage<ResumeWorkflowScheduleRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(ResumeWorkflowScheduleRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.ResumeWorkflowScheduleResponse
+ */
+export class ResumeWorkflowScheduleResponse extends Message<ResumeWorkflowScheduleResponse> {
+  /**
+   * @generated from field: kagzi.v1.WorkflowSchedule schedule = 1;
+   */
+  schedule?: WorkflowSchedule;
+
+  constructor(data?: PartialMessage<ResumeWorkflowScheduleResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.ResumeWorkflowScheduleResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "schedule", kind: "message", T: WorkflowSchedule },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ResumeWorkflowScheduleResponse {
+    return new ResumeWorkflowScheduleResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ResumeWorkflowScheduleResponse {
+    return new ResumeWorkflowScheduleResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ResumeWorkflowScheduleResponse {
+    return new ResumeWorkflowScheduleResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ResumeWorkflowScheduleResponse | PlainMessage<ResumeWorkflowScheduleResponse> | undefined,
+    b: ResumeWorkflowScheduleResponse | PlainMessage<ResumeWorkflowScheduleResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(ResumeWorkflowScheduleResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.ListScheduleRunsRequest
+ */
+export class ListScheduleRunsRequest extends Message<ListScheduleRunsRequest> {
+  /**
+   * @generated from field: string namespace_id = 1;
+   */
+  namespaceId = "";
+
+  /**
+   * @generated from field: string schedule_id = 2;
+   */
+  scheduleId = "";
+
+  /**
+   * @generated from field: kagzi.v1.PageRequest page = 3;
+   */
+  page?: PageRequest;
+
+  constructor(data?: PartialMessage<ListScheduleRunsRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.ListScheduleRunsRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "schedule_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "page", kind: "message", T: PageRequest },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ListScheduleRunsRequest {
+    return new ListScheduleRunsRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ListScheduleRunsRequest {
+    return new ListScheduleRunsRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ListScheduleRunsRequest {
+    return new ListScheduleRunsRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ListScheduleRunsRequest | PlainMessage<ListScheduleRunsRequest> | undefined,
+    b: ListScheduleRunsRequest | PlainMessage<ListScheduleRunsRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(ListScheduleRunsRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.ListScheduleRunsResponse
+ */
+export class ListScheduleRunsResponse extends Message<ListScheduleRunsResponse> {
+  /**
+   * @generated from field: repeated kagzi.v1.Workflow runs = 1;
+   */
+  runs: Workflow[] = [];
+
+  /**
+   * @generated from field: kagzi.v1.PageInfo page = 2;
+   */
+  page?: PageInfo;
+
+  constructor(data?: PartialMessage<ListScheduleRunsResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.ListScheduleRunsResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "runs", kind: "message", T: Workflow, repeated: true },
+    { no: 2, name: "page", kind: "message", T: PageInfo },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): ListScheduleRunsResponse {
+    return new ListScheduleRunsResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): ListScheduleRunsResponse {
+    return new ListScheduleRunsResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): ListScheduleRunsResponse {
+    return new ListScheduleRunsResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: ListScheduleRunsResponse | PlainMessage<ListScheduleRunsResponse> | undefined,
+    b: ListScheduleRunsResponse | PlainMessage<ListScheduleRunsResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(ListScheduleRunsResponse, a, b);
   }
 }

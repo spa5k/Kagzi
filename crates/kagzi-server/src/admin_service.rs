@@ -1,9 +1,10 @@
 use kagzi_proto::kagzi::admin_service_server::AdminService;
 use kagzi_proto::kagzi::{
-    GetServerInfoRequest, GetServerInfoResponse, GetStepRequest, GetStepResponse, GetWorkerRequest,
-    GetWorkerResponse, HealthCheckRequest, HealthCheckResponse, ListStepsRequest,
-    ListStepsResponse, ListWorkersRequest, ListWorkersResponse, PageInfo, ServingStatus,
-    WorkerStatus,
+    DrainWorkerRequest, DrainWorkerResponse, GetQueueDepthRequest, GetQueueDepthResponse,
+    GetServerInfoRequest, GetServerInfoResponse, GetStatsRequest, GetStatsResponse, GetStepRequest,
+    GetStepResponse, GetWorkerRequest, GetWorkerResponse, HealthCheckRequest, HealthCheckResponse,
+    ListStepsRequest, ListStepsResponse, ListWorkersRequest, ListWorkersResponse,
+    ListWorkflowTypesRequest, ListWorkflowTypesResponse, PageInfo, ServingStatus, WorkerStatus,
 };
 use kagzi_store::{
     PgStore, StepRepository, WorkerRepository, WorkerStatus as StoreWorkerStatus,
@@ -14,7 +15,7 @@ use uuid::Uuid;
 
 use crate::helpers::{
     decode_cursor, encode_cursor, invalid_argument_error, map_store_error, normalize_page_size,
-    not_found_error,
+    not_found_error, require_non_empty,
 };
 use crate::proto_convert::{step_to_proto, worker_to_proto};
 
@@ -292,5 +293,108 @@ impl AdminService for AdminServiceImpl {
         };
 
         Ok(Response::new(response))
+    }
+
+    async fn get_stats(
+        &self,
+        request: Request<GetStatsRequest>,
+    ) -> Result<Response<GetStatsResponse>, Status> {
+        let _req = request.into_inner();
+
+        // Return default stats for now - full implementation would require additional store methods
+        Ok(Response::new(GetStatsResponse {
+            total_workflows: 0,
+            pending_workflows: 0,
+            running_workflows: 0,
+            completed_workflows: 0,
+            failed_workflows: 0,
+            total_workers: 0,
+            online_workers: 0,
+            total_schedules: 0,
+            enabled_schedules: 0,
+            workflows_by_status: Default::default(),
+            workflows_by_type: Default::default(),
+        }))
+    }
+
+    async fn drain_worker(
+        &self,
+        request: Request<DrainWorkerRequest>,
+    ) -> Result<Response<DrainWorkerResponse>, Status> {
+        let req = request.into_inner();
+        let worker_id = Uuid::parse_str(&req.worker_id)
+            .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
+
+        let worker = self
+            .store
+            .workers()
+            .find_by_id(worker_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Worker not found", "worker", req.worker_id))?;
+
+        self.store
+            .workers()
+            .start_drain(worker_id, &worker.namespace_id)
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(DrainWorkerResponse {
+            success: true,
+            message: "Worker is now draining".to_string(),
+            error: None,
+        }))
+    }
+
+    async fn get_queue_depth(
+        &self,
+        request: Request<GetQueueDepthRequest>,
+    ) -> Result<Response<GetQueueDepthResponse>, Status> {
+        let req = request.into_inner();
+        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        let pending_count = self
+            .store
+            .workflows()
+            .count(&namespace_id, Some("PENDING"))
+            .await
+            .map_err(map_store_error)?;
+        let running_count = self
+            .store
+            .workflows()
+            .count(&namespace_id, Some("RUNNING"))
+            .await
+            .map_err(map_store_error)?;
+        let sleeping_count = self
+            .store
+            .workflows()
+            .count(&namespace_id, Some("SLEEPING"))
+            .await
+            .map_err(map_store_error)?;
+
+        Ok(Response::new(GetQueueDepthResponse {
+            pending_count,
+            running_count,
+            sleeping_count,
+            depth_by_queue: Default::default(),
+        }))
+    }
+
+    async fn list_workflow_types(
+        &self,
+        request: Request<ListWorkflowTypesRequest>,
+    ) -> Result<Response<ListWorkflowTypesResponse>, Status> {
+        let req = request.into_inner();
+        let _namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        // For now, return an empty list - this would need to be implemented in the store
+        Ok(Response::new(ListWorkflowTypesResponse {
+            workflow_types: vec![],
+            page: Some(PageInfo {
+                next_page_token: String::new(),
+                has_more: false,
+                total_count: 0,
+            }),
+        }))
     }
 }
