@@ -5,12 +5,15 @@ cd "$(dirname "$0")/.."
 
 echo "🔄 Generating protobuf files..."
 
+# Clean and create output directory
 rm -rf src/gen
 mkdir -p src/gen
 
-./node_modules/.bin/buf \
-  generate \
-  --template buf.gen.yaml
+# Run buf generate
+if ! npx @bufbuild/buf generate; then
+  echo "❌ Failed to generate protobuf files"
+  exit 1
+fi
 
-echo "✅ Protobuf files generated"
+echo "✅ Protobuf files generated successfully"
 

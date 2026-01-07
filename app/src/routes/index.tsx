@@ -196,6 +196,7 @@ function DashboardSection({
 function StatusDot({ status }: { status: ProtoWorkflowStatus }) {
   const colorClass =
     {
+      [ProtoWorkflowStatus.UNSPECIFIED]: "bg-muted-foreground",
       [ProtoWorkflowStatus.PENDING]: "bg-muted-foreground",
       [ProtoWorkflowStatus.RUNNING]: "bg-blue-500 animate-pulse",
       [ProtoWorkflowStatus.SLEEPING]: "bg-purple-500",
