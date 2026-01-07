@@ -1,51 +1,25 @@
-import { WorkflowStatus } from "@/gen/workflow_pb";
-import { adminClient, scheduleClient, workflowClient } from "@/lib/api-client";
-import { useQuery } from "@tanstack/react-query";
+import { useListWorkflows, useListSchedules, useListWorkers } from "@/lib/api-queries";
 
-const NAMESPACE_ID = "default";
-
-export function useWorkflows(statusFilter?: WorkflowStatus) {
-  return useQuery({
-    queryKey: ["workflows", NAMESPACE_ID, statusFilter],
-    queryFn: async () => {
-      const response = await workflowClient.listWorkflows({
-        namespaceId: NAMESPACE_ID,
-        statusFilter,
-      });
-      return response.workflows;
-    },
-    refetchInterval: 5000,
-    retry: 3,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-  });
+export function useWorkflows(statusFilter?: string) {
+  return useListWorkflows("default", statusFilter);
 }
 
 export function useSchedules() {
-  return useQuery({
-    queryKey: ["schedules", NAMESPACE_ID],
-    queryFn: async () => {
-      const response = await scheduleClient.listWorkflowSchedules({
-        namespaceId: NAMESPACE_ID,
-      });
-      return response.schedules;
-    },
-    refetchInterval: 10000,
-    retry: 3,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-  });
+  const schedules = useListSchedules("default");
+  return {
+    ...schedules,
+    data: schedules.data?.schedulesList ?? [],
+    isLoading: schedules.isLoading,
+    error: schedules.error,
+  };
 }
 
 export function useWorkers() {
-  return useQuery({
-    queryKey: ["workers", NAMESPACE_ID],
-    queryFn: async () => {
-      const response = await adminClient.listWorkers({
-        namespaceId: NAMESPACE_ID,
-      });
-      return response.workers;
-    },
-    refetchInterval: 15000,
-    retry: 3,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-  });
+  const workers = useListWorkers("default");
+  return {
+    ...workers,
+    data: workers.data?.workersList ?? [],
+    isLoading: workers.isLoading,
+    error: workers.error,
+  };
 }
