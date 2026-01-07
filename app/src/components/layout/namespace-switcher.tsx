@@ -7,17 +7,35 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar";
-import { mockNamespaces } from "@/lib/mock-data";
 import type { Namespace } from "@/types";
 import { ChevronDown, Database } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import * as React from "react";
 
+// TODO: Replace with API call once backend implements namespace listing
+const HARDCODED_NAMESPACES: Namespace[] = [
+  {
+    id: "default",
+    name: "default",
+    createdAt: new Date(Date.now() - 720 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: "production",
+    name: "production",
+    createdAt: new Date(Date.now() - 2160 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: "staging",
+    name: "staging",
+    createdAt: new Date(Date.now() - 1440 * 60 * 60 * 1000).toISOString(),
+  },
+];
+
 interface NamespaceSwitcherProps {
   namespaces?: Namespace[];
 }
 
-export function NamespaceSwitcher({ namespaces = mockNamespaces }: NamespaceSwitcherProps) {
+export function NamespaceSwitcher({ namespaces = HARDCODED_NAMESPACES }: NamespaceSwitcherProps) {
   const { isMobile } = useSidebar();
   const [activeNamespace, setActiveNamespace] = React.useState(namespaces[0]);
 
