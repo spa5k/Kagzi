@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
-import { mockWorkers } from "@/lib/mock-data";
+import { QueryError } from "@/components/ui/query-error";
+import { useWorkers } from "@/hooks/use-dashboard";
 import { WorkerStatus, WorkerStatusLabel } from "@/types";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -35,20 +36,56 @@ export const Route = createFileRoute("/workers")({
 });
 
 function WorkersPage() {
-  const workers = mockWorkers;
-  const onlineCount = workers.filter((w) => w.status === WorkerStatus.ONLINE).length;
+  const { data: workers, isLoading, error, refetch } = useWorkers();
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center p-6 bg-background">
+        <QueryError error={error} onRetry={() => refetch()} className="max-w-md" />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <div className="mb-6">
+          <div className="h-8 w-48 rounded bg-muted animate-pulse" />
+          <div className="h-5 w-64 rounded bg-muted/50 animate-pulse mt-2" />
+        </div>
+        <div className="grid gap-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="border border-border p-4 h-40 rounded-lg">
+              <div className="w-full h-full animate-pulse space-y-3">
+                <div className="h-6 w-64 rounded bg-muted" />
+                <div className="h-4 w-96 rounded bg-muted/50" />
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="h-8 rounded bg-muted/30" />
+                  <div className="h-8 rounded bg-muted/30" />
+                  <div className="h-8 rounded bg-muted/30" />
+                  <div className="h-8 rounded bg-muted/30" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const onlineCount = workers?.filter((w) => w.status === WorkerStatus.ONLINE).length ?? 0;
 
   return (
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-xl font-medium">Workers</h1>
         <p className="text-sm text-muted-foreground">
-          {onlineCount} online, {workers.length} total
+          {onlineCount} online, {workers?.length ?? 0} total
         </p>
       </div>
 
       <div className="grid gap-4">
-        {workers.map((worker) => (
+        {workers?.map((worker) => (
           <div key={worker.workerId} className="border border-border p-4">
             <div className="flex items-start justify-between mb-3">
               <div>

@@ -1,5 +1,7 @@
 import { Badge } from "@/components/ui/badge";
-import { mockSchedules } from "@/lib/mock-data";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { QueryError } from "@/components/ui/query-error";
+import { useSchedules } from "@/hooks/use-dashboard";
 import { createFileRoute } from "@tanstack/react-router";
 
 function formatCron(expr: string): string {
@@ -36,13 +38,35 @@ export const Route = createFileRoute("/schedules")({
 });
 
 function SchedulesPage() {
-  const schedules = mockSchedules;
+  const { data: schedules, isLoading, error, refetch } = useSchedules();
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center p-6 bg-background">
+        <QueryError error={error} onRetry={() => refetch()} className="max-w-md" />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <div className="mb-6">
+          <div className="h-8 w-48 rounded bg-muted animate-pulse" />
+          <div className="h-5 w-64 rounded bg-muted/50 animate-pulse mt-2" />
+        </div>
+        <TableSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-xl font-medium">Schedules</h1>
-        <p className="text-sm text-muted-foreground">{schedules.length} configured schedules</p>
+        <p className="text-sm text-muted-foreground">
+          {schedules?.length ?? 0} configured schedules
+        </p>
       </div>
 
       <div className="border border-border">
@@ -58,7 +82,7 @@ function SchedulesPage() {
             </tr>
           </thead>
           <tbody>
-            {schedules.map((schedule) => (
+            {schedules?.map((schedule) => (
               <tr
                 key={schedule.scheduleId}
                 className="border-b border-border last:border-b-0 hover:bg-muted/20"

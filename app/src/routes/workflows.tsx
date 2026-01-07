@@ -1,8 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { mockWorkflows } from "@/lib/mock-data";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { QueryError } from "@/components/ui/query-error";
 import { cn } from "@/lib/utils";
+import { useWorkflows } from "@/hooks/use-dashboard";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import {
   Alert01Icon,
@@ -98,16 +100,51 @@ export const Route = createFileRoute("/workflows")({
 function WorkflowsPage() {
   const { selected, status } = useSearch({ from: "/workflows" });
   const navigate = useNavigate({ from: "/workflows" });
-  const workflows = mockWorkflows;
 
-  const filteredWorkflows = workflows.filter((w) => {
-    if (status === "running") return w.status === WorkflowStatus.RUNNING;
-    if (status === "failed") return w.status === WorkflowStatus.FAILED;
-    if (status === "completed") return w.status === WorkflowStatus.COMPLETED;
-    return true;
-  });
+  const statusFilterMap: Record<string, WorkflowStatus | undefined> = {
+    running: WorkflowStatus.RUNNING,
+    failed: WorkflowStatus.FAILED,
+    completed: WorkflowStatus.COMPLETED,
+    all: undefined,
+  };
 
-  const selectedWorkflow = selected ? workflows.find((w) => w.runId === selected) : null;
+  const { data: workflows, isLoading, error, refetch } = useWorkflows(statusFilterMap[status]);
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center p-6 bg-background">
+        <QueryError error={error} onRetry={() => refetch()} className="max-w-md" />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full bg-background">
+        <div className="w-64 border-r border-border bg-sidebar hidden md:flex flex-col p-4">
+          <div className="h-8 w-32 rounded bg-muted animate-pulse mb-6" />
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-10 w-full rounded bg-muted/50 animate-pulse mb-2" />
+          ))}
+        </div>
+        <div className="flex-1 flex flex-col min-w-0 p-6">
+          <div className="h-8 w-48 rounded bg-muted animate-pulse mb-4" />
+          <div className="h-6 w-64 rounded bg-muted/50 animate-pulse mb-4" />
+          <TableSkeleton />
+        </div>
+      </div>
+    );
+  }
+
+  const filteredWorkflows =
+    workflows?.filter((w) => {
+      if (status === "running") return w.status === WorkflowStatus.RUNNING;
+      if (status === "failed") return w.status === WorkflowStatus.FAILED;
+      if (status === "completed") return w.status === WorkflowStatus.COMPLETED;
+      return true;
+    }) ?? [];
+
+  const selectedWorkflow = selected ? workflows?.find((w) => w.runId === selected) : null;
 
   if (selectedWorkflow) {
     return (
@@ -169,25 +206,25 @@ function WorkflowsPage() {
             <FilterButton
               label="All Workflows"
               active={status === "all"}
-              count={workflows.length}
+              count={workflows?.length ?? 0}
               onClick={() => navigate({ search: (prev) => ({ ...prev, status: "all" }) })}
             />
             <FilterButton
               label="Running"
               active={status === "running"}
-              count={workflows.filter((w) => w.status === WorkflowStatus.RUNNING).length}
+              count={workflows?.filter((w) => w.status === WorkflowStatus.RUNNING).length ?? 0}
               onClick={() => navigate({ search: (prev) => ({ ...prev, status: "running" }) })}
             />
             <FilterButton
               label="Completed"
               active={status === "completed"}
-              count={workflows.filter((w) => w.status === WorkflowStatus.COMPLETED).length}
+              count={workflows?.filter((w) => w.status === WorkflowStatus.COMPLETED).length ?? 0}
               onClick={() => navigate({ search: (prev) => ({ ...prev, status: "completed" }) })}
             />
             <FilterButton
               label="Failed"
               active={status === "failed"}
-              count={workflows.filter((w) => w.status === WorkflowStatus.FAILED).length}
+              count={workflows?.filter((w) => w.status === WorkflowStatus.FAILED).length ?? 0}
               onClick={() => navigate({ search: (prev) => ({ ...prev, status: "failed" }) })}
             />
           </nav>
@@ -205,7 +242,10 @@ function WorkflowsPage() {
               <span>{filteredWorkflows.length} results</span>
             </div>
           </div>
-          <Button className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm gap-2">
+          <Button
+            className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm gap-2"
+            disabled={isLoading}
+          >
             <Icon icon={FlashIcon} className="w-4 h-4" />
             Start Workflow
           </Button>
@@ -226,7 +266,13 @@ function WorkflowsPage() {
             <Icon icon={FilterHorizontalIcon} className="w-4 h-4" />
             Filter
           </Button>
-          <Button variant="ghost" size="icon" className="w-9 h-9">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="w-9 h-9"
+            onClick={() => refetch()}
+            disabled={isLoading}
+          >
             <Icon icon={RefreshIcon} className="w-4 h-4" />
           </Button>
         </div>
