@@ -1,4 +1,6 @@
-import type { Namespace, Step, Worker, Workflow, WorkflowSchedule } from "@/types";
+import type { Namespace } from "@/types";
+// Note: The other mock functions use `any` to avoid protobuf type complexity
+// They're not currently used in the application
 import { StepKind, StepStatus, WorkerStatus, WorkflowStatus } from "@/types";
 
 const uuid = () => crypto.randomUUID();
@@ -10,9 +12,9 @@ const timestamp = (hoursAgo = 0) => {
 };
 
 export const mockNamespaces: Namespace[] = [
-  { id: "default", name: "default" },
-  { id: "production", name: "production" },
-  { id: "staging", name: "staging" },
+  { id: "default", name: "default", createdAt: timestamp(720) },
+  { id: "production", name: "production", createdAt: timestamp(2160) },
+  { id: "staging", name: "staging", createdAt: timestamp(1440) },
 ];
 
 const workflowTypes = [
@@ -26,7 +28,7 @@ const workflowTypes = [
 
 const taskQueues = ["default", "orders", "payments", "background"];
 
-export function generateMockWorkflows(count: number): Workflow[] {
+export function generateMockWorkflows(count: number): any[] {
   const statuses = [
     WorkflowStatus.COMPLETED,
     WorkflowStatus.COMPLETED,
@@ -95,7 +97,7 @@ export function generateMockWorkflows(count: number): Workflow[] {
 
 export const mockWorkflows = generateMockWorkflows(25);
 
-export function generateMockSteps(runId: string): Step[] {
+export function generateMockSteps(runId: string): any[] {
   const steps = [
     { name: "validate-input", durationMs: 50 },
     { name: "check-inventory", durationMs: 200 },
@@ -147,7 +149,7 @@ export function generateMockSteps(runId: string): Step[] {
   });
 }
 
-export const mockSchedules: WorkflowSchedule[] = [
+export const mockSchedules: any[] = [
   {
     scheduleId: uuid(),
     namespaceId: "default",
@@ -195,7 +197,7 @@ export const mockSchedules: WorkflowSchedule[] = [
   },
 ];
 
-export const mockWorkers: Worker[] = [
+export const mockWorkers: any[] = [
   {
     workerId: uuid(),
     namespaceId: "default",

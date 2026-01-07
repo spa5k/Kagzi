@@ -1,5 +1,5 @@
-import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import type { Interceptor, Transport } from "@connectrpc/connect";
+import { createGrpcWebTransport } from "@connectrpc/connect-web";
 
 /**
  * Get the gRPC server URL from environment or use default
@@ -13,7 +13,6 @@ function getServerUrl(): string {
  */
 const loggingInterceptor: Interceptor = (next) => async (req) => {
   console.log(`[gRPC] ${req.method.name}`, {
-    service: req.method.service.typeName,
     method: req.method.name,
   });
 

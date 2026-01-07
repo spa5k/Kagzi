@@ -7,7 +7,7 @@
     "build": "npm run generate && tsc -b && vite build",
     "dev": "vite",
     "format": "oxfmt",
-    "generate": "bash scripts/generate-proto.sh",
+    "generate": "rm -rf src/gen && mkdir -p src/gen && npx @bufbuild/buf generate",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"

@@ -1,4 +1,5 @@
-import { WorkflowStatus } from "@/gen/workflow_pb";
+import { PageRequest } from "@/gen/common_pb";
+import { ListWorkflowsRequest, WorkflowStatus } from "@/gen/workflow_pb";
 import {
   useCancelWorkflow,
   useGetServerInfo,
@@ -31,10 +32,12 @@ export function WorkflowExample() {
     isLoading: workflowsLoading,
     error: workflowsError,
     refetch: refetchWorkflows,
-  } = useListWorkflows({
-    namespaceId: namespace,
-    page: { pageSize: 10, pageToken: "", includeTotalCount: false },
-  });
+  } = useListWorkflows(
+    new ListWorkflowsRequest({
+      namespaceId: namespace,
+      page: new PageRequest({ pageSize: 10, pageToken: "", includeTotalCount: false }),
+    }),
+  );
 
   // Start workflow mutation
   const startWorkflow = useStartWorkflow();

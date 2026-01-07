@@ -1,5 +1,5 @@
-import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
 import { QueryError } from "@/components/ui/query-error";
+import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
 import { useSchedules, useWorkers, useWorkflows } from "@/hooks/use-dashboard";
 import { WorkerStatus } from "@/types";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -72,7 +72,7 @@ function Index() {
             <Link
               key={workflow.runId}
               to="/workflows"
-              search={{ selected: workflow.runId }}
+              search={{ selected: workflow.runId, status: "all", timeRange: "24h" }}
               className="flex items-center gap-3 p-3 border-b border-border last:border-b-0 hover:bg-muted/50"
             >
               <StatusDot status={workflow.status} />

@@ -148,6 +148,7 @@
   }
 
   [data-sidebar="menu-button"][data-active="true"] {
-    @apply border-l-4 border-primary bg-sidebar-accent text-sidebar-accent-foreground rounded-none pl-3;
+    @apply border-l-4 border-primary bg-sidebar-accent
+      text-sidebar-accent-foreground rounded-none pl-3;
   }
 }

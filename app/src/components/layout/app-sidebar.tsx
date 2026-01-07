@@ -1,5 +1,5 @@
 import { NamespaceSwitcher } from "@/components/layout/namespace-switcher";
-import { NavMain, type NavItem } from "@/components/layout/nav-main";
+import { type NavItem, NavMain } from "@/components/layout/nav-main";
 import { NavUser } from "@/components/layout/nav-user";
 import {
   Sidebar,

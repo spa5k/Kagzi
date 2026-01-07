@@ -1,8 +1,9 @@
 import { Badge } from "@/components/ui/badge";
-import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { QueryError } from "@/components/ui/query-error";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { useSchedules } from "@/hooks/use-dashboard";
 import { createFileRoute } from "@tanstack/react-router";
+import { Timestamp } from "@bufbuild/protobuf";
 
 function formatCron(expr: string): string {
   const parts = expr.split(" ");
@@ -15,9 +16,9 @@ function formatCron(expr: string): string {
   return expr;
 }
 
-function formatRelativeTime(dateString: string | null): string {
-  if (!dateString) return "—";
-  const date = new Date(dateString);
+function formatRelativeTime(timestamp: Timestamp | undefined): string {
+  if (!timestamp) return "—";
+  const date = new Date(timestamp.toDate());
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const future = diffMs < 0;

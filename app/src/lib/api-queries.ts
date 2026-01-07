@@ -1,9 +1,12 @@
+import { ListWorkersRequest } from "@/gen/admin_pb";
+import { PageRequest } from "@/gen/common_pb";
+import { ListWorkflowsRequest, WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
+import { ListWorkflowSchedulesRequest } from "@/gen/workflow_schedule_pb";
 import {
-  useListWorkflows as useGrpcListWorkflows,
   useListSchedules as useGrpcListSchedules,
   useListWorkers as useGrpcListWorkers,
+  useListWorkflows as useGrpcListWorkflows,
 } from "@/hooks/use-grpc-services";
-import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
 
 /**
  * Hook to list workflows with optional status filter
@@ -25,15 +28,17 @@ export function useListWorkflows(namespaceId: string, statusFilter?: string) {
     protoStatusFilter = statusMap[statusFilter.toLowerCase()];
   }
 
-  const result = useGrpcListWorkflows({
+  const request = new ListWorkflowsRequest({
     namespaceId,
     statusFilter: protoStatusFilter,
-    page: {
+    page: new PageRequest({
       pageSize: 100,
       pageToken: "",
       includeTotalCount: false,
-    },
+    }),
   });
+
+  const result = useGrpcListWorkflows(request);
 
   return {
     ...result,
@@ -45,14 +50,16 @@ export function useListWorkflows(namespaceId: string, statusFilter?: string) {
  * Hook to list schedules
  */
 export function useListSchedules(namespaceId: string) {
-  const result = useGrpcListSchedules({
+  const request = new ListWorkflowSchedulesRequest({
     namespaceId,
-    page: {
+    page: new PageRequest({
       pageSize: 100,
       pageToken: "",
       includeTotalCount: false,
-    },
+    }),
   });
+
+  const result = useGrpcListSchedules(request);
 
   return {
     ...result,
@@ -66,14 +73,16 @@ export function useListSchedules(namespaceId: string) {
  * Hook to list workers
  */
 export function useListWorkers(namespaceId: string) {
-  const result = useGrpcListWorkers({
+  const request = new ListWorkersRequest({
     namespaceId,
-    page: {
+    page: new PageRequest({
       pageSize: 100,
       pageToken: "",
       includeTotalCount: false,
-    },
+    }),
   });
+
+  const result = useGrpcListWorkers(request);
 
   return {
     ...result,

@@ -1,11 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { QueryError } from "@/components/ui/query-error";
-import { cn } from "@/lib/utils";
+import { TableSkeleton } from "@/components/ui/table-skeleton";
+import { Workflow } from "@/gen/workflow_pb";
 import { useWorkflows } from "@/hooks/use-dashboard";
+import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
+import { Timestamp } from "@bufbuild/protobuf";
 import {
   Alert01Icon,
   ArrowLeft01Icon,
@@ -62,9 +64,9 @@ function getStatusIcon(status: number) {
   }
 }
 
-function formatDateTime(dateStr: string) {
-  if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleString("en-US", {
+function formatDateTime(timestamp: Timestamp | undefined) {
+  if (!timestamp) return "-";
+  return new Date(timestamp.toDate()).toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -74,10 +76,10 @@ function formatDateTime(dateStr: string) {
   });
 }
 
-function formatDuration(startStr?: string | null, endStr?: string | null) {
-  if (!startStr) return "-";
-  const start = new Date(startStr).getTime();
-  const end = endStr ? new Date(endStr).getTime() : Date.now();
+function formatDuration(startTs?: Timestamp, endTs?: Timestamp) {
+  if (!startTs) return "-";
+  const start = new Date(startTs.toDate()).getTime();
+  const end = endTs ? new Date(endTs.toDate()).getTime() : Date.now();
   const diff = end - start;
 
   const seconds = Math.floor(diff / 1000);
@@ -101,14 +103,12 @@ function WorkflowsPage() {
   const { selected, status } = useSearch({ from: "/workflows" });
   const navigate = useNavigate({ from: "/workflows" });
 
-  const statusFilterMap: Record<string, WorkflowStatus | undefined> = {
-    running: WorkflowStatus.RUNNING,
-    failed: WorkflowStatus.FAILED,
-    completed: WorkflowStatus.COMPLETED,
-    all: undefined,
-  };
-
-  const { data: workflows, isLoading, error, refetch } = useWorkflows(statusFilterMap[status]);
+  const {
+    data: workflows,
+    isLoading,
+    error,
+    refetch,
+  } = useWorkflows(status === "all" ? undefined : status);
 
   if (error) {
     return (
@@ -383,7 +383,7 @@ function FilterButton({
   );
 }
 
-function WorkflowDetailContent({ workflow }: { workflow: (typeof mockWorkflows)[0] }) {
+function WorkflowDetailContent({ workflow }: { workflow: Workflow }) {
   const [activeTab, setActiveTab] = useState("summary");
 
   return (
@@ -536,16 +536,24 @@ function TabButton({
   );
 }
 
-function CodeBlock({ data }: { data?: string }) {
+function CodeBlock({ data }: { data?: string | Uint8Array }) {
   if (!data) return <span className="text-muted-foreground italic">No data</span>;
 
-  let content = data;
+  // Convert Uint8Array to string if needed
+  let dataStr: string;
+  if (data instanceof Uint8Array) {
+    dataStr = new TextDecoder().decode(data);
+  } else {
+    dataStr = data;
+  }
+
+  let content = dataStr;
   try {
-    const parsed = JSON.parse(atob(data));
+    const parsed = JSON.parse(atob(dataStr));
     content = JSON.stringify(parsed, null, 2);
   } catch {
     try {
-      content = JSON.stringify(JSON.parse(data), null, 2);
+      content = JSON.stringify(JSON.parse(dataStr), null, 2);
     } catch {
       /* empty */
     }

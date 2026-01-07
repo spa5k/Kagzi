@@ -1,10 +1,8 @@
-use axum::{
-    body::Body,
-    http::{header, StatusCode, Uri},
-    response::{IntoResponse, Response},
-    routing::get,
-    Router,
-};
+use axum::Router;
+use axum::body::Body;
+use axum::http::{StatusCode, Uri, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]

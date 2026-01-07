@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Static assets have priority (served by Axum)
     // 2. gRPC requests (standard and Web) are handled by the fallback
     // 3. CORS is applied to everything
-    
+
     // Wrap the entire gRPC router with tonic-web support
     // This converts gRPC-Web requests to standard gRPC
     let grpc_web_service = tower::ServiceBuilder::new()

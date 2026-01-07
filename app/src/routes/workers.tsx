@@ -3,6 +3,7 @@ import { QueryError } from "@/components/ui/query-error";
 import { useWorkers } from "@/hooks/use-dashboard";
 import { WorkerStatus, WorkerStatusLabel } from "@/types";
 import { createFileRoute } from "@tanstack/react-router";
+import { Timestamp } from "@bufbuild/protobuf";
 
 function getStatusVariant(status: number): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
@@ -17,8 +18,9 @@ function getStatusVariant(status: number): "default" | "secondary" | "destructiv
   }
 }
 
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
+function formatRelativeTime(timestamp: Timestamp | undefined): string {
+  if (!timestamp) return "—";
+  const date = new Date(timestamp.toDate());
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSecs = Math.floor(diffMs / 1000);

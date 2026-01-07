@@ -1,4 +1,4 @@
-import { useListWorkflows, useListSchedules, useListWorkers } from "@/lib/api-queries";
+import { useListSchedules, useListWorkers, useListWorkflows } from "@/lib/api-queries";
 
 export function useWorkflows(statusFilter?: string) {
   return useListWorkflows("default", statusFilter);
