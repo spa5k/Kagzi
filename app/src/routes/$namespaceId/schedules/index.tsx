@@ -35,7 +35,7 @@ function formatRelativeTime(timestamp: Timestamp | undefined): string {
   return future ? "soon" : "just now";
 }
 
-export const Route = createFileRoute("/schedules/")({
+export const Route = createFileRoute("/$namespaceId/schedules/")({
   component: SchedulesPage,
 });
 

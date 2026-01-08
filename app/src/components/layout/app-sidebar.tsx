@@ -9,30 +9,8 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { Calendar, Clock1, Cpu, Home } from "@hugeicons/core-free-icons";
+import { useParams } from "@tanstack/react-router";
 import type * as React from "react";
-
-const monitorItems: NavItem[] = [
-  {
-    title: "Overview",
-    url: "/",
-    icon: Home,
-  },
-  {
-    title: "Workflows",
-    url: "/workflows",
-    icon: Clock1,
-  },
-  {
-    title: "Schedules",
-    url: "/schedules",
-    icon: Calendar,
-  },
-  {
-    title: "Workers",
-    url: "/workers",
-    icon: Cpu,
-  },
-];
 
 const userData = {
   name: "Admin",
@@ -41,6 +19,32 @@ const userData = {
 };
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const params = useParams({ strict: false });
+  const namespaceId = (params as { namespaceId?: string }).namespaceId || "default";
+
+  const monitorItems: NavItem[] = [
+    {
+      title: "Overview",
+      url: `/${namespaceId}`,
+      icon: Home,
+    },
+    {
+      title: "Workflows",
+      url: `/${namespaceId}/workflows`,
+      icon: Clock1,
+    },
+    {
+      title: "Schedules",
+      url: `/${namespaceId}/schedules`,
+      icon: Calendar,
+    },
+    {
+      title: "Workers",
+      url: "/workers",
+      icon: Cpu,
+    },
+  ];
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>

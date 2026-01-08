@@ -7,10 +7,10 @@ use kagzi_proto::kagzi::{
     TerminateWorkflowResponse, WorkflowStatus,
 };
 use kagzi_queue::QueueNotifier;
+use kagzi_store::repository::NamespaceRepository;
 use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowCursor, WorkflowRepository,
 };
-use kagzi_store::repository::NamespaceRepository;
 use tonic::{Request, Response, Status};
 use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;

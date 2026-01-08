@@ -89,12 +89,12 @@ function formatDuration(startTime?: Date, endTime?: Date) {
   return `${hours}h ${minutes % 60}m`;
 }
 
-export const Route = createFileRoute("/schedules/$id")({
+export const Route = createFileRoute("/$namespaceId/schedules/$id")({
   component: ScheduleDetailPage,
 });
 
 function ScheduleDetailPage() {
-  const { id } = Route.useParams();
+  const { id, namespaceId } = Route.useParams();
   const navigate = useNavigate();
   const { namespace } = useNamespace();
 
@@ -175,7 +175,7 @@ function ScheduleDetailPage() {
         scheduleId: id,
         namespaceId: namespace,
       });
-      navigate({ to: "/schedules" });
+      navigate({ to: "/$namespaceId/schedules", params: { namespaceId } });
     } catch (error) {
       console.error("Failed to delete schedule:", error);
     }
@@ -203,7 +203,7 @@ function ScheduleDetailPage() {
             {scheduleError?.message || "The requested schedule could not be found."}
           </p>
           <Button
-            onClick={() => navigate({ to: "/schedules" })}
+            onClick={() => navigate({ to: "/$namespaceId/schedules", params: { namespaceId } })}
             variant="outline"
             className="w-full font-mono text-xs uppercase tracking-wider border-destructive text-destructive hover:bg-destructive hover:text-white"
           >
@@ -229,7 +229,7 @@ function ScheduleDetailPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => navigate({ to: "/schedules" })}
+              onClick={() => navigate({ to: "/$namespaceId/schedules", params: { namespaceId } })}
               className="font-mono text-xs uppercase tracking-wider text-muted-foreground hover:text-primary -ml-2 gap-2"
             >
               <Icon icon={ArrowLeft01Icon} className="size-4" />
@@ -522,7 +522,10 @@ function ScheduleDetailPage() {
                       <td className="px-6 py-4">
                         <button
                           onClick={() =>
-                            navigate({ to: "/workflows/$id", params: { id: run.runId } })
+                            navigate({
+                              to: "/$namespaceId/workflows/$id",
+                              params: { namespaceId, id: run.runId },
+                            })
                           }
                           className="font-mono text-xs text-muted-foreground group-hover:text-primary transition-colors hover:underline"
                         >
@@ -541,7 +544,10 @@ function ScheduleDetailPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() =>
-                            navigate({ to: "/workflows/$id", params: { id: run.runId } })
+                            navigate({
+                              to: "/$namespaceId/workflows/$id",
+                              params: { namespaceId, id: run.runId },
+                            })
                           }
                           className="font-mono text-xs uppercase tracking-wider"
                         >

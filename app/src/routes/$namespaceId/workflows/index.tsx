@@ -103,7 +103,7 @@ function getTimeRangeCutoff(timeRange: string): Date | undefined {
   }
 }
 
-export const Route = createFileRoute("/workflows/")({
+export const Route = createFileRoute("/$namespaceId/workflows/")({
   validateSearch: (search: Record<string, unknown>) => {
     const timeRange = search.timeRange as string;
     const validTimeRanges = ["1h", "24h", "7d", "30d"];
@@ -116,8 +116,9 @@ export const Route = createFileRoute("/workflows/")({
 });
 
 function WorkflowsPage() {
-  const { status, timeRange } = useSearch({ from: "/workflows/" });
-  const navigate = useNavigate({ from: "/workflows/" });
+  const { namespaceId } = Route.useParams();
+  const { status, timeRange } = useSearch({ from: "/$namespaceId/workflows/" });
+  const navigate = useNavigate({ from: "/$namespaceId/workflows/" });
   const { namespace } = useNamespace();
 
   const {
@@ -158,7 +159,7 @@ function WorkflowsPage() {
 
       // Close the sheet and navigate to the new workflow
       setIsSheetOpen(false);
-      navigate({ to: "/workflows/$id", params: { id: result.runId } });
+      navigate({ to: "/$namespaceId/workflows/$id", params: { namespaceId, id: result.runId } });
 
       // Reset form
       setWorkflowType("");
@@ -499,7 +500,10 @@ function WorkflowsPage() {
                       key={workflow.runId}
                       className="group hover:bg-muted/20 cursor-pointer transition-all duration-200"
                       onClick={() =>
-                        navigate({ to: "/workflows/$id", params: { id: workflow.runId } })
+                        navigate({
+                          to: "/$namespaceId/workflows/$id",
+                          params: { namespaceId, id: workflow.runId },
+                        })
                       }
                     >
                       <td className="px-6 py-4 font-mono text-xs text-muted-foreground text-center">

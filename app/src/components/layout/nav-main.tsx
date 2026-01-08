@@ -29,9 +29,32 @@ export function NavMain({ items, label = "Monitor" }: NavMainProps) {
       <SidebarGroupLabel>{label}</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) => {
-          const isActive =
-            currentPath === item.url ||
-            (item.url !== "/" && currentPath.startsWith(`${item.url}/`));
+          // Extract the route part after the namespace (if any)
+          // For namespace routes like /scheduling/workflows, we want to match /workflows
+          // For root routes like /workers, we want exact match
+          const pathParts = currentPath.split("/").filter(Boolean);
+          const itemParts = item.url.split("/").filter(Boolean);
+
+          let isActive = false;
+
+          if (itemParts.length === 1) {
+            // Root level route like /workers - exact match
+            isActive = currentPath === item.url;
+          } else if (itemParts.length === 2 && pathParts.length >= 2) {
+            // Namespace-scoped route like /scheduling/workflows
+            // Check if the second part matches (the actual route)
+            const currentRoute = pathParts[1];
+            const itemRoute = itemParts[1];
+
+            if (itemRoute === undefined) {
+              // This is the namespace root (overview)
+              isActive =
+                pathParts.length === 1 || (pathParts.length === 2 && currentRoute === undefined);
+            } else {
+              // Match the route part and allow sub-routes
+              isActive = currentRoute === itemRoute || currentPath.startsWith(`${item.url}/`);
+            }
+          }
 
           return (
             <SidebarMenuItem key={item.title}>

@@ -128,12 +128,12 @@ function formatDuration(startTs?: Timestamp, endTs?: Timestamp) {
   return `${hours}h ${minutes % 60}m`;
 }
 
-export const Route = createFileRoute("/workflows/$id")({
+export const Route = createFileRoute("/$namespaceId/workflows/$id")({
   component: WorkflowDetailPage,
 });
 
 function WorkflowDetailPage() {
-  const { id } = Route.useParams();
+  const { id, namespaceId } = Route.useParams();
   const navigate = useNavigate();
   const { namespace } = useNamespace();
   const { data: workflows } = useWorkflows();
@@ -193,7 +193,11 @@ function WorkflowDetailPage() {
           <p className="mb-6 opacity-80">The requested workflow could not be found.</p>
           <Button
             onClick={() =>
-              navigate({ to: "/workflows", search: { status: "all", timeRange: "24h" } })
+              navigate({
+                to: "/$namespaceId/workflows",
+                params: { namespaceId },
+                search: { status: "all", timeRange: "24h" },
+              })
             }
             variant="outline"
             className="w-full font-mono text-xs uppercase tracking-wider border-destructive text-destructive hover:bg-destructive hover:text-white"
@@ -214,7 +218,11 @@ function WorkflowDetailPage() {
               variant="ghost"
               size="sm"
               onClick={() =>
-                navigate({ to: "/workflows", search: { status: "all", timeRange: "24h" } })
+                navigate({
+                  to: "/$namespaceId/workflows",
+                  params: { namespaceId },
+                  search: { status: "all", timeRange: "24h" },
+                })
               }
               className="font-mono text-xs uppercase tracking-wider text-muted-foreground hover:text-primary -ml-2 gap-2"
             >

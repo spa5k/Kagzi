@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/workflows")({
+export const Route = createFileRoute("/$namespaceId")({
   component: RouteComponent,
 });
 

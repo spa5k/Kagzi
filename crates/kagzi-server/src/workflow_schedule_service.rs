@@ -11,8 +11,8 @@ use kagzi_proto::kagzi::{
     TriggerWorkflowScheduleRequest, TriggerWorkflowScheduleResponse, UpdateWorkflowScheduleRequest,
     UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
-use kagzi_store::{CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowRepository, WorkflowRun};
 use kagzi_store::repository::NamespaceRepository;
+use kagzi_store::{CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowRepository, WorkflowRun};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 

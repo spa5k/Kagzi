@@ -11,13 +11,24 @@ import { useNamespace } from "@/hooks/use-namespace";
 import { cn } from "@/lib/utils";
 import { Check, Layers, LoaderCircle } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useNavigate } from "@tanstack/react-router";
 
 export function NamespaceSwitcher() {
   const { namespace, setNamespace, namespaces, isLoadingNamespaces } = useNamespace();
+  const navigate = useNavigate();
 
   const currentNamespace = namespaces.find((n) => n.namespaceId === namespace);
   const displayName = currentNamespace?.displayName || currentNamespace?.namespaceId || "Namespace";
   const isEmpty = !isLoadingNamespaces && namespaces.length === 0;
+
+  const handleNamespaceChange = async (newNamespaceId: string) => {
+    setNamespace(newNamespaceId);
+    // Navigate to the new namespace dashboard
+    await navigate({
+      to: "/$namespaceId",
+      params: { namespaceId: newNamespaceId },
+    });
+  };
 
   return (
     <SidebarMenu>
@@ -77,7 +88,8 @@ export function NamespaceSwitcher() {
               namespaces.map((ns) => (
                 <DropdownMenuItem
                   key={ns.namespaceId}
-                  onSelect={() => setNamespace(ns.namespaceId)}
+                  // onSelect={() => handleNamespaceChange(ns.namespaceId)}
+                  onClick={() => handleNamespaceChange(ns.namespaceId)}
                   className="hover:border-border/40 hover:bg-transparent focus:bg-transparent border border-transparent transition-all"
                 >
                   <div className="flex size-6 items-center justify-center rounded-sm bg-muted/50">
