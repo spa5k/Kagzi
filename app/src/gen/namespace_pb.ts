@@ -11,50 +11,8 @@ import type {
   PartialMessage,
   PlainMessage,
 } from "@bufbuild/protobuf";
-import { Message, proto3, protoInt64, Timestamp } from "@bufbuild/protobuf";
-import { ErrorDetail, PageInfo, PageRequest } from "./common_pb";
-
-/**
- * DeletionMode controls how namespace deletion handles dependent resources.
- *
- * @generated from enum kagzi.v1.DeletionMode
- */
-export enum DeletionMode {
-  /**
-   * defaults to FAIL_IF_RESOURCES
-   *
-   * @generated from enum value: DELETION_MODE_UNSPECIFIED = 0;
-   */
-  UNSPECIFIED = 0,
-
-  /**
-   * reject if workflows/workers/schedules exist
-   *
-   * @generated from enum value: DELETION_MODE_FAIL_IF_RESOURCES = 1;
-   */
-  FAIL_IF_RESOURCES = 1,
-
-  /**
-   * mark deleted, keep resources
-   *
-   * @generated from enum value: DELETION_MODE_SOFT_DELETE = 2;
-   */
-  SOFT_DELETE = 2,
-
-  /**
-   * delete all resources (dangerous)
-   *
-   * @generated from enum value: DELETION_MODE_CASCADE = 3;
-   */
-  CASCADE = 3,
-}
-// Retrieve enum metadata with: proto3.getEnumType(DeletionMode)
-proto3.util.setEnumType(DeletionMode, "kagzi.v1.DeletionMode", [
-  { no: 0, name: "DELETION_MODE_UNSPECIFIED" },
-  { no: 1, name: "DELETION_MODE_FAIL_IF_RESOURCES" },
-  { no: 2, name: "DELETION_MODE_SOFT_DELETE" },
-  { no: 3, name: "DELETION_MODE_CASCADE" },
-]);
+import { Message, proto3, Timestamp } from "@bufbuild/protobuf";
+import { PageInfo, PageRequest } from "./common_pb";
 
 /**
  * Namespace represents a multi-tenancy isolation boundary.
@@ -63,27 +21,47 @@ proto3.util.setEnumType(DeletionMode, "kagzi.v1.DeletionMode", [
  */
 export class Namespace extends Message<Namespace> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * Internal UUID primary key
+   *
+   * @generated from field: string id = 1;
    */
-  namespaceId = "";
+  id = "";
 
   /**
-   * @generated from field: string display_name = 2;
+   * Unique identifier (e.g., "production", "staging")
+   *
+   * @generated from field: string namespace = 2;
+   */
+  namespace = "";
+
+  /**
+   * Human-readable name
+   *
+   * @generated from field: string display_name = 3;
    */
   displayName = "";
 
   /**
-   * @generated from field: string description = 3;
+   * Optional description
+   *
+   * @generated from field: string description = 4;
    */
   description = "";
 
   /**
-   * @generated from field: google.protobuf.Timestamp created_at = 4;
+   * Whether the namespace is enabled
+   *
+   * @generated from field: bool enabled = 5;
+   */
+  enabled = false;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp created_at = 6;
    */
   createdAt?: Timestamp;
 
   /**
-   * @generated from field: google.protobuf.Timestamp updated_at = 5;
+   * @generated from field: google.protobuf.Timestamp updated_at = 7;
    */
   updatedAt?: Timestamp;
 
@@ -95,11 +73,13 @@ export class Namespace extends Message<Namespace> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.Namespace";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "display_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "description", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 4, name: "created_at", kind: "message", T: Timestamp },
-    { no: 5, name: "updated_at", kind: "message", T: Timestamp },
+    { no: 1, name: "id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "display_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "description", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 5, name: "enabled", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 6, name: "created_at", kind: "message", T: Timestamp },
+    { no: 7, name: "updated_at", kind: "message", T: Timestamp },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Namespace {
@@ -127,14 +107,14 @@ export class Namespace extends Message<Namespace> {
  */
 export class CreateNamespaceRequest extends Message<CreateNamespaceRequest> {
   /**
-   * unique identifier (e.g., "production", "staging")
+   * Unique identifier
    *
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
-   * human-readable name
+   * Human-readable name
    *
    * @generated from field: string display_name = 2;
    */
@@ -153,7 +133,7 @@ export class CreateNamespaceRequest extends Message<CreateNamespaceRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.CreateNamespaceRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "display_name", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "description", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
   ]);
@@ -241,9 +221,11 @@ export class CreateNamespaceResponse extends Message<CreateNamespaceResponse> {
  */
 export class GetNamespaceRequest extends Message<GetNamespaceRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * Namespace identifier
+   *
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   constructor(data?: PartialMessage<GetNamespaceRequest>) {
     super();
@@ -253,7 +235,7 @@ export class GetNamespaceRequest extends Message<GetNamespaceRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetNamespaceRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetNamespaceRequest {
@@ -331,13 +313,6 @@ export class ListNamespacesRequest extends Message<ListNamespacesRequest> {
    */
   page?: PageRequest;
 
-  /**
-   * include soft-deleted namespaces
-   *
-   * @generated from field: bool include_deleted = 2;
-   */
-  includeDeleted = false;
-
   constructor(data?: PartialMessage<ListNamespacesRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -347,7 +322,6 @@ export class ListNamespacesRequest extends Message<ListNamespacesRequest> {
   static readonly typeName = "kagzi.v1.ListNamespacesRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "page", kind: "message", T: PageRequest },
-    { no: 2, name: "include_deleted", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
   ]);
 
   static fromBinary(
@@ -436,9 +410,11 @@ export class ListNamespacesResponse extends Message<ListNamespacesResponse> {
  */
 export class UpdateNamespaceRequest extends Message<UpdateNamespaceRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * Namespace identifier
+   *
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: optional string display_name = 2;
@@ -458,7 +434,7 @@ export class UpdateNamespaceRequest extends Message<UpdateNamespaceRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.UpdateNamespaceRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "display_name", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 3, name: "description", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
   ]);
@@ -542,181 +518,201 @@ export class UpdateNamespaceResponse extends Message<UpdateNamespaceResponse> {
 }
 
 /**
- * @generated from message kagzi.v1.DeleteNamespaceRequest
+ * @generated from message kagzi.v1.EnableNamespaceRequest
  */
-export class DeleteNamespaceRequest extends Message<DeleteNamespaceRequest> {
+export class EnableNamespaceRequest extends Message<EnableNamespaceRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
-   */
-  namespaceId = "";
-
-  /**
-   * @generated from field: kagzi.v1.DeletionMode mode = 2;
-   */
-  mode = DeletionMode.UNSPECIFIED;
-
-  constructor(data?: PartialMessage<DeleteNamespaceRequest>) {
-    super();
-    proto3.util.initPartial(data, this);
-  }
-
-  static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = "kagzi.v1.DeleteNamespaceRequest";
-  static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: "mode", kind: "enum", T: proto3.getEnumType(DeletionMode) },
-  ]);
-
-  static fromBinary(
-    bytes: Uint8Array,
-    options?: Partial<BinaryReadOptions>,
-  ): DeleteNamespaceRequest {
-    return new DeleteNamespaceRequest().fromBinary(bytes, options);
-  }
-
-  static fromJson(
-    jsonValue: JsonValue,
-    options?: Partial<JsonReadOptions>,
-  ): DeleteNamespaceRequest {
-    return new DeleteNamespaceRequest().fromJson(jsonValue, options);
-  }
-
-  static fromJsonString(
-    jsonString: string,
-    options?: Partial<JsonReadOptions>,
-  ): DeleteNamespaceRequest {
-    return new DeleteNamespaceRequest().fromJsonString(jsonString, options);
-  }
-
-  static equals(
-    a: DeleteNamespaceRequest | PlainMessage<DeleteNamespaceRequest> | undefined,
-    b: DeleteNamespaceRequest | PlainMessage<DeleteNamespaceRequest> | undefined,
-  ): boolean {
-    return proto3.util.equals(DeleteNamespaceRequest, a, b);
-  }
-}
-
-/**
- * DeleteNamespaceResponse provides deletion status and resource counts.
- *
- * @generated from message kagzi.v1.DeleteNamespaceResponse
- */
-export class DeleteNamespaceResponse extends Message<DeleteNamespaceResponse> {
-  /**
-   * @generated from field: bool deleted = 1;
-   */
-  deleted = false;
-
-  /**
-   * @generated from field: string message = 2;
-   */
-  message = "";
-
-  /**
-   * @generated from field: optional kagzi.v1.ErrorDetail error = 3;
-   */
-  error?: ErrorDetail;
-
-  /**
-   * populated when deletion fails due to resources
+   * Namespace identifier
    *
-   * @generated from field: optional kagzi.v1.ResourceCount resources = 4;
+   * @generated from field: string namespace = 1;
    */
-  resources?: ResourceCount;
+  namespace = "";
 
-  constructor(data?: PartialMessage<DeleteNamespaceResponse>) {
+  constructor(data?: PartialMessage<EnableNamespaceRequest>) {
     super();
     proto3.util.initPartial(data, this);
   }
 
   static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = "kagzi.v1.DeleteNamespaceResponse";
+  static readonly typeName = "kagzi.v1.EnableNamespaceRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "deleted", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
-    { no: 2, name: "message", kind: "scalar", T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: "error", kind: "message", T: ErrorDetail, opt: true },
-    { no: 4, name: "resources", kind: "message", T: ResourceCount, opt: true },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(
     bytes: Uint8Array,
     options?: Partial<BinaryReadOptions>,
-  ): DeleteNamespaceResponse {
-    return new DeleteNamespaceResponse().fromBinary(bytes, options);
+  ): EnableNamespaceRequest {
+    return new EnableNamespaceRequest().fromBinary(bytes, options);
   }
 
   static fromJson(
     jsonValue: JsonValue,
     options?: Partial<JsonReadOptions>,
-  ): DeleteNamespaceResponse {
-    return new DeleteNamespaceResponse().fromJson(jsonValue, options);
+  ): EnableNamespaceRequest {
+    return new EnableNamespaceRequest().fromJson(jsonValue, options);
   }
 
   static fromJsonString(
     jsonString: string,
     options?: Partial<JsonReadOptions>,
-  ): DeleteNamespaceResponse {
-    return new DeleteNamespaceResponse().fromJsonString(jsonString, options);
+  ): EnableNamespaceRequest {
+    return new EnableNamespaceRequest().fromJsonString(jsonString, options);
   }
 
   static equals(
-    a: DeleteNamespaceResponse | PlainMessage<DeleteNamespaceResponse> | undefined,
-    b: DeleteNamespaceResponse | PlainMessage<DeleteNamespaceResponse> | undefined,
+    a: EnableNamespaceRequest | PlainMessage<EnableNamespaceRequest> | undefined,
+    b: EnableNamespaceRequest | PlainMessage<EnableNamespaceRequest> | undefined,
   ): boolean {
-    return proto3.util.equals(DeleteNamespaceResponse, a, b);
+    return proto3.util.equals(EnableNamespaceRequest, a, b);
   }
 }
 
 /**
- * ResourceCount tracks dependent resources in a namespace.
- *
- * @generated from message kagzi.v1.ResourceCount
+ * @generated from message kagzi.v1.EnableNamespaceResponse
  */
-export class ResourceCount extends Message<ResourceCount> {
+export class EnableNamespaceResponse extends Message<EnableNamespaceResponse> {
   /**
-   * @generated from field: int64 workflows = 1;
+   * @generated from field: kagzi.v1.Namespace namespace = 1;
    */
-  workflows = protoInt64.zero;
+  namespace?: Namespace;
 
-  /**
-   * @generated from field: int64 workers = 2;
-   */
-  workers = protoInt64.zero;
-
-  /**
-   * @generated from field: int64 schedules = 3;
-   */
-  schedules = protoInt64.zero;
-
-  constructor(data?: PartialMessage<ResourceCount>) {
+  constructor(data?: PartialMessage<EnableNamespaceResponse>) {
     super();
     proto3.util.initPartial(data, this);
   }
 
   static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = "kagzi.v1.ResourceCount";
+  static readonly typeName = "kagzi.v1.EnableNamespaceResponse";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "workflows", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 2, name: "workers", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
-    { no: 3, name: "schedules", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
+    { no: 1, name: "namespace", kind: "message", T: Namespace },
   ]);
 
-  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ResourceCount {
-    return new ResourceCount().fromBinary(bytes, options);
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): EnableNamespaceResponse {
+    return new EnableNamespaceResponse().fromBinary(bytes, options);
   }
 
-  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): ResourceCount {
-    return new ResourceCount().fromJson(jsonValue, options);
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): EnableNamespaceResponse {
+    return new EnableNamespaceResponse().fromJson(jsonValue, options);
   }
 
-  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): ResourceCount {
-    return new ResourceCount().fromJsonString(jsonString, options);
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): EnableNamespaceResponse {
+    return new EnableNamespaceResponse().fromJsonString(jsonString, options);
   }
 
   static equals(
-    a: ResourceCount | PlainMessage<ResourceCount> | undefined,
-    b: ResourceCount | PlainMessage<ResourceCount> | undefined,
+    a: EnableNamespaceResponse | PlainMessage<EnableNamespaceResponse> | undefined,
+    b: EnableNamespaceResponse | PlainMessage<EnableNamespaceResponse> | undefined,
   ): boolean {
-    return proto3.util.equals(ResourceCount, a, b);
+    return proto3.util.equals(EnableNamespaceResponse, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.DisableNamespaceRequest
+ */
+export class DisableNamespaceRequest extends Message<DisableNamespaceRequest> {
+  /**
+   * Namespace identifier
+   *
+   * @generated from field: string namespace = 1;
+   */
+  namespace = "";
+
+  constructor(data?: PartialMessage<DisableNamespaceRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.DisableNamespaceRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): DisableNamespaceRequest {
+    return new DisableNamespaceRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): DisableNamespaceRequest {
+    return new DisableNamespaceRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): DisableNamespaceRequest {
+    return new DisableNamespaceRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: DisableNamespaceRequest | PlainMessage<DisableNamespaceRequest> | undefined,
+    b: DisableNamespaceRequest | PlainMessage<DisableNamespaceRequest> | undefined,
+  ): boolean {
+    return proto3.util.equals(DisableNamespaceRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message kagzi.v1.DisableNamespaceResponse
+ */
+export class DisableNamespaceResponse extends Message<DisableNamespaceResponse> {
+  /**
+   * @generated from field: kagzi.v1.Namespace namespace = 1;
+   */
+  namespace?: Namespace;
+
+  constructor(data?: PartialMessage<DisableNamespaceResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "kagzi.v1.DisableNamespaceResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "namespace", kind: "message", T: Namespace },
+  ]);
+
+  static fromBinary(
+    bytes: Uint8Array,
+    options?: Partial<BinaryReadOptions>,
+  ): DisableNamespaceResponse {
+    return new DisableNamespaceResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(
+    jsonValue: JsonValue,
+    options?: Partial<JsonReadOptions>,
+  ): DisableNamespaceResponse {
+    return new DisableNamespaceResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(
+    jsonString: string,
+    options?: Partial<JsonReadOptions>,
+  ): DisableNamespaceResponse {
+    return new DisableNamespaceResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(
+    a: DisableNamespaceResponse | PlainMessage<DisableNamespaceResponse> | undefined,
+    b: DisableNamespaceResponse | PlainMessage<DisableNamespaceResponse> | undefined,
+  ): boolean {
+    return proto3.util.equals(DisableNamespaceResponse, a, b);
   }
 }

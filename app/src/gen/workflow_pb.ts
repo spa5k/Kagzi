@@ -83,9 +83,9 @@ proto3.util.setEnumType(WorkflowStatus, "kagzi.v1.WorkflowStatus", [
  */
 export class Workflow extends Message<Workflow> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string run_id = 2;
@@ -200,7 +200,7 @@ export class Workflow extends Message<Workflow> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.Workflow";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
@@ -251,9 +251,9 @@ export class Workflow extends Message<Workflow> {
  */
 export class StartWorkflowRequest extends Message<StartWorkflowRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string external_id = 2;
@@ -293,7 +293,7 @@ export class StartWorkflowRequest extends Message<StartWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.StartWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "workflow_type", kind: "scalar", T: 9 /* ScalarType.STRING */ },
@@ -384,9 +384,9 @@ export class StartWorkflowResponse extends Message<StartWorkflowResponse> {
  */
 export class GetWorkflowRequest extends Message<GetWorkflowRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string run_id = 2;
@@ -401,7 +401,7 @@ export class GetWorkflowRequest extends Message<GetWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
@@ -478,9 +478,9 @@ export class GetWorkflowResponse extends Message<GetWorkflowResponse> {
  */
 export class ListWorkflowsRequest extends Message<ListWorkflowsRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: optional kagzi.v1.WorkflowStatus status_filter = 2;
@@ -520,7 +520,7 @@ export class ListWorkflowsRequest extends Message<ListWorkflowsRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.ListWorkflowsRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     {
       no: 2,
       name: "status_filter",
@@ -615,9 +615,9 @@ export class ListWorkflowsResponse extends Message<ListWorkflowsResponse> {
  */
 export class CancelWorkflowRequest extends Message<CancelWorkflowRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string run_id = 2;
@@ -632,7 +632,7 @@ export class CancelWorkflowRequest extends Message<CancelWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.CancelWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
@@ -724,9 +724,9 @@ export class CancelWorkflowResponse extends Message<CancelWorkflowResponse> {
  */
 export class RetryWorkflowRequest extends Message<RetryWorkflowRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string run_id = 2;
@@ -741,7 +741,7 @@ export class RetryWorkflowRequest extends Message<RetryWorkflowRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.RetryWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
@@ -827,9 +827,9 @@ export class RetryWorkflowResponse extends Message<RetryWorkflowResponse> {
  */
 export class GetWorkflowByExternalIdRequest extends Message<GetWorkflowByExternalIdRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string external_id = 2;
@@ -844,7 +844,7 @@ export class GetWorkflowByExternalIdRequest extends Message<GetWorkflowByExterna
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetWorkflowByExternalIdRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "external_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
@@ -931,9 +931,9 @@ export class GetWorkflowByExternalIdResponse extends Message<GetWorkflowByExtern
  */
 export class TerminateWorkflowRequest extends Message<TerminateWorkflowRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string run_id = 2;
@@ -953,7 +953,7 @@ export class TerminateWorkflowRequest extends Message<TerminateWorkflowRequest> 
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.TerminateWorkflowRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "reason", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);

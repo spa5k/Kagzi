@@ -14,7 +14,8 @@ import {
 import { NamespaceService } from "@/gen/namespace_connect";
 import {
   CreateNamespaceRequest,
-  DeleteNamespaceRequest,
+  DisableNamespaceRequest,
+  EnableNamespaceRequest,
   GetNamespaceRequest,
   ListNamespacesRequest,
   UpdateNamespaceRequest,
@@ -76,9 +77,9 @@ export function useStartWorkflow() {
  */
 export function useGetWorkflow(request: GetWorkflowRequest) {
   return useTanstackQuery({
-    queryKey: ["workflow", request.runId, request.namespaceId],
+    queryKey: ["workflow", request.runId, request.namespace],
     queryFn: () => workflowClient.getWorkflow(request),
-    enabled: !!request.runId && !!request.namespaceId,
+    enabled: !!request.runId && !!request.namespace,
   });
 }
 
@@ -87,9 +88,9 @@ export function useGetWorkflow(request: GetWorkflowRequest) {
  */
 export function useListWorkflows(request: ListWorkflowsRequest) {
   return useTanstackQuery({
-    queryKey: ["workflows", request.namespaceId, request.statusFilter],
+    queryKey: ["workflows", request.namespace, request.statusFilter],
     queryFn: () => workflowClient.listWorkflows(request),
-    enabled: !!request.namespaceId,
+    enabled: !!request.namespace,
   });
 }
 
@@ -114,9 +115,9 @@ export function useCancelWorkflow() {
  */
 export function useGetWorkflowByExternalId(request: GetWorkflowByExternalIdRequest) {
   return useTanstackQuery({
-    queryKey: ["workflow", "externalId", request.externalId, request.namespaceId],
+    queryKey: ["workflow", "externalId", request.externalId, request.namespace],
     queryFn: () => workflowClient.getWorkflowByExternalId(request),
-    enabled: !!request.externalId && !!request.namespaceId,
+    enabled: !!request.externalId && !!request.namespace,
   });
 }
 
@@ -179,9 +180,9 @@ export function useGetServerInfo(request?: GetServerInfoRequest) {
  */
 export function useListWorkers(request: ListWorkersRequest) {
   return useTanstackQuery({
-    queryKey: ["workers", request.namespaceId, request.taskQueue],
+    queryKey: ["workers", request.namespace, request.taskQueue],
     queryFn: () => adminClient.listWorkers(request),
-    enabled: !!request.namespaceId,
+    enabled: !!request.namespace,
   });
 }
 
@@ -201,9 +202,9 @@ export function useGetWorker(request: GetWorkerRequest) {
  */
 export function useGetStep(request: GetStepRequest) {
   return useTanstackQuery({
-    queryKey: ["step", request.stepId, request.namespaceId],
+    queryKey: ["step", request.stepId, request.namespace],
     queryFn: () => adminClient.getStep(request),
-    enabled: !!request.stepId && !!request.namespaceId,
+    enabled: !!request.stepId && !!request.namespace,
   });
 }
 
@@ -223,7 +224,7 @@ export function useListSteps(request: ListStepsRequest) {
  */
 export function useGetStats(request?: GetStatsRequest) {
   return useTanstackQuery({
-    queryKey: ["stats", request?.namespaceId],
+    queryKey: ["stats", request?.namespace],
     queryFn: () => adminClient.getStats(request || new GetStatsRequest()),
     refetchInterval: 30000, // Refresh every 30 seconds
   });
@@ -234,9 +235,9 @@ export function useGetStats(request?: GetStatsRequest) {
  */
 export function useGetQueueDepth(request: GetQueueDepthRequest) {
   return useTanstackQuery({
-    queryKey: ["queueDepth", request.namespaceId, request.taskQueue],
+    queryKey: ["queueDepth", request.namespace, request.taskQueue],
     queryFn: () => adminClient.getQueueDepth(request),
-    enabled: !!request.namespaceId,
+    enabled: !!request.namespace,
     refetchInterval: 10000, // Refresh every 10 seconds
   });
 }
@@ -246,9 +247,9 @@ export function useGetQueueDepth(request: GetQueueDepthRequest) {
  */
 export function useListWorkflowTypes(request: ListWorkflowTypesRequest) {
   return useTanstackQuery({
-    queryKey: ["workflowTypes", request.namespaceId],
+    queryKey: ["workflowTypes", request.namespace],
     queryFn: () => adminClient.listWorkflowTypes(request),
-    enabled: !!request.namespaceId,
+    enabled: !!request.namespace,
   });
 }
 
@@ -322,9 +323,9 @@ export function useDeleteSchedule() {
  */
 export function useGetSchedule(request: GetWorkflowScheduleRequest) {
   return useTanstackQuery({
-    queryKey: ["schedule", request.scheduleId, request.namespaceId],
+    queryKey: ["schedule", request.scheduleId, request.namespace],
     queryFn: () => scheduleClient.getWorkflowSchedule(request),
-    enabled: !!request.scheduleId && !!request.namespaceId,
+    enabled: !!request.scheduleId && !!request.namespace,
   });
 }
 
@@ -333,9 +334,9 @@ export function useGetSchedule(request: GetWorkflowScheduleRequest) {
  */
 export function useListSchedules(request: ListWorkflowSchedulesRequest) {
   return useTanstackQuery({
-    queryKey: ["schedules", request.namespaceId, request.taskQueue],
+    queryKey: ["schedules", request.namespace, request.taskQueue],
     queryFn: () => scheduleClient.listWorkflowSchedules(request),
-    enabled: !!request.namespaceId,
+    enabled: !!request.namespace,
   });
 }
 
@@ -393,9 +394,9 @@ export function useResumeSchedule() {
  */
 export function useListScheduleRuns(request: ListScheduleRunsRequest) {
   return useTanstackQuery({
-    queryKey: ["scheduleRuns", request.scheduleId, request.namespaceId],
+    queryKey: ["scheduleRuns", request.scheduleId, request.namespace],
     queryFn: () => scheduleClient.listScheduleRuns(request),
-    enabled: !!request.scheduleId && !!request.namespaceId,
+    enabled: !!request.scheduleId && !!request.namespace,
   });
 }
 
@@ -414,19 +415,19 @@ export function useListScheduleRuns(request: ListScheduleRunsRequest) {
  */
 export function useListNamespaces(request: ListNamespacesRequest = new ListNamespacesRequest()) {
   return useTanstackQuery({
-    queryKey: ["namespaces", request.includeDeleted],
+    queryKey: ["namespaces"],
     queryFn: () => namespaceClient.listNamespaces(request),
   });
 }
 
 /**
- * Hook to get a namespace by ID
+ * Hook to get a namespace by identifier
  */
 export function useGetNamespace(request: GetNamespaceRequest) {
   return useTanstackQuery({
-    queryKey: ["namespace", request.namespaceId],
+    queryKey: ["namespace", request.namespace],
     queryFn: () => namespaceClient.getNamespace(request),
-    enabled: !!request.namespaceId,
+    enabled: !!request.namespace,
   });
 }
 
@@ -453,21 +454,37 @@ export function useUpdateNamespace() {
   return useTanstackMutation({
     mutationFn: (request: UpdateNamespaceRequest) => namespaceClient.updateNamespace(request),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespaceId] });
+      queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespace] });
       queryClient.invalidateQueries({ queryKey: ["namespaces"] });
     },
   });
 }
 
 /**
- * Hook to delete a namespace
+ * Hook to enable a namespace
  */
-export function useDeleteNamespace() {
+export function useEnableNamespace() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: DeleteNamespaceRequest) => namespaceClient.deleteNamespace(request),
-    onSuccess: () => {
+    mutationFn: (request: EnableNamespaceRequest) => namespaceClient.enableNamespace(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespace] });
+      queryClient.invalidateQueries({ queryKey: ["namespaces"] });
+    },
+  });
+}
+
+/**
+ * Hook to disable a namespace
+ */
+export function useDisableNamespace() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: DisableNamespaceRequest) => namespaceClient.disableNamespace(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespace] });
       queryClient.invalidateQueries({ queryKey: ["namespaces"] });
     },
   });

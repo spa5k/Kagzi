@@ -6,8 +6,10 @@
 import {
   CreateNamespaceRequest,
   CreateNamespaceResponse,
-  DeleteNamespaceRequest,
-  DeleteNamespaceResponse,
+  DisableNamespaceRequest,
+  DisableNamespaceResponse,
+  EnableNamespaceRequest,
+  EnableNamespaceResponse,
   GetNamespaceRequest,
   GetNamespaceResponse,
   ListNamespacesRequest,
@@ -20,8 +22,7 @@ import { MethodKind } from "@bufbuild/protobuf";
 /**
  * NamespaceService provides CRUD operations for namespace management.
  * Namespaces provide multi-tenancy isolation for workflows, workers, and schedules.
- *
- * CreateNamespace creates a new namespace.
+ * Namespaces are enabled/disabled, not deleted.
  *
  * @generated from service kagzi.v1.NamespaceService
  */
@@ -29,6 +30,8 @@ export const NamespaceService = {
   typeName: "kagzi.v1.NamespaceService",
   methods: {
     /**
+     * CreateNamespace creates a new namespace (enabled by default).
+     *
      * @generated from rpc kagzi.v1.NamespaceService.CreateNamespace
      */
     createNamespace: {
@@ -38,7 +41,7 @@ export const NamespaceService = {
       kind: MethodKind.Unary,
     },
     /**
-     * GetNamespace retrieves a namespace by its ID.
+     * GetNamespace retrieves a namespace by its identifier.
      *
      * @generated from rpc kagzi.v1.NamespaceService.GetNamespace
      */
@@ -71,14 +74,25 @@ export const NamespaceService = {
       kind: MethodKind.Unary,
     },
     /**
-     * DeleteNamespace removes a namespace with configurable deletion behavior.
+     * EnableNamespace enables a namespace, allowing workflows to run.
      *
-     * @generated from rpc kagzi.v1.NamespaceService.DeleteNamespace
+     * @generated from rpc kagzi.v1.NamespaceService.EnableNamespace
      */
-    deleteNamespace: {
-      name: "DeleteNamespace",
-      I: DeleteNamespaceRequest,
-      O: DeleteNamespaceResponse,
+    enableNamespace: {
+      name: "EnableNamespace",
+      I: EnableNamespaceRequest,
+      O: EnableNamespaceResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * DisableNamespace disables a namespace, preventing new workflows from starting.
+     *
+     * @generated from rpc kagzi.v1.NamespaceService.DisableNamespace
+     */
+    disableNamespace: {
+      name: "DisableNamespace",
+      I: DisableNamespaceRequest,
+      O: DisableNamespaceResponse,
       kind: MethodKind.Unary,
     },
   },

@@ -27,7 +27,6 @@ import {
   useResumeSchedule,
   useTriggerSchedule,
 } from "@/hooks/use-grpc-services";
-import { useNamespace } from "@/hooks/use-namespace";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import {
@@ -96,7 +95,7 @@ export const Route = createFileRoute("/$namespaceId/schedules/$id")({
 function ScheduleDetailPage() {
   const { id, namespaceId } = Route.useParams();
   const navigate = useNavigate();
-  const { namespace } = useNamespace();
+  const namespace = namespaceId;
 
   const {
     data: schedule,
@@ -106,7 +105,7 @@ function ScheduleDetailPage() {
   } = useGetSchedule(
     new GetWorkflowScheduleRequest({
       scheduleId: id,
-      namespaceId: namespace,
+      namespace: namespace,
     }),
   );
 
@@ -117,7 +116,7 @@ function ScheduleDetailPage() {
   } = useListScheduleRuns(
     new ListScheduleRunsRequest({
       scheduleId: id,
-      namespaceId: namespace,
+      namespace: namespace,
     }),
   );
 
@@ -131,7 +130,7 @@ function ScheduleDetailPage() {
       await triggerSchedule.mutateAsync(
         new TriggerWorkflowScheduleRequest({
           scheduleId: id,
-          namespaceId: namespace,
+          namespace: namespace,
         }),
       );
       refetchSchedule();
@@ -146,7 +145,7 @@ function ScheduleDetailPage() {
       await pauseSchedule.mutateAsync(
         new PauseWorkflowScheduleRequest({
           scheduleId: id,
-          namespaceId: namespace,
+          namespace: namespace,
         }),
       );
       refetchSchedule();
@@ -160,7 +159,7 @@ function ScheduleDetailPage() {
       await resumeSchedule.mutateAsync(
         new ResumeWorkflowScheduleRequest({
           scheduleId: id,
-          namespaceId: namespace,
+          namespace: namespace,
         }),
       );
       refetchSchedule();
@@ -173,7 +172,7 @@ function ScheduleDetailPage() {
     try {
       await deleteSchedule.mutateAsync({
         scheduleId: id,
-        namespaceId: namespace,
+        namespace: namespace,
       });
       navigate({ to: "/$namespaceId/schedules", params: { namespaceId } });
     } catch (error) {

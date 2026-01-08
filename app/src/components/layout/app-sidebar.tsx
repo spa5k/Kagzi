@@ -8,7 +8,7 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import { Calendar, Clock1, Cpu, Home } from "@hugeicons/core-free-icons";
+import { Calendar, Clock1, Cpu, Home, Layers } from "@hugeicons/core-free-icons";
 import { useParams } from "@tanstack/react-router";
 import type * as React from "react";
 
@@ -45,6 +45,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     },
   ];
 
+  const adminItems: NavItem[] = [
+    {
+      title: "Namespaces",
+      url: "/namespaces",
+      icon: Layers,
+    },
+  ];
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
@@ -52,6 +60,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={monitorItems} label="Monitor" />
+        <NavMain items={adminItems} label="Admin" />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={userData} />

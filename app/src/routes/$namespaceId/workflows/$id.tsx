@@ -27,7 +27,6 @@ import {
   useRetryWorkflow,
   useTerminateWorkflow,
 } from "@/hooks/use-grpc-services";
-import { useNamespace } from "@/hooks/use-namespace";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import { Timestamp } from "@bufbuild/protobuf";
@@ -135,7 +134,7 @@ export const Route = createFileRoute("/$namespaceId/workflows/$id")({
 function WorkflowDetailPage() {
   const { id, namespaceId } = Route.useParams();
   const navigate = useNavigate();
-  const { namespace } = useNamespace();
+  const namespace = namespaceId;
   const { data: workflows } = useWorkflows();
   const terminateWorkflow = useTerminateWorkflow();
   const cancelWorkflow = useCancelWorkflow();
@@ -148,7 +147,7 @@ function WorkflowDetailPage() {
       await terminateWorkflow.mutateAsync(
         new TerminateWorkflowRequest({
           runId: id,
-          namespaceId: namespace,
+          namespace: namespace,
         }),
       );
     } catch (error) {
@@ -161,7 +160,7 @@ function WorkflowDetailPage() {
       await cancelWorkflow.mutateAsync(
         new CancelWorkflowRequest({
           runId: id,
-          namespaceId: namespace,
+          namespace: namespace,
         }),
       );
     } catch (error) {
@@ -174,7 +173,7 @@ function WorkflowDetailPage() {
       await retryWorkflow.mutateAsync(
         new RetryWorkflowRequest({
           runId: id,
-          namespaceId: namespace,
+          namespace: namespace,
         }),
       );
     } catch (error) {
@@ -360,7 +359,7 @@ function WorkflowDetailContent({ workflow, namespace }: { workflow: Workflow; na
   const { data: stepsData, isLoading: stepsLoading } = useListSteps(
     new ListStepsRequest({
       runId: workflow.runId,
-      namespaceId: namespace,
+      namespace: namespace,
     }),
   );
   const steps = stepsData?.steps ?? [];

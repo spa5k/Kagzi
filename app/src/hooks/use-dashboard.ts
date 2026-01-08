@@ -1,13 +1,15 @@
-import { useNamespace } from "@/hooks/use-namespace";
+import { useParams } from "@tanstack/react-router";
 import { useListSchedules, useListWorkers, useListWorkflows } from "@/lib/api-queries";
 
 export function useWorkflows(statusFilter?: string) {
-  const { namespace } = useNamespace();
+  const params = useParams({ strict: false });
+  const namespace = (params as { namespaceId?: string }).namespaceId || "default";
   return useListWorkflows(namespace, statusFilter);
 }
 
 export function useSchedules() {
-  const { namespace } = useNamespace();
+  const params = useParams({ strict: false });
+  const namespace = (params as { namespaceId?: string }).namespaceId || "default";
   const schedules = useListSchedules(namespace);
   return {
     ...schedules,
@@ -18,7 +20,8 @@ export function useSchedules() {
 }
 
 export function useWorkers() {
-  const { namespace } = useNamespace();
+  const params = useParams({ strict: false });
+  const namespace = (params as { namespaceId?: string }).namespaceId || "default";
   const workers = useListWorkers(namespace);
   return {
     ...workers,

@@ -48,9 +48,9 @@ proto3.util.setEnumType(ServingStatus, "kagzi.v1.ServingStatus", [
  */
 export class ListWorkersRequest extends Message<ListWorkersRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: optional string task_queue = 2;
@@ -75,7 +75,7 @@ export class ListWorkersRequest extends Message<ListWorkersRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.ListWorkersRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 3, name: "status_filter", kind: "enum", T: proto3.getEnumType(WorkerStatus), opt: true },
     { no: 4, name: "page", kind: "message", T: PageRequest },
@@ -238,9 +238,9 @@ export class GetWorkerResponse extends Message<GetWorkerResponse> {
  */
 export class GetStepRequest extends Message<GetStepRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string step_id = 2;
@@ -255,7 +255,7 @@ export class GetStepRequest extends Message<GetStepRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetStepRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "step_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
@@ -326,9 +326,9 @@ export class GetStepResponse extends Message<GetStepResponse> {
  */
 export class ListStepsRequest extends Message<ListStepsRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: string run_id = 2;
@@ -353,7 +353,7 @@ export class ListStepsRequest extends Message<ListStepsRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.ListStepsRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "run_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "step_name", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
     { no: 4, name: "page", kind: "message", T: PageRequest },
@@ -638,9 +638,9 @@ export class GetServerInfoResponse extends Message<GetServerInfoResponse> {
  */
 export class GetStatsRequest extends Message<GetStatsRequest> {
   /**
-   * @generated from field: optional string namespace_id = 1;
+   * @generated from field: optional string namespace = 1;
    */
-  namespaceId?: string;
+  namespace?: string;
 
   constructor(data?: PartialMessage<GetStatsRequest>) {
     super();
@@ -650,7 +650,7 @@ export class GetStatsRequest extends Message<GetStatsRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetStatsRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetStatsRequest {
@@ -892,9 +892,9 @@ export class DrainWorkerResponse extends Message<DrainWorkerResponse> {
  */
 export class GetQueueDepthRequest extends Message<GetQueueDepthRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: optional string task_queue = 2;
@@ -909,7 +909,7 @@ export class GetQueueDepthRequest extends Message<GetQueueDepthRequest> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.GetQueueDepthRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "task_queue", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
   ]);
 
@@ -1013,9 +1013,9 @@ export class GetQueueDepthResponse extends Message<GetQueueDepthResponse> {
  */
 export class ListWorkflowTypesRequest extends Message<ListWorkflowTypesRequest> {
   /**
-   * @generated from field: string namespace_id = 1;
+   * @generated from field: string namespace = 1;
    */
-  namespaceId = "";
+  namespace = "";
 
   /**
    * @generated from field: kagzi.v1.PageRequest page = 2;
@@ -1030,7 +1030,7 @@ export class ListWorkflowTypesRequest extends Message<ListWorkflowTypesRequest> 
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "kagzi.v1.ListWorkflowTypesRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: "namespace_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 1, name: "namespace", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "page", kind: "message", T: PageRequest },
   ]);
 

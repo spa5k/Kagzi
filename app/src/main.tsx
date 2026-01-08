@@ -6,7 +6,6 @@ import { routeTree } from "./routeTree.gen";
 
 import { TransportProvider } from "@connectrpc/connect-query";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { NamespaceProvider } from "./hooks/use-namespace";
 import "./index.css";
 import { getGrpcTransport } from "./lib/grpc-client";
 import { createQueryClient } from "./lib/query-config";
@@ -42,9 +41,7 @@ if (!rootElement.innerHTML) {
     <StrictMode>
       <TransportProvider transport={grpcTransport}>
         <QueryClientProvider client={queryClient}>
-          <NamespaceProvider>
-            <RouterProvider router={router} />
-          </NamespaceProvider>
+          <RouterProvider router={router} />
         </QueryClientProvider>
       </TransportProvider>
     </StrictMode>,

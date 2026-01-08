@@ -11,7 +11,7 @@ import {
 /**
  * Hook to list workflows with optional status filter
  */
-export function useListWorkflows(namespaceId: string, statusFilter?: string) {
+export function useListWorkflows(namespace: string, statusFilter?: string) {
   // Convert string status filter to proto enum if provided
   let protoStatusFilter: ProtoWorkflowStatus | undefined;
   if (statusFilter) {
@@ -29,7 +29,7 @@ export function useListWorkflows(namespaceId: string, statusFilter?: string) {
   }
 
   const request = new ListWorkflowsRequest({
-    namespaceId,
+    namespace,
     statusFilter: protoStatusFilter,
     page: new PageRequest({
       pageSize: 100,
@@ -49,9 +49,9 @@ export function useListWorkflows(namespaceId: string, statusFilter?: string) {
 /**
  * Hook to list schedules
  */
-export function useListSchedules(namespaceId: string) {
+export function useListSchedules(namespace: string) {
   const request = new ListWorkflowSchedulesRequest({
-    namespaceId,
+    namespace,
     page: new PageRequest({
       pageSize: 100,
       pageToken: "",
@@ -72,9 +72,9 @@ export function useListSchedules(namespaceId: string) {
 /**
  * Hook to list workers
  */
-export function useListWorkers(namespaceId: string) {
+export function useListWorkers(namespace: string) {
   const request = new ListWorkersRequest({
-    namespaceId,
+    namespace,
     page: new PageRequest({
       pageSize: 100,
       pageToken: "",

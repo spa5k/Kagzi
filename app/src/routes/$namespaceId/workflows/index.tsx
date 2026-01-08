@@ -20,9 +20,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { ListWorkflowTypesRequest } from "@/gen/admin_pb";
+import { PageRequest } from "@/gen/common_pb";
 import { useWorkflows } from "@/hooks/use-dashboard";
 import { useListWorkflowTypes, useStartWorkflow } from "@/hooks/use-grpc-services";
-import { useNamespace } from "@/hooks/use-namespace";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import { Timestamp } from "@bufbuild/protobuf";
@@ -119,7 +119,7 @@ function WorkflowsPage() {
   const { namespaceId } = Route.useParams();
   const { status, timeRange } = useSearch({ from: "/$namespaceId/workflows/" });
   const navigate = useNavigate({ from: "/$namespaceId/workflows/" });
-  const { namespace } = useNamespace();
+  const namespace = namespaceId;
 
   const {
     data: workflows,
@@ -131,7 +131,11 @@ function WorkflowsPage() {
   // Fetch available workflow types
   const { data: workflowTypesData } = useListWorkflowTypes(
     new ListWorkflowTypesRequest({
-      namespaceId: namespace,
+      namespace: namespace,
+      page: new PageRequest({
+        pageSize: 100,
+        pageToken: "",
+      }),
     }),
   );
   const workflowTypes = workflowTypesData?.workflowTypes ?? [];
@@ -150,7 +154,7 @@ function WorkflowsPage() {
   const handleStartWorkflow = async () => {
     try {
       const result = await startWorkflow.mutateAsync({
-        namespaceId: namespace,
+        namespace: namespace,
         workflowType,
         taskQueue,
         externalId: externalId || undefined,
