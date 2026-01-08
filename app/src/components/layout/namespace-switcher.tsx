@@ -7,8 +7,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
-import { ListNamespacesRequest } from "@/gen/namespace_pb";
-import { PageRequest } from "@/gen/common_pb";
+import type { ListNamespacesRequest } from "@/gen/namespace_pb";
+import type { PageRequest } from "@/gen/common_pb";
 import { useListNamespaces } from "@/hooks/use-grpc-services";
 import { cn } from "@/lib/utils";
 import { Check, Layers, LoaderCircle } from "@hugeicons/core-free-icons";
@@ -22,14 +22,12 @@ export function NamespaceSwitcher() {
   const namespace = (params as { namespaceId?: string }).namespaceId || "default";
   const navigate = useNavigate();
 
-  const { data: namespacesData, isLoading: isLoadingNamespaces } = useListNamespaces(
-    new ListNamespacesRequest({
-      page: new PageRequest({
-        pageSize: 100,
-        pageToken: "",
-      }),
-    }),
-  );
+  const { data: namespacesData, isLoading: isLoadingNamespaces } = useListNamespaces({
+    page: {
+      pageSize: 100,
+      pageToken: "",
+    },
+  });
 
   const namespaces = namespacesData?.namespaces ?? [];
   const currentNamespace = namespaces.find((n) => n.namespace === namespace);

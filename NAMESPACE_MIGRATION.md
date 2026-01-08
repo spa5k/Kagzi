@@ -1,6 +1,7 @@
 # Namespace API Migration Summary
 
 ## Overview
+
 The namespace API has been updated to use `namespace` (string identifier) instead of `namespaceId` as the primary field for referencing namespaces. Additionally, namespaces now support enable/disable functionality instead of deletion.
 
 ## API Changes
@@ -8,17 +9,21 @@ The namespace API has been updated to use `namespace` (string identifier) instea
 ### Proto Changes (namespace.proto)
 
 #### Namespace Message
+
 - Added `id` field: Internal UUID primary key
 - Renamed `namespaceId` → `namespace`: Unique identifier (e.g., "production", "staging")
 - Added `enabled` field: Boolean flag to enable/disable namespace
 
 #### Service Changes
+
 - **Removed**: `DeleteNamespace` RPC (and `DeletionMode` enum)
 - **Added**: `EnableNamespace` RPC
 - **Added**: `DisableNamespace` RPC
 
 ### Field Renames
+
 All requests/responses now use `namespace` instead of `namespaceId`:
+
 - `CreateNamespaceRequest.namespace`
 - `GetNamespaceRequest.namespace`
 - `UpdateNamespaceRequest.namespace`
@@ -29,6 +34,7 @@ All requests/responses now use `namespace` instead of `namespaceId`:
 ## Frontend Changes
 
 ### Updated Hooks (`use-grpc-services.ts`)
+
 - Updated all namespace-related hooks to use `namespace` field
 - Removed `useDeleteNamespace` hook
 - Added `useEnableNamespace` hook
@@ -36,6 +42,7 @@ All requests/responses now use `namespace` instead of `namespaceId`:
 - Updated query keys to use `namespace` instead of `namespaceId`
 
 ### Updated Components
+
 1. **namespace-switcher.tsx**
    - Now filters to show only enabled namespaces
    - Uses `namespace` field for identification
@@ -47,6 +54,7 @@ All requests/responses now use `namespace` instead of `namespaceId`:
    - Added "Namespaces" link under Admin section
 
 ### New Routes
+
 - **`/namespaces`**: Full namespace management UI
   - List all namespaces (enabled and disabled)
   - Create new namespaces
@@ -55,13 +63,17 @@ All requests/responses now use `namespace` instead of `namespaceId`:
   - Visual indicators for enabled/disabled status
 
 ### Updated Route Files
+
 All route files updated to use `namespace` instead of `namespaceId` in requests:
+
 - `$namespaceId/workflows/$id.tsx`
 - `$namespaceId/workflows/index.tsx`
 - `$namespaceId/schedules/$id.tsx`
 
 ### API Queries (`lib/api-queries.ts`)
+
 Updated parameter names from `namespaceId` to `namespace` in:
+
 - `useListWorkflows`
 - `useListSchedules`
 - `useListWorkers`
@@ -69,6 +81,7 @@ Updated parameter names from `namespaceId` to `namespace` in:
 ## Behavioral Changes
 
 ### Namespace Management
+
 - **Before**: Namespaces could be deleted with different deletion modes (fail if resources, soft delete, cascade)
 - **After**: Namespaces can only be enabled or disabled
   - Disabled namespaces: Prevent new workflows from starting
@@ -76,6 +89,7 @@ Updated parameter names from `namespaceId` to `namespace` in:
   - No deletion capability (safer for production)
 
 ### Namespace Switcher
+
 - **Before**: Showed all namespaces including deleted ones (with flag)
 - **After**: Shows only enabled namespaces by default
 - Admins can view/manage all namespaces via the `/namespaces` route
@@ -87,26 +101,33 @@ If you have existing code using the old API:
 1. **Replace field names**:
    ```typescript
    // Old
-   { namespaceId: "production" }
-   
+   {
+     namespaceId: "production";
+   }
+
    // New
-   { namespace: "production" }
+   {
+     namespace: "production";
+   }
    ```
 
 2. **Update namespace references**:
    ```typescript
    // Old
-   namespace.namespaceId
-   
+   namespace.namespaceId;
+
    // New
-   namespace.namespace
+   namespace.namespace;
    ```
 
 3. **Replace delete with disable**:
    ```typescript
    // Old
-   await deleteNamespace({ namespaceId: "staging", mode: DeletionMode.SOFT_DELETE });
-   
+   await deleteNamespace({
+     namespaceId: "staging",
+     mode: DeletionMode.SOFT_DELETE,
+   });
+
    // New
    await disableNamespace({ namespace: "staging" });
    ```
@@ -130,11 +151,13 @@ If you have existing code using the old API:
 ## Testing
 
 All TypeScript type checks pass:
+
 ```bash
 cd app && npm run typecheck  # ✓ Success
 ```
 
 All proto files regenerated successfully:
+
 ```bash
 cd app && npm run generate  # ✓ Success
 ```

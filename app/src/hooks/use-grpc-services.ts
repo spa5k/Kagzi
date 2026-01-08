@@ -1,45 +1,50 @@
-import { AdminService } from "@/gen/admin_connect";
 import {
-  DrainWorkerRequest,
-  GetQueueDepthRequest,
-  GetServerInfoRequest,
-  GetStatsRequest,
-  GetStepRequest,
-  GetWorkerRequest,
-  HealthCheckRequest,
-  ListStepsRequest,
-  ListWorkersRequest,
-  ListWorkflowTypesRequest,
+  AdminService,
+  type DrainWorkerRequest,
+  type GetQueueDepthRequest,
+  type GetServerInfoRequest,
+  GetServerInfoRequestSchema,
+  type GetStatsRequest,
+  GetStatsRequestSchema,
+  type GetStepRequest,
+  type GetWorkerRequest,
+  type HealthCheckRequest,
+  HealthCheckRequestSchema,
+  type ListStepsRequest,
+  type ListWorkersRequest,
+  type ListWorkflowTypesRequest,
 } from "@/gen/admin_pb";
-import { NamespaceService } from "@/gen/namespace_connect";
 import {
-  CreateNamespaceRequest,
-  DisableNamespaceRequest,
-  EnableNamespaceRequest,
-  GetNamespaceRequest,
-  ListNamespacesRequest,
-  UpdateNamespaceRequest,
+  NamespaceService,
+  type CreateNamespaceRequest,
+  type DisableNamespaceRequest,
+  type EnableNamespaceRequest,
+  type GetNamespaceRequest,
+  type ListNamespacesRequest,
+  ListNamespacesRequestSchema,
+  type UpdateNamespaceRequest,
 } from "@/gen/namespace_pb";
-import { WorkerService } from "@/gen/worker_connect";
-import { WorkflowService } from "@/gen/workflow_connect";
-import type {
-  GetWorkflowByExternalIdRequest,
-  GetWorkflowRequest,
-  ListWorkflowsRequest,
-  RetryWorkflowRequest,
-  TerminateWorkflowRequest,
-} from "@/gen/workflow_pb";
-import { WorkflowScheduleService } from "@/gen/workflow_schedule_connect";
+import { WorkerService } from "@/gen/worker_pb";
 import {
-  GetWorkflowScheduleRequest,
-  ListScheduleRunsRequest,
-  ListWorkflowSchedulesRequest,
-  PauseWorkflowScheduleRequest,
-  ResumeWorkflowScheduleRequest,
-  TriggerWorkflowScheduleRequest,
+  WorkflowService,
+  type GetWorkflowByExternalIdRequest,
+  type GetWorkflowRequest,
+  type ListWorkflowsRequest,
+  type RetryWorkflowRequest,
+  type TerminateWorkflowRequest,
+} from "@/gen/workflow_pb";
+import {
+  WorkflowScheduleService,
+  type GetWorkflowScheduleRequest,
+  type ListScheduleRunsRequest,
+  type ListWorkflowSchedulesRequest,
+  type PauseWorkflowScheduleRequest,
+  type ResumeWorkflowScheduleRequest,
+  type TriggerWorkflowScheduleRequest,
 } from "@/gen/workflow_schedule_pb";
 import { getGrpcTransport } from "@/lib/grpc-client";
-import { createPromiseClient } from "@connectrpc/connect";
+import { createClient } from "@connectrpc/connect";
+import { create } from "@bufbuild/protobuf";
 import {
   useMutation as useTanstackMutation,
   useQuery as useTanstackQuery,
@@ -48,10 +53,10 @@ import {
 
 // Create clients for each service
 const transport = getGrpcTransport();
-const workflowClient = createPromiseClient(WorkflowService, transport);
-const adminClient = createPromiseClient(AdminService, transport);
-const scheduleClient = createPromiseClient(WorkflowScheduleService, transport);
-const namespaceClient = createPromiseClient(NamespaceService, transport);
+const workflowClient = createClient(WorkflowService, transport);
+const adminClient = createClient(AdminService, transport);
+const scheduleClient = createClient(WorkflowScheduleService, transport);
+const namespaceClient = createClient(NamespaceService, transport);
 
 // ============================================
 // WORKFLOW SERVICE HOOKS
@@ -161,7 +166,7 @@ export function useTerminateWorkflow() {
 export function useHealthCheck(request?: HealthCheckRequest) {
   return useTanstackQuery({
     queryKey: ["health"],
-    queryFn: () => adminClient.healthCheck(request || new HealthCheckRequest()),
+    queryFn: () => adminClient.healthCheck(request || create(HealthCheckRequestSchema)),
   });
 }
 
@@ -171,7 +176,7 @@ export function useHealthCheck(request?: HealthCheckRequest) {
 export function useGetServerInfo(request?: GetServerInfoRequest) {
   return useTanstackQuery({
     queryKey: ["serverInfo"],
-    queryFn: () => adminClient.getServerInfo(request || new GetServerInfoRequest()),
+    queryFn: () => adminClient.getServerInfo(request || create(GetServerInfoRequestSchema)),
   });
 }
 
@@ -225,7 +230,7 @@ export function useListSteps(request: ListStepsRequest) {
 export function useGetStats(request?: GetStatsRequest) {
   return useTanstackQuery({
     queryKey: ["stats", request?.namespace],
-    queryFn: () => adminClient.getStats(request || new GetStatsRequest()),
+    queryFn: () => adminClient.getStats(request || create(GetStatsRequestSchema)),
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 }
@@ -413,10 +418,10 @@ export function useListScheduleRuns(request: ListScheduleRunsRequest) {
 /**
  * Hook to list all namespaces
  */
-export function useListNamespaces(request: ListNamespacesRequest = new ListNamespacesRequest()) {
+export function useListNamespaces(request?: ListNamespacesRequest) {
   return useTanstackQuery({
     queryKey: ["namespaces"],
-    queryFn: () => namespaceClient.listNamespaces(request),
+    queryFn: () => namespaceClient.listNamespaces(request || create(ListNamespacesRequestSchema)),
   });
 }
 

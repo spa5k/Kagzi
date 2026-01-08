@@ -12,10 +12,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ListStepsRequest } from "@/gen/admin_pb";
+import type { ListStepsRequest } from "@/gen/admin_pb";
 import { StepStatus } from "@/gen/worker_pb";
-import type { Workflow } from "@/gen/workflow_pb";
-import {
+import type {
+  Workflow,
   CancelWorkflowRequest,
   RetryWorkflowRequest,
   TerminateWorkflowRequest,
@@ -29,7 +29,7 @@ import {
 } from "@/hooks/use-grpc-services";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
-import { Timestamp } from "@bufbuild/protobuf";
+import { type Timestamp, timestampDate } from "@bufbuild/protobuf/wkt";
 import {
   Alert01Icon,
   ArrowLeft01Icon,
@@ -103,7 +103,7 @@ function getStepStatusColor(status: number) {
 
 function formatDateTime(timestamp: Timestamp | undefined) {
   if (!timestamp) return "-";
-  return new Date(timestamp.toDate()).toLocaleString("en-US", {
+  return timestampDate(timestamp).toLocaleString("en-US", {
     month: "numeric",
     day: "numeric",
     hour: "numeric",
@@ -115,8 +115,8 @@ function formatDateTime(timestamp: Timestamp | undefined) {
 
 function formatDuration(startTs?: Timestamp, endTs?: Timestamp) {
   if (!startTs) return "-";
-  const start = new Date(startTs.toDate()).getTime();
-  const end = endTs ? new Date(endTs.toDate()).getTime() : Date.now();
+  const start = timestampDate(startTs).getTime();
+  const end = endTs ? timestampDate(endTs).getTime() : Date.now();
   const diff = end - start;
 
   const seconds = Math.floor(diff / 1000);
@@ -144,12 +144,10 @@ function WorkflowDetailPage() {
 
   const handleTerminate = async () => {
     try {
-      await terminateWorkflow.mutateAsync(
-        new TerminateWorkflowRequest({
-          runId: id,
-          namespace: namespace,
-        }),
-      );
+      await terminateWorkflow.mutateAsync({
+        runId: id,
+        namespace: namespace,
+      });
     } catch (error) {
       console.error("Failed to terminate workflow:", error);
     }
@@ -157,12 +155,10 @@ function WorkflowDetailPage() {
 
   const handleCancel = async () => {
     try {
-      await cancelWorkflow.mutateAsync(
-        new CancelWorkflowRequest({
-          runId: id,
-          namespace: namespace,
-        }),
-      );
+      await cancelWorkflow.mutateAsync({
+        runId: id,
+        namespace: namespace,
+      });
     } catch (error) {
       console.error("Failed to cancel workflow:", error);
     }
@@ -170,12 +166,10 @@ function WorkflowDetailPage() {
 
   const handleRetry = async () => {
     try {
-      await retryWorkflow.mutateAsync(
-        new RetryWorkflowRequest({
-          runId: id,
-          namespace: namespace,
-        }),
-      );
+      await retryWorkflow.mutateAsync({
+        runId: id,
+        namespace: namespace,
+      });
     } catch (error) {
       console.error("Failed to retry workflow:", error);
     }
@@ -356,12 +350,10 @@ function WorkflowDetailContent({ workflow, namespace }: { workflow: Workflow; na
   const [activeTab, setActiveTab] = useState("summary");
 
   // Fetch workflow steps for the history tab
-  const { data: stepsData, isLoading: stepsLoading } = useListSteps(
-    new ListStepsRequest({
-      runId: workflow.runId,
-      namespace: namespace,
-    }),
-  );
+  const { data: stepsData, isLoading: stepsLoading } = useListSteps({
+    runId: workflow.runId,
+    namespace: namespace,
+  });
   const steps = stepsData?.steps ?? [];
 
   return (

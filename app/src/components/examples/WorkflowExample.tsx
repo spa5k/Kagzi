@@ -1,5 +1,5 @@
-import { PageRequest } from "@/gen/common_pb";
-import { ListWorkflowsRequest, WorkflowStatus } from "@/gen/workflow_pb";
+import type { PageRequest } from "@/gen/common_pb";
+import { type ListWorkflowsRequest, WorkflowStatus } from "@/gen/workflow_pb";
 import {
   useCancelWorkflow,
   useGetServerInfo,
@@ -7,6 +7,7 @@ import {
   useListWorkflows,
   useStartWorkflow,
 } from "@/hooks/use-grpc-services";
+import { timestampDate } from "@bufbuild/protobuf/wkt";
 import { useState } from "react";
 
 /**
@@ -32,12 +33,10 @@ export function WorkflowExample() {
     isLoading: workflowsLoading,
     error: workflowsError,
     refetch: refetchWorkflows,
-  } = useListWorkflows(
-    new ListWorkflowsRequest({
-      namespaceId: namespace,
-      page: new PageRequest({ pageSize: 10, pageToken: "", includeTotalCount: false }),
-    }),
-  );
+  } = useListWorkflows({
+    namespace: namespace,
+    page: { pageSize: 10, pageToken: "", includeTotalCount: false },
+  });
 
   // Start workflow mutation
   const startWorkflow = useStartWorkflow();
@@ -177,7 +176,7 @@ export function WorkflowExample() {
                       <p>External ID: {workflow.externalId}</p>
                       <p>Task Queue: {workflow.taskQueue}</p>
                       {workflow.createdAt && (
-                        <p>Created: {new Date(workflow.createdAt.toDate()).toLocaleString()}</p>
+                        <p>Created: {timestampDate(workflow.createdAt).toLocaleString()}</p>
                       )}
                       {workflow.error && (
                         <p className="text-red-600">Error: {workflow.error.message}</p>

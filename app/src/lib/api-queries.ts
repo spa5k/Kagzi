@@ -1,7 +1,10 @@
-import { ListWorkersRequest } from "@/gen/admin_pb";
-import { PageRequest } from "@/gen/common_pb";
-import { ListWorkflowsRequest, WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
-import { ListWorkflowSchedulesRequest } from "@/gen/workflow_schedule_pb";
+import type { ListWorkersRequest } from "@/gen/admin_pb";
+import type { PageRequest } from "@/gen/common_pb";
+import {
+  type ListWorkflowsRequest,
+  WorkflowStatus as ProtoWorkflowStatus,
+} from "@/gen/workflow_pb";
+import type { ListWorkflowSchedulesRequest } from "@/gen/workflow_schedule_pb";
 import {
   useListSchedules as useGrpcListSchedules,
   useListWorkers as useGrpcListWorkers,
@@ -28,15 +31,15 @@ export function useListWorkflows(namespace: string, statusFilter?: string) {
     protoStatusFilter = statusMap[statusFilter.toLowerCase()];
   }
 
-  const request = new ListWorkflowsRequest({
+  const request: ListWorkflowsRequest = {
     namespace,
     statusFilter: protoStatusFilter,
-    page: new PageRequest({
+    page: {
       pageSize: 100,
       pageToken: "",
       includeTotalCount: false,
-    }),
-  });
+    },
+  };
 
   const result = useGrpcListWorkflows(request);
 
@@ -50,14 +53,14 @@ export function useListWorkflows(namespace: string, statusFilter?: string) {
  * Hook to list schedules
  */
 export function useListSchedules(namespace: string) {
-  const request = new ListWorkflowSchedulesRequest({
+  const request: ListWorkflowSchedulesRequest = {
     namespace,
-    page: new PageRequest({
+    page: {
       pageSize: 100,
       pageToken: "",
       includeTotalCount: false,
-    }),
-  });
+    },
+  };
 
   const result = useGrpcListSchedules(request);
 
@@ -73,14 +76,14 @@ export function useListSchedules(namespace: string) {
  * Hook to list workers
  */
 export function useListWorkers(namespace: string) {
-  const request = new ListWorkersRequest({
+  const request: ListWorkersRequest = {
     namespace,
-    page: new PageRequest({
+    page: {
       pageSize: 100,
       pageToken: "",
       includeTotalCount: false,
-    }),
-  });
+    },
+  };
 
   const result = useGrpcListWorkers(request);
 

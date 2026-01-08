@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
+import type {
   GetWorkflowScheduleRequest,
   ListScheduleRunsRequest,
   PauseWorkflowScheduleRequest,
@@ -29,6 +29,7 @@ import {
 } from "@/hooks/use-grpc-services";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
+import { timestampDate } from "@bufbuild/protobuf/wkt";
 import {
   Alert01Icon,
   ArrowLeft01Icon,
@@ -102,23 +103,19 @@ function ScheduleDetailPage() {
     isLoading: scheduleLoading,
     error: scheduleError,
     refetch: refetchSchedule,
-  } = useGetSchedule(
-    new GetWorkflowScheduleRequest({
-      scheduleId: id,
-      namespace: namespace,
-    }),
-  );
+  } = useGetSchedule({
+    scheduleId: id,
+    namespace: namespace,
+  });
 
   const {
     data: runsData,
     isLoading: runsLoading,
     refetch: refetchRuns,
-  } = useListScheduleRuns(
-    new ListScheduleRunsRequest({
-      scheduleId: id,
-      namespace: namespace,
-    }),
-  );
+  } = useListScheduleRuns({
+    scheduleId: id,
+    namespace: namespace,
+  });
 
   const triggerSchedule = useTriggerSchedule();
   const pauseSchedule = usePauseSchedule();
@@ -127,12 +124,10 @@ function ScheduleDetailPage() {
 
   const handleTrigger = async () => {
     try {
-      await triggerSchedule.mutateAsync(
-        new TriggerWorkflowScheduleRequest({
-          scheduleId: id,
-          namespace: namespace,
-        }),
-      );
+      await triggerSchedule.mutateAsync({
+        scheduleId: id,
+        namespace: namespace,
+      });
       refetchSchedule();
       refetchRuns();
     } catch (error) {
@@ -142,12 +137,10 @@ function ScheduleDetailPage() {
 
   const handlePause = async () => {
     try {
-      await pauseSchedule.mutateAsync(
-        new PauseWorkflowScheduleRequest({
-          scheduleId: id,
-          namespace: namespace,
-        }),
-      );
+      await pauseSchedule.mutateAsync({
+        scheduleId: id,
+        namespace: namespace,
+      });
       refetchSchedule();
     } catch (error) {
       console.error("Failed to pause schedule:", error);
@@ -156,12 +149,10 @@ function ScheduleDetailPage() {
 
   const handleResume = async () => {
     try {
-      await resumeSchedule.mutateAsync(
-        new ResumeWorkflowScheduleRequest({
-          scheduleId: id,
-          namespace: namespace,
-        }),
-      );
+      await resumeSchedule.mutateAsync({
+        scheduleId: id,
+        namespace: namespace,
+      });
       refetchSchedule();
     } catch (error) {
       console.error("Failed to resume schedule:", error);
@@ -421,22 +412,34 @@ function ScheduleDetailPage() {
           />
           <MetadataItem
             label="Created At"
-            value={formatDateTime(schedule.schedule?.createdAt?.toDate())}
+            value={formatDateTime(
+              schedule.schedule?.createdAt ? timestampDate(schedule.schedule.createdAt) : undefined,
+            )}
             className="bg-background"
           />
           <MetadataItem
             label="Updated At"
-            value={formatDateTime(schedule.schedule?.updatedAt?.toDate())}
+            value={formatDateTime(
+              schedule.schedule?.updatedAt ? timestampDate(schedule.schedule.updatedAt) : undefined,
+            )}
             className="bg-background"
           />
           <MetadataItem
             label="Next Run"
-            value={formatDateTime(schedule.schedule?.nextFireAt?.toDate())}
+            value={formatDateTime(
+              schedule.schedule?.nextFireAt
+                ? timestampDate(schedule.schedule.nextFireAt)
+                : undefined,
+            )}
             className="bg-background"
           />
           <MetadataItem
             label="Last Run"
-            value={formatDateTime(schedule.schedule?.lastFiredAt?.toDate())}
+            value={formatDateTime(
+              schedule.schedule?.lastFiredAt
+                ? timestampDate(schedule.schedule.lastFiredAt)
+                : undefined,
+            )}
             className="bg-background"
           />
         </div>
@@ -533,10 +536,13 @@ function ScheduleDetailPage() {
                         </button>
                       </td>
                       <td className="px-6 py-4 font-mono text-xs text-muted-foreground">
-                        {formatDateTime(run.createdAt?.toDate())}
+                        {formatDateTime(run.createdAt ? timestampDate(run.createdAt) : undefined)}
                       </td>
                       <td className="px-6 py-4 text-right font-mono text-xs font-medium">
-                        {formatDuration(run.createdAt?.toDate(), run.finishedAt?.toDate())}
+                        {formatDuration(
+                          run.createdAt ? timestampDate(run.createdAt) : undefined,
+                          run.finishedAt ? timestampDate(run.finishedAt) : undefined,
+                        )}
                       </td>
                       <td className="px-6 py-4 text-center">
                         <Button

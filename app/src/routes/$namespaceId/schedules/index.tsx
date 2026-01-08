@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { QueryError } from "@/components/ui/query-error";
 import { TableSkeleton } from "@/components/ui/table-skeleton";
 import { useSchedules } from "@/hooks/use-dashboard";
-import { Timestamp } from "@bufbuild/protobuf";
+import { type Timestamp, timestampDate } from "@bufbuild/protobuf/wkt";
 import { Link } from "@tanstack/react-router";
 import { createFileRoute } from "@tanstack/react-router";
 
@@ -19,7 +19,7 @@ function formatCron(expr: string): string {
 
 function formatRelativeTime(timestamp: Timestamp | undefined): string {
   if (!timestamp) return "—";
-  const date = new Date(timestamp.toDate());
+  const date = timestampDate(timestamp);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const future = diffMs < 0;

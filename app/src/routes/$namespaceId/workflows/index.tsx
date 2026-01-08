@@ -19,13 +19,13 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { ListWorkflowTypesRequest } from "@/gen/admin_pb";
-import { PageRequest } from "@/gen/common_pb";
+import type { ListWorkflowTypesRequest } from "@/gen/admin_pb";
+import type { PageRequest } from "@/gen/common_pb";
 import { useWorkflows } from "@/hooks/use-dashboard";
 import { useListWorkflowTypes, useStartWorkflow } from "@/hooks/use-grpc-services";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
-import { Timestamp } from "@bufbuild/protobuf";
+import { type Timestamp, timestampDate } from "@bufbuild/protobuf/wkt";
 import {
   Alert01Icon,
   Check,
@@ -63,7 +63,7 @@ function getStatusColor(status: number) {
 
 function formatDateTime(timestamp: Timestamp | undefined) {
   if (!timestamp) return "-";
-  return new Date(timestamp.toDate()).toLocaleString("en-US", {
+  return timestampDate(timestamp).toLocaleString("en-US", {
     month: "numeric",
     day: "numeric",
     hour: "numeric",
@@ -75,8 +75,8 @@ function formatDateTime(timestamp: Timestamp | undefined) {
 
 function formatDuration(startTs?: Timestamp, endTs?: Timestamp) {
   if (!startTs) return "-";
-  const start = new Date(startTs.toDate()).getTime();
-  const end = endTs ? new Date(endTs.toDate()).getTime() : Date.now();
+  const start = timestampDate(startTs).getTime();
+  const end = endTs ? timestampDate(endTs).getTime() : Date.now();
   const diff = end - start;
 
   const seconds = Math.floor(diff / 1000);
@@ -129,15 +129,13 @@ function WorkflowsPage() {
   } = useWorkflows(status === "all" ? undefined : status);
 
   // Fetch available workflow types
-  const { data: workflowTypesData } = useListWorkflowTypes(
-    new ListWorkflowTypesRequest({
-      namespace: namespace,
-      page: new PageRequest({
-        pageSize: 100,
-        pageToken: "",
-      }),
-    }),
-  );
+  const { data: workflowTypesData } = useListWorkflowTypes({
+    namespace: namespace,
+    page: {
+      pageSize: 100,
+      pageToken: "",
+    },
+  });
   const workflowTypes = workflowTypesData?.workflowTypes ?? [];
 
   // State for the new workflow form
@@ -217,7 +215,7 @@ function WorkflowsPage() {
       // Time range filter
       const cutoff = getTimeRangeCutoff(timeRange);
       if (cutoff && w.createdAt) {
-        const createdAt = new Date(w.createdAt.toDate()).getTime();
+        const createdAt = timestampDate(w.createdAt).getTime();
         if (createdAt < cutoff.getTime()) return false;
       }
 

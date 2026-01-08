@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { QueryError } from "@/components/ui/query-error";
 import { Textarea } from "@/components/ui/textarea";
-import { ListNamespacesRequest } from "@/gen/namespace_pb";
 import {
   useCreateNamespace,
   useDisableNamespace,
@@ -32,7 +31,7 @@ export const Route = createFileRoute("/namespaces")({
 });
 
 function NamespacesPage() {
-  const { data, isLoading, error } = useListNamespaces(new ListNamespacesRequest());
+  const { data, isLoading, error } = useListNamespaces();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingNamespace, setEditingNamespace] = useState<{
