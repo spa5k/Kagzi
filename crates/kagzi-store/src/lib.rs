@@ -6,4 +6,6 @@ pub mod repository;
 pub use error::StoreError;
 pub use models::*;
 pub use postgres::{PgStore, StoreConfig};
-pub use repository::{HealthRepository, StepRepository, WorkerRepository, WorkflowRepository};
+pub use repository::{
+    HealthRepository, NamespaceRepository, StepRepository, WorkerRepository, WorkflowRepository,
+};

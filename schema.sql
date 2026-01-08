@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict E0XuEtxVXjmUpFbfwAP2NZI3gXtF5doX4zMVsGo4DMmYHZyPfI3CWa6U0XeAth0
+\restrict wGoQmwgWUTpxtrk6RADzqWrL6qcjlVkAbLHT1IAtgyYVFpBIyGSDWiJHvogQV5M
 
 -- Dumped from database version 18.0
 -- Dumped by pg_dump version 18.0
@@ -45,6 +45,50 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: namespaces; Type: TABLE; Schema: kagzi; Owner: -
+--
+
+CREATE TABLE kagzi.namespaces (
+    namespace text CONSTRAINT namespaces_namespace_id_not_null NOT NULL,
+    display_name text NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    deleted_at timestamp with time zone,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    enabled boolean DEFAULT true NOT NULL
+);
+
+
+--
+-- Name: TABLE namespaces; Type: COMMENT; Schema: kagzi; Owner: -
+--
+
+COMMENT ON TABLE kagzi.namespaces IS 'Namespaces provide multi-tenancy isolation. Namespaces are enabled/disabled, not deleted.';
+
+
+--
+-- Name: COLUMN namespaces.namespace; Type: COMMENT; Schema: kagzi; Owner: -
+--
+
+COMMENT ON COLUMN kagzi.namespaces.namespace IS 'Unique identifier for the namespace (user-facing, like "production" or "staging")';
+
+
+--
+-- Name: COLUMN namespaces.id; Type: COMMENT; Schema: kagzi; Owner: -
+--
+
+COMMENT ON COLUMN kagzi.namespaces.id IS 'Internal UUID primary key for database operations';
+
+
+--
+-- Name: COLUMN namespaces.enabled; Type: COMMENT; Schema: kagzi; Owner: -
+--
+
+COMMENT ON COLUMN kagzi.namespaces.enabled IS 'When FALSE, namespace is disabled and no workflows can run in it';
+
+
+--
 -- Name: step_runs; Type: TABLE; Schema: kagzi; Owner: -
 --
 
@@ -52,7 +96,7 @@ CREATE TABLE kagzi.step_runs (
     attempt_id uuid NOT NULL,
     run_id uuid,
     step_id text NOT NULL,
-    namespace_id text DEFAULT 'default'::text NOT NULL,
+    namespace text DEFAULT 'default'::text CONSTRAINT step_runs_namespace_id_not_null NOT NULL,
     status text NOT NULL,
     output bytea,
     error text,
@@ -75,7 +119,7 @@ CREATE TABLE kagzi.step_runs (
 
 CREATE TABLE kagzi.workers (
     worker_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    namespace_id text DEFAULT 'default'::text NOT NULL,
+    namespace text DEFAULT 'default'::text CONSTRAINT workers_namespace_id_not_null NOT NULL,
     task_queue text NOT NULL,
     hostname text,
     pid integer,
@@ -107,7 +151,7 @@ CREATE TABLE kagzi.workflow_payloads (
 
 CREATE TABLE kagzi.workflow_runs (
     run_id uuid NOT NULL,
-    namespace_id text DEFAULT 'default'::text NOT NULL,
+    namespace text DEFAULT 'default'::text CONSTRAINT workflow_runs_namespace_id_not_null NOT NULL,
     external_id text NOT NULL,
     task_queue text NOT NULL,
     workflow_type text NOT NULL,
@@ -142,6 +186,22 @@ CREATE TABLE public._sqlx_migrations (
     checksum bytea NOT NULL,
     execution_time bigint NOT NULL
 );
+
+
+--
+-- Name: namespaces namespaces_namespace_key; Type: CONSTRAINT; Schema: kagzi; Owner: -
+--
+
+ALTER TABLE ONLY kagzi.namespaces
+    ADD CONSTRAINT namespaces_namespace_key UNIQUE (namespace);
+
+
+--
+-- Name: namespaces namespaces_pkey; Type: CONSTRAINT; Schema: kagzi; Owner: -
+--
+
+ALTER TABLE ONLY kagzi.namespaces
+    ADD CONSTRAINT namespaces_pkey PRIMARY KEY (id);
 
 
 --
@@ -185,6 +245,13 @@ ALTER TABLE ONLY public._sqlx_migrations
 
 
 --
+-- Name: idx_namespaces_active; Type: INDEX; Schema: kagzi; Owner: -
+--
+
+CREATE INDEX idx_namespaces_active ON kagzi.namespaces USING btree (namespace) WHERE ((deleted_at IS NULL) AND (enabled = true));
+
+
+--
 -- Name: idx_schedule_firing_unique; Type: INDEX; Schema: kagzi; Owner: -
 --
 
@@ -209,7 +276,7 @@ CREATE UNIQUE INDEX idx_step_runs_latest ON kagzi.step_runs USING btree (run_id,
 -- Name: idx_workers_active_unique; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_workers_active_unique ON kagzi.workers USING btree (namespace_id, task_queue, hostname, pid) WHERE (status <> 'OFFLINE'::text);
+CREATE UNIQUE INDEX idx_workers_active_unique ON kagzi.workers USING btree (namespace, task_queue, hostname, pid) WHERE (status <> 'OFFLINE'::text);
 
 
 --
@@ -223,21 +290,21 @@ CREATE INDEX idx_workers_heartbeat ON kagzi.workers USING btree (status, last_he
 -- Name: idx_workers_queue; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE INDEX idx_workers_queue ON kagzi.workers USING btree (namespace_id, task_queue, status) WHERE (status = 'ONLINE'::text);
+CREATE INDEX idx_workers_queue ON kagzi.workers USING btree (namespace, task_queue, status) WHERE (status = 'ONLINE'::text);
 
 
 --
 -- Name: idx_workflow_available; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE INDEX idx_workflow_available ON kagzi.workflow_runs USING btree (namespace_id, task_queue, available_at) WHERE (status = ANY (ARRAY['PENDING'::text, 'SLEEPING'::text, 'RUNNING'::text]));
+CREATE INDEX idx_workflow_available ON kagzi.workflow_runs USING btree (namespace, task_queue, available_at) WHERE (status = ANY (ARRAY['PENDING'::text, 'SLEEPING'::text, 'RUNNING'::text]));
 
 
 --
 -- Name: idx_workflow_runs_running; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE INDEX idx_workflow_runs_running ON kagzi.workflow_runs USING btree (task_queue, namespace_id, workflow_type) WHERE (status = 'RUNNING'::text);
+CREATE INDEX idx_workflow_runs_running ON kagzi.workflow_runs USING btree (task_queue, namespace, workflow_type) WHERE (status = 'RUNNING'::text);
 
 
 --
@@ -251,21 +318,21 @@ CREATE INDEX idx_workflow_schedule_history ON kagzi.workflow_runs USING btree (s
 -- Name: idx_workflow_schedules_due; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE INDEX idx_workflow_schedules_due ON kagzi.workflow_runs USING btree (namespace_id, available_at) WHERE (status = 'SCHEDULED'::text);
+CREATE INDEX idx_workflow_schedules_due ON kagzi.workflow_runs USING btree (namespace, available_at) WHERE (status = 'SCHEDULED'::text);
 
 
 --
 -- Name: idx_workflow_status_lookup; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE INDEX idx_workflow_status_lookup ON kagzi.workflow_runs USING btree (namespace_id, status, created_at DESC);
+CREATE INDEX idx_workflow_status_lookup ON kagzi.workflow_runs USING btree (namespace, status, created_at DESC);
 
 
 --
 -- Name: uq_active_workflow; Type: INDEX; Schema: kagzi; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_active_workflow ON kagzi.workflow_runs USING btree (namespace_id, external_id) WHERE (status <> ALL (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text]));
+CREATE UNIQUE INDEX uq_active_workflow ON kagzi.workflow_runs USING btree (namespace, external_id) WHERE (status <> ALL (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text]));
 
 
 --
@@ -274,6 +341,30 @@ CREATE UNIQUE INDEX uq_active_workflow ON kagzi.workflow_runs USING btree (names
 
 ALTER TABLE ONLY kagzi.workflow_runs
     ADD CONSTRAINT fk_schedule_id FOREIGN KEY (schedule_id) REFERENCES kagzi.workflow_runs(run_id) ON DELETE SET NULL;
+
+
+--
+-- Name: step_runs fk_step_namespace; Type: FK CONSTRAINT; Schema: kagzi; Owner: -
+--
+
+ALTER TABLE ONLY kagzi.step_runs
+    ADD CONSTRAINT fk_step_namespace FOREIGN KEY (namespace) REFERENCES kagzi.namespaces(namespace) ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID;
+
+
+--
+-- Name: workers fk_worker_namespace; Type: FK CONSTRAINT; Schema: kagzi; Owner: -
+--
+
+ALTER TABLE ONLY kagzi.workers
+    ADD CONSTRAINT fk_worker_namespace FOREIGN KEY (namespace) REFERENCES kagzi.namespaces(namespace) ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID;
+
+
+--
+-- Name: workflow_runs fk_workflow_namespace; Type: FK CONSTRAINT; Schema: kagzi; Owner: -
+--
+
+ALTER TABLE ONLY kagzi.workflow_runs
+    ADD CONSTRAINT fk_workflow_namespace FOREIGN KEY (namespace) REFERENCES kagzi.namespaces(namespace) ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID;
 
 
 --
@@ -296,5 +387,5 @@ ALTER TABLE ONLY kagzi.workflow_payloads
 -- PostgreSQL database dump complete
 --
 
-\unrestrict E0XuEtxVXjmUpFbfwAP2NZI3gXtF5doX4zMVsGo4DMmYHZyPfI3CWa6U0XeAth0
+\unrestrict wGoQmwgWUTpxtrk6RADzqWrL6qcjlVkAbLHT1IAtgyYVFpBIyGSDWiJHvogQV5M
 

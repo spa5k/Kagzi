@@ -12,7 +12,7 @@ use crate::models::{
 };
 
 const WORKFLOW_COLUMNS_WITH_PAYLOAD: &str = "\
-    w.run_id, w.namespace_id, w.external_id, w.task_queue, w.workflow_type, \
+    w.run_id, w.namespace, w.external_id, w.task_queue, w.workflow_type, \
     w.status, p.input, p.output, w.locked_by, w.attempts, w.error, \
     w.created_at, w.started_at, w.finished_at, w.available_at, \
     w.version, w.parent_step_attempt_id, w.retry_policy, w.cron_expr, w.schedule_id, \
@@ -58,7 +58,7 @@ pub(super) async fn create(
         INSERT INTO kagzi.workflow_runs (
             run_id,
             external_id, task_queue, workflow_type, status,
-            namespace_id, version, retry_policy, available_at,
+            namespace, version, retry_policy, available_at,
             cron_expr, schedule_id
         )
         VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW(), $8, $9)
@@ -68,7 +68,7 @@ pub(super) async fn create(
         params.external_id,
         params.task_queue,
         params.workflow_type,
-        params.namespace_id,
+        params.namespace,
         params.version,
         retry_policy_json,
         params.cron_expr,
@@ -97,14 +97,14 @@ pub(super) async fn create(
 pub(super) async fn find_by_id(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
-    namespace_id: &str,
+    namespace: &str,
 ) -> Result<Option<WorkflowRun>, StoreError> {
     let row = sqlx::query_as!(
         WorkflowRunRow,
         r#"
         SELECT
             w.run_id,
-            w.namespace_id,
+            w.namespace,
             w.external_id,
             w.task_queue,
             w.workflow_type,
@@ -127,10 +127,10 @@ pub(super) async fn find_by_id(
             w.max_catchup
         FROM kagzi.workflow_runs w
         JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-        WHERE w.run_id = $1 AND w.namespace_id = $2
+        WHERE w.run_id = $1 AND w.namespace = $2
         "#,
         run_id,
-        namespace_id
+        namespace
     )
     .fetch_optional(&repo.pool)
     .await?;
@@ -170,17 +170,17 @@ pub(super) async fn get_retry_policy(
 #[instrument(skip(repo))]
 pub(super) async fn find_active_by_external_id(
     repo: &PgWorkflowRepository,
-    namespace_id: &str,
+    namespace: &str,
     external_id: &str,
 ) -> Result<Option<Uuid>, StoreError> {
     let row = sqlx::query!(
         r#"
         SELECT run_id FROM kagzi.workflow_runs
-        WHERE namespace_id = $1
+        WHERE namespace = $1
           AND external_id = $2
           AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
         "#,
-        namespace_id,
+        namespace,
         external_id
     )
     .fetch_optional(&repo.pool)
@@ -197,8 +197,8 @@ pub(super) async fn list(
     let limit = (params.page_size + 1) as i64;
     let mut builder = QueryBuilder::new("SELECT ");
     builder.push(WORKFLOW_COLUMNS_WITH_PAYLOAD);
-    builder.push(" FROM kagzi.workflow_runs w JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id WHERE w.namespace_id = ");
-    builder.push_bind(&params.namespace_id);
+    builder.push(" FROM kagzi.workflow_runs w JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id WHERE w.namespace = ");
+    builder.push_bind(&params.namespace);
 
     if let Some(ref status) = params.filter_status {
         builder.push(" AND w.status = ").push_bind(status);
@@ -245,7 +245,7 @@ pub(super) async fn list(
 #[instrument(skip(repo, filter_status))]
 pub(super) async fn count(
     repo: &PgWorkflowRepository,
-    namespace_id: &str,
+    namespace: &str,
     filter_status: Option<&str>,
 ) -> Result<i64, StoreError> {
     let count = if let Some(status) = filter_status {
@@ -253,11 +253,11 @@ pub(super) async fn count(
             r#"
             SELECT COUNT(*) as count
             FROM kagzi.workflow_runs
-            WHERE namespace_id = $1
+            WHERE namespace = $1
               AND status = $2
             "#,
         )
-        .bind(namespace_id)
+        .bind(namespace)
         .bind(status)
         .fetch_one(&repo.pool)
         .await?
@@ -266,10 +266,10 @@ pub(super) async fn count(
             r#"
             SELECT COUNT(*) as count
             FROM kagzi.workflow_runs
-            WHERE namespace_id = $1
+            WHERE namespace = $1
             "#,
         )
-        .bind(namespace_id)
+        .bind(namespace)
         .fetch_one(&repo.pool)
         .await?
     };
@@ -281,33 +281,33 @@ pub(super) async fn count(
 pub(super) async fn check_exists(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
-    namespace_id: &str,
+    namespace: &str,
 ) -> Result<WorkflowExistsResult, StoreError> {
-    check_workflow_state(repo, run_id, namespace_id).await
+    check_workflow_state(repo, run_id, namespace).await
 }
 
 #[instrument(skip(repo))]
 pub(super) async fn check_status(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
-    namespace_id: &str,
+    namespace: &str,
 ) -> Result<WorkflowExistsResult, StoreError> {
-    check_workflow_state(repo, run_id, namespace_id).await
+    check_workflow_state(repo, run_id, namespace).await
 }
 
 #[instrument(skip(repo))]
 async fn check_workflow_state(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
-    namespace_id: &str,
+    namespace: &str,
 ) -> Result<WorkflowExistsResult, StoreError> {
     let row = sqlx::query!(
         r#"
         SELECT status, locked_by FROM kagzi.workflow_runs
-        WHERE run_id = $1 AND namespace_id = $2
+        WHERE run_id = $1 AND namespace = $2
         "#,
         run_id,
-        namespace_id
+        namespace
     )
     .fetch_optional(&repo.pool)
     .await?;
@@ -332,7 +332,7 @@ async fn check_workflow_state(
 pub(super) async fn cancel(
     repo: &PgWorkflowRepository,
     run_id: Uuid,
-    namespace_id: &str,
+    namespace: &str,
 ) -> Result<bool, StoreError> {
     let mut tx = repo.pool.begin().await?;
 
@@ -344,12 +344,12 @@ pub(super) async fn cancel(
             locked_by = NULL,
             available_at = NULL
         WHERE run_id = $1 
-          AND namespace_id = $2
+          AND namespace = $2
           AND status = 'RUNNING'
-        RETURNING run_id, namespace_id, task_queue, workflow_type
+        RETURNING run_id, namespace, task_queue, workflow_type
         "#,
         run_id,
-        namespace_id
+        namespace
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -368,12 +368,12 @@ pub(super) async fn cancel(
             locked_by = NULL,
             available_at = NULL
         WHERE run_id = $1 
-          AND namespace_id = $2
+          AND namespace = $2
           AND status IN ('PENDING', 'SLEEPING')
         RETURNING run_id
         "#,
         run_id,
-        namespace_id
+        namespace
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -400,7 +400,7 @@ pub(super) async fn complete(
             locked_by = NULL,
             available_at = NULL
         WHERE run_id = $1 AND status = 'RUNNING'
-        RETURNING namespace_id, task_queue, workflow_type
+        RETURNING namespace, task_queue, workflow_type
         "#,
         run_id
     )
@@ -456,7 +456,7 @@ pub(super) async fn schedule_sleep(
             available_at = NOW() + ($2 * INTERVAL '1 second'),
             locked_by = NULL
         WHERE run_id = $1 AND status = 'RUNNING'
-        RETURNING namespace_id, task_queue, workflow_type
+        RETURNING namespace, task_queue, workflow_type
         "#,
         run_id,
         duration
@@ -485,7 +485,7 @@ pub(super) async fn schedule_retry(
             locked_by = NULL,
             available_at = NOW() + ($2 * INTERVAL '1 millisecond')
         WHERE run_id = $1 AND status = 'RUNNING'
-        RETURNING namespace_id, task_queue, workflow_type
+        RETURNING namespace, task_queue, workflow_type
         "#,
         run_id,
         delay_ms as f64
@@ -536,7 +536,7 @@ pub(super) async fn create_batch(
             INSERT INTO kagzi.workflow_runs (
                 run_id,
                 external_id, task_queue, workflow_type, status,
-                namespace_id, version, retry_policy, available_at,
+                namespace, version, retry_policy, available_at,
                 cron_expr, schedule_id
             )
             VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7, NOW(), $8, $9)
@@ -546,7 +546,7 @@ pub(super) async fn create_batch(
             p.external_id,
             p.task_queue,
             p.workflow_type,
-            p.namespace_id,
+            p.namespace,
             p.version,
             retry_policy_json,
             p.cron_expr,
@@ -577,18 +577,18 @@ pub(super) async fn create_batch(
 #[instrument(skip(repo))]
 pub(super) async fn find_due_schedules(
     repo: &PgWorkflowRepository,
-    namespace_id: &str,
+    namespace: &str,
     now: chrono::DateTime<chrono::Utc>,
     limit: i64,
 ) -> Result<Vec<WorkflowRun>, StoreError> {
-    let rows = if namespace_id == "*" {
+    let rows = if namespace == "*" {
         // Query all namespaces
         sqlx::query_as!(
             WorkflowRunRow,
             r#"
             SELECT
                 w.run_id,
-                w.namespace_id,
+                w.namespace,
                 w.external_id,
                 w.task_queue,
                 w.workflow_type,
@@ -628,7 +628,7 @@ pub(super) async fn find_due_schedules(
             r#"
             SELECT
                 w.run_id,
-                w.namespace_id,
+                w.namespace,
                 w.external_id,
                 w.task_queue,
                 w.workflow_type,
@@ -651,13 +651,13 @@ pub(super) async fn find_due_schedules(
                 w.max_catchup
             FROM kagzi.workflow_runs w
             JOIN kagzi.workflow_payloads p ON w.run_id = p.run_id
-            WHERE w.namespace_id = $1
+            WHERE w.namespace = $1
               AND w.status = 'SCHEDULED'
               AND w.available_at <= $2
             ORDER BY w.available_at ASC
             LIMIT $3
             "#,
-            namespace_id,
+            namespace,
             now,
             limit
         )
@@ -686,12 +686,12 @@ pub(super) async fn create_schedule_instance(
         ),
         inserted AS (
             INSERT INTO kagzi.workflow_runs (
-                run_id, namespace_id, external_id, task_queue, workflow_type,
+                run_id, namespace, external_id, task_queue, workflow_type,
                 status, available_at, schedule_id, version, retry_policy
             )
             SELECT
                 $2,                          -- new run_id
-                t.namespace_id,
+                t.namespace,
                 $3,                          -- generated external_id
                 t.task_queue,
                 t.workflow_type,
@@ -820,14 +820,14 @@ pub(super) async fn get_namespace(
 ) -> Result<Option<String>, StoreError> {
     let row = sqlx::query!(
         r#"
-        SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $1
+        SELECT namespace FROM kagzi.workflow_runs WHERE run_id = $1
         "#,
         run_id
     )
     .fetch_optional(&repo.pool)
     .await?;
 
-    Ok(row.map(|r| r.namespace_id))
+    Ok(row.map(|r| r.namespace))
 }
 
 #[instrument(skip(repo))]

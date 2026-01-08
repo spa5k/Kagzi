@@ -34,7 +34,7 @@ service AdminService {
 
 // ListWorkersRequest supports filtering workers by task queue and status.
 message ListWorkersRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   optional string task_queue = 2;
   optional WorkerStatus status_filter = 3;
   PageRequest page = 4;
@@ -54,7 +54,7 @@ message GetWorkerResponse {
 }
 
 message GetStepRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string step_id = 2;
 }
 
@@ -64,7 +64,7 @@ message GetStepResponse {
 
 // ListStepsRequest retrieves steps for a workflow run, optionally filtered by step name.
 message ListStepsRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string run_id = 2;
   optional string step_name = 3;
   PageRequest page = 4;
@@ -103,7 +103,7 @@ message GetServerInfoResponse {
 
 // GetStatsRequest retrieves system-wide statistics, optionally scoped to a namespace.
 message GetStatsRequest {
-  optional string namespace_id = 1;
+  optional string namespace = 1;
 }
 
 // GetStatsResponse provides aggregate counts and breakdowns for monitoring dashboards.
@@ -133,7 +133,7 @@ message DrainWorkerResponse {
 
 // GetQueueDepthRequest retrieves task counts, optionally filtered by task queue.
 message GetQueueDepthRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   optional string task_queue = 2;
 }
 
@@ -146,7 +146,7 @@ message GetQueueDepthResponse {
 }
 
 message ListWorkflowTypesRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   PageRequest page = 2;
 }
 

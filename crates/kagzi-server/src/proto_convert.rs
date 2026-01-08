@@ -101,7 +101,7 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
     Ok(Workflow {
         run_id: w.run_id.to_string(),
         external_id: w.external_id,
-        namespace_id: w.namespace_id,
+        namespace: w.namespace,
         task_queue: w.task_queue,
         workflow_type: w.workflow_type,
         status: map_workflow_status(w.status) as i32,
@@ -137,7 +137,7 @@ pub fn step_to_proto(s: StepRun) -> Result<Step, Status> {
     Ok(Step {
         step_id: step_id.clone(),
         run_id: s.run_id.to_string(),
-        namespace_id: s.namespace_id,
+        namespace: s.namespace,
         name: step_id,
         kind: map_step_kind(s.step_kind) as i32,
         status: map_step_status(s.status) as i32,

@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                worker_id,\n                namespace,\n                task_queue,\n                status,\n                hostname,\n                pid,\n                version,\n                workflow_types,\n                registered_at,\n                last_heartbeat_at,\n                deregistered_at,\n                labels\n            FROM kagzi.workers\n            WHERE worker_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "worker_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "namespace",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "task_queue",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "pid",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "workflow_types",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 8,
+        "name": "registered_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_heartbeat_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "deregistered_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "labels",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "41d877f00f521268609435be8a8a8697b9036957e4963431fa4b63de233e7ade"
+}

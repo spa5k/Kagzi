@@ -29,7 +29,7 @@ service WorkflowScheduleService {
 
 // WorkflowSchedule represents a cron schedule with execution statistics.
 message WorkflowSchedule {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
   string task_queue = 3;
   string workflow_type = 4;
@@ -49,7 +49,7 @@ message WorkflowSchedule {
 
 // CreateWorkflowScheduleRequest defines a cron expression and workflow configuration.
 message CreateWorkflowScheduleRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string task_queue = 2;
   string workflow_type = 3;
   string cron_expr = 4;
@@ -64,7 +64,7 @@ message CreateWorkflowScheduleResponse {
 }
 
 message GetWorkflowScheduleRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
 }
 
@@ -73,7 +73,7 @@ message GetWorkflowScheduleResponse {
 }
 
 message ListWorkflowSchedulesRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   optional string task_queue = 2;
   PageRequest page = 3;
 }
@@ -85,7 +85,7 @@ message ListWorkflowSchedulesResponse {
 
 // UpdateWorkflowScheduleRequest allows modification of any schedule field.
 message UpdateWorkflowScheduleRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
   optional string task_queue = 3;
   optional string workflow_type = 4;
@@ -102,7 +102,7 @@ message UpdateWorkflowScheduleResponse {
 }
 
 message DeleteWorkflowScheduleRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
 }
 
@@ -112,7 +112,7 @@ message DeleteWorkflowScheduleResponse {
 }
 
 message TriggerWorkflowScheduleRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
 }
 
@@ -121,7 +121,7 @@ message TriggerWorkflowScheduleResponse {
 }
 
 message PauseWorkflowScheduleRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
 }
 
@@ -130,7 +130,7 @@ message PauseWorkflowScheduleResponse {
 }
 
 message ResumeWorkflowScheduleRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
 }
 
@@ -139,7 +139,7 @@ message ResumeWorkflowScheduleResponse {
 }
 
 message ListScheduleRunsRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string schedule_id = 2;
   PageRequest page = 3;
 }

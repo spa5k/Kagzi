@@ -94,7 +94,7 @@ async fn fire_due_schedules<Q: QueueNotifier>(
         let Some(current_fire_at) = template.available_at else {
             warn!(
                 run_id = %template.run_id,
-                namespace_id = %template.namespace_id,
+                namespace = %template.namespace,
                 "Schedule template missing available_at"
             );
             continue;
@@ -102,7 +102,7 @@ async fn fire_due_schedules<Q: QueueNotifier>(
         let Some(ref cron_expr) = template.cron_expr else {
             warn!(
                 run_id = %template.run_id,
-                namespace_id = %template.namespace_id,
+                namespace = %template.namespace,
                 "Schedule template missing cron_expr"
             );
             continue;
@@ -124,7 +124,7 @@ async fn fire_due_schedules<Q: QueueNotifier>(
                 .unwrap_or(now + chrono::Duration::days(365));
             info!(
                 schedule_id = %template.run_id,
-                namespace_id = %template.namespace_id,
+                namespace = %template.namespace,
                 "max_catchup=0, skipping missed runs"
             );
             store
@@ -145,7 +145,7 @@ async fn fire_due_schedules<Q: QueueNotifier>(
         if missed_count > template.max_catchup as usize {
             warn!(
                 schedule_id = %template.run_id,
-                namespace_id = %template.namespace_id,
+                namespace = %template.namespace,
                 missed = missed_count,
                 max_catchup = template.max_catchup,
                 "Too many missed runs, skipping to recent"
@@ -181,20 +181,20 @@ async fn fire_due_schedules<Q: QueueNotifier>(
             Some(run_id) => {
                 info!(
                     schedule_id = %template.run_id,
-                    namespace_id = %template.namespace_id,
+                    namespace = %template.namespace,
                     run_id = %run_id,
                     fire_at = %current_fire_at,
                     missed_count = missed_count,
                     "Fired schedule"
                 );
                 if let Err(e) = queue
-                    .notify(&template.namespace_id, &template.task_queue)
+                    .notify(&template.namespace, &template.task_queue)
                     .await
                 {
                     error!(
                         schedule_id = %template.run_id,
                         run_id = %run_id,
-                        namespace_id = %template.namespace_id,
+                        namespace = %template.namespace,
                         task_queue = %template.task_queue,
                         error = ?e,
                         "Failed to notify queue after firing schedule"

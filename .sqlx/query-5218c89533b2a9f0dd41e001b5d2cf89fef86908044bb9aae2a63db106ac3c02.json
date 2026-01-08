@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT DISTINCT task_queue\n                FROM kagzi.workflow_runs\n                WHERE namespace = $1 AND workflow_type = $2\n                AND task_queue IS NOT NULL\n                LIMIT 50\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "task_queue",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5218c89533b2a9f0dd41e001b5d2cf89fef86908044bb9aae2a63db106ac3c02"
+}

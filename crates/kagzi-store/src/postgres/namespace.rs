@@ -1,9 +1,13 @@
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
+use uuid::Uuid;
 
 use crate::error::StoreError;
-use crate::models::{CreateNamespace, Namespace, PaginatedResult, ResourceCount};
+use crate::models::{
+    CreateNamespace, Namespace, NamespaceStats, PaginatedResult, UpdateNamespace,
+    WorkflowStatusCount, WorkflowTypeCount, WorkflowTypeInfo,
+};
 use crate::repository::NamespaceRepository;
 
 #[derive(Clone)]
@@ -24,11 +28,11 @@ impl NamespaceRepository for PgNamespaceRepository {
         let namespace = sqlx::query_as!(
             Namespace,
             r#"
-            INSERT INTO kagzi.namespaces (namespace_id, display_name, description, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $4)
-            RETURNING namespace_id, display_name, description, created_at, updated_at, deleted_at
+            INSERT INTO kagzi.namespaces (namespace, display_name, description, enabled, created_at, updated_at)
+            VALUES ($1, $2, $3, TRUE, $4, $4)
+            RETURNING id, namespace, display_name, description, enabled, created_at, updated_at
             "#,
-            params.namespace_id,
+            params.namespace,
             params.display_name,
             params.description,
             now
@@ -40,7 +44,7 @@ impl NamespaceRepository for PgNamespaceRepository {
                 && db_err.is_unique_violation()
             {
                 return StoreError::Conflict {
-                    message: format!("Namespace '{}' already exists", params.namespace_id),
+                    message: format!("Namespace '{}' already exists", params.namespace),
                 };
             }
             StoreError::from(e)
@@ -49,112 +53,75 @@ impl NamespaceRepository for PgNamespaceRepository {
         Ok(namespace)
     }
 
-    async fn find_by_id(
-        &self,
-        namespace_id: &str,
-        include_deleted: bool,
-    ) -> Result<Option<Namespace>, StoreError> {
-        if include_deleted {
-            sqlx::query_as!(
-                Namespace,
-                r#"
-                SELECT namespace_id, display_name, description, created_at, updated_at, deleted_at
-                FROM kagzi.namespaces
-                WHERE namespace_id = $1
-                "#,
-                namespace_id
-            )
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(StoreError::from)
-        } else {
-            sqlx::query_as!(
-                Namespace,
-                r#"
-                SELECT namespace_id, display_name, description, created_at, updated_at, deleted_at
-                FROM kagzi.namespaces
-                WHERE namespace_id = $1 AND deleted_at IS NULL
-                "#,
-                namespace_id
-            )
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(StoreError::from)
-        }
+    async fn find_by_id(&self, namespace: &str) -> Result<Option<Namespace>, StoreError> {
+        sqlx::query_as!(
+            Namespace,
+            r#"
+            SELECT id, namespace, display_name, description, enabled, created_at, updated_at
+            FROM kagzi.namespaces
+            WHERE namespace = $1
+            "#,
+            namespace
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::from)
+    }
+
+    async fn find_by_internal_id(&self, id: Uuid) -> Result<Option<Namespace>, StoreError> {
+        sqlx::query_as!(
+            Namespace,
+            r#"
+            SELECT id, namespace, display_name, description, enabled, created_at, updated_at
+            FROM kagzi.namespaces
+            WHERE id = $1
+            "#,
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(StoreError::from)
     }
 
     async fn list(
         &self,
         page_size: i32,
         cursor: Option<String>,
-        include_deleted: bool,
     ) -> Result<PaginatedResult<Namespace, String>, StoreError> {
         let limit = page_size.clamp(1, 100);
 
-        let namespaces = if include_deleted {
-            if let Some(cursor_id) = cursor {
-                sqlx::query_as!(
-                    Namespace,
-                    r#"
-                    SELECT namespace_id, display_name, description, created_at, updated_at, deleted_at
-                    FROM kagzi.namespaces
-                    WHERE namespace_id > $1
-                    ORDER BY namespace_id ASC
-                    LIMIT $2
-                    "#,
-                    cursor_id,
-                    limit as i64
-                )
-                .fetch_all(&self.pool)
-                .await
-            } else {
-                sqlx::query_as!(
-                    Namespace,
-                    r#"
-                    SELECT namespace_id, display_name, description, created_at, updated_at, deleted_at
-                    FROM kagzi.namespaces
-                    ORDER BY namespace_id ASC
-                    LIMIT $1
-                    "#,
-                    limit as i64
-                )
-                .fetch_all(&self.pool)
-                .await
-            }
-        } else if let Some(cursor_id) = cursor {
+        let namespaces = if let Some(cursor_id) = cursor {
             sqlx::query_as!(
                 Namespace,
                 r#"
-                SELECT namespace_id, display_name, description, created_at, updated_at, deleted_at
+                SELECT id, namespace, display_name, description, enabled, created_at, updated_at
                 FROM kagzi.namespaces
-                WHERE namespace_id > $1 AND deleted_at IS NULL
-                ORDER BY namespace_id ASC
+                WHERE namespace > $1
+                ORDER BY namespace ASC
                 LIMIT $2
                 "#,
                 cursor_id,
                 limit as i64
             )
             .fetch_all(&self.pool)
-            .await
+            .await?
         } else {
             sqlx::query_as!(
                 Namespace,
                 r#"
-                SELECT namespace_id, display_name, description, created_at, updated_at, deleted_at
+                SELECT id, namespace, display_name, description, enabled, created_at, updated_at
                 FROM kagzi.namespaces
-                WHERE deleted_at IS NULL
-                ORDER BY namespace_id ASC
+                ORDER BY namespace ASC
                 LIMIT $1
                 "#,
                 limit as i64
             )
             .fetch_all(&self.pool)
-            .await
-        }
-        .map_err(StoreError::from)?;
+            .await?
+        };
 
         let has_more = namespaces.len() == limit as usize;
-        let next_cursor = namespaces.last().map(|n| n.namespace_id.clone());
+        let next_cursor = namespaces.last().map(|n| n.namespace.clone());
 
         Ok(PaginatedResult {
             items: namespaces,
@@ -165,197 +132,368 @@ impl NamespaceRepository for PgNamespaceRepository {
 
     async fn update(
         &self,
-        namespace_id: &str,
-        display_name: Option<String>,
-        description: Option<String>,
+        namespace: &str,
+        params: UpdateNamespace,
     ) -> Result<Namespace, StoreError> {
         let now = Utc::now();
 
-        // Build dynamic update query based on provided fields
-        let namespace = if let (Some(name), Some(desc)) = (&display_name, &description) {
-            sqlx::query_as!(
-                Namespace,
-                r#"
-                UPDATE kagzi.namespaces
-                SET display_name = $2, description = $3, updated_at = $4
-                WHERE namespace_id = $1 AND deleted_at IS NULL
-                RETURNING namespace_id, display_name, description, created_at, updated_at, deleted_at
-                "#,
-                namespace_id,
-                name,
-                desc,
-                now
-            )
-            .fetch_optional(&self.pool)
-            .await
-        } else if let Some(name) = &display_name {
-            sqlx::query_as!(
-                Namespace,
-                r#"
-                UPDATE kagzi.namespaces
-                SET display_name = $2, updated_at = $3
-                WHERE namespace_id = $1 AND deleted_at IS NULL
-                RETURNING namespace_id, display_name, description, created_at, updated_at, deleted_at
-                "#,
-                namespace_id,
-                name,
-                now
-            )
-            .fetch_optional(&self.pool)
-            .await
-        } else if let Some(desc) = &description {
-            sqlx::query_as!(
-                Namespace,
-                r#"
-                UPDATE kagzi.namespaces
-                SET description = $2, updated_at = $3
-                WHERE namespace_id = $1 AND deleted_at IS NULL
-                RETURNING namespace_id, display_name, description, created_at, updated_at, deleted_at
-                "#,
-                namespace_id,
-                desc,
-                now
-            )
-            .fetch_optional(&self.pool)
-            .await
-        } else {
-            // No fields to update
-            return self
-                .find_by_id(namespace_id, false)
+        let ns = match (params.display_name, params.description) {
+            (Some(name), Some(desc)) => {
+                sqlx::query_as!(
+                    Namespace,
+                    r#"
+                    UPDATE kagzi.namespaces
+                    SET display_name = $2, description = $3, updated_at = $4
+                    WHERE namespace = $1
+                    RETURNING id, namespace, display_name, description, enabled, created_at, updated_at
+                    "#,
+                    namespace,
+                    name,
+                    desc,
+                    now
+                )
+                .fetch_optional(&self.pool)
                 .await?
-                .ok_or_else(|| StoreError::not_found("namespace", namespace_id));
-        }
-        .map_err(StoreError::from)?;
+            }
+            (Some(name), None) => {
+                sqlx::query_as!(
+                    Namespace,
+                    r#"
+                    UPDATE kagzi.namespaces
+                    SET display_name = $2, updated_at = $3
+                    WHERE namespace = $1
+                    RETURNING id, namespace, display_name, description, enabled, created_at, updated_at
+                    "#,
+                    namespace,
+                    name,
+                    now
+                )
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            (None, Some(desc)) => {
+                sqlx::query_as!(
+                    Namespace,
+                    r#"
+                    UPDATE kagzi.namespaces
+                    SET description = $2, updated_at = $3
+                    WHERE namespace = $1
+                    RETURNING id, namespace, display_name, description, enabled, created_at, updated_at
+                    "#,
+                    namespace,
+                    desc,
+                    now
+                )
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            (None, None) => {
+                // No fields to update, just return existing
+                return self
+                    .find_by_id(namespace)
+                    .await?
+                    .ok_or_else(|| StoreError::not_found("namespace", namespace));
+            }
+        };
 
-        namespace.ok_or_else(|| StoreError::not_found("namespace", namespace_id))
+        ns.ok_or_else(|| StoreError::not_found("namespace", namespace))
     }
 
-    async fn delete(&self, namespace_id: &str) -> Result<bool, StoreError> {
-        let result = sqlx::query!(
-            r#"
-            DELETE FROM kagzi.namespaces
-            WHERE namespace_id = $1
-            "#,
-            namespace_id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(StoreError::from)?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    async fn soft_delete(&self, namespace_id: &str) -> Result<bool, StoreError> {
+    async fn enable(&self, namespace: &str) -> Result<bool, StoreError> {
         let now = Utc::now();
         let result = sqlx::query!(
             r#"
             UPDATE kagzi.namespaces
-            SET deleted_at = $2, updated_at = $2
-            WHERE namespace_id = $1 AND deleted_at IS NULL
+            SET enabled = TRUE, updated_at = $2
+            WHERE namespace = $1
             "#,
-            namespace_id,
+            namespace,
             now
         )
         .execute(&self.pool)
-        .await
-        .map_err(StoreError::from)?;
+        .await?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    async fn count_resources(&self, namespace_id: &str) -> Result<ResourceCount, StoreError> {
-        // Count workflows (excluding terminal states)
-        let workflow_count = sqlx::query_scalar!(
+    async fn disable(&self, namespace: &str) -> Result<bool, StoreError> {
+        let now = Utc::now();
+        let result = sqlx::query!(
             r#"
-            SELECT COUNT(*) as "count!"
-            FROM kagzi.workflow_runs
-            WHERE namespace_id = $1
-              AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+            UPDATE kagzi.namespaces
+            SET enabled = FALSE, updated_at = $2
+            WHERE namespace = $1
             "#,
-            namespace_id
+            namespace,
+            now
         )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(StoreError::from)?;
+        .execute(&self.pool)
+        .await?;
 
-        // Count workers (excluding offline)
-        let worker_count = sqlx::query_scalar!(
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn get_stats(&self, namespace: &str) -> Result<NamespaceStats, StoreError> {
+        // Get workflow counts by status in a single query
+        let status_rows = sqlx::query!(
             r#"
-            SELECT COUNT(*) as "count!"
+            SELECT status, COUNT(*) as count
+            FROM kagzi.workflow_runs
+            WHERE namespace = $1
+            GROUP BY status
+            "#,
+            namespace
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let workflows_by_status: Vec<WorkflowStatusCount> = status_rows
+            .iter()
+            .map(|row| WorkflowStatusCount {
+                status: row.status.clone(),
+                count: row.count.unwrap_or(0),
+            })
+            .collect();
+
+        // Get workflow counts by type
+        let type_rows = sqlx::query!(
+            r#"
+            SELECT
+                workflow_type,
+                COUNT(*) as total_runs,
+                COUNT(*) FILTER (
+                    WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                ) as active_runs,
+                ARRAY_AGG(DISTINCT task_queue) FILTER (WHERE task_queue IS NOT NULL) as task_queues
+            FROM kagzi.workflow_runs
+            WHERE namespace = $1
+            GROUP BY workflow_type
+            ORDER BY workflow_type
+            "#,
+            namespace
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let workflows_by_type: Vec<WorkflowTypeCount> = type_rows
+            .iter()
+            .map(|row| WorkflowTypeCount {
+                workflow_type: row.workflow_type.clone(),
+                total_runs: row.total_runs.unwrap_or(0),
+                active_runs: row.active_runs.unwrap_or(0),
+                task_queues: row.task_queues.clone().unwrap_or_default(),
+            })
+            .collect();
+
+        // Calculate totals from the grouped data
+        let total_workflows: i64 = workflows_by_type.iter().map(|t| t.total_runs).sum();
+        let pending_workflows = workflows_by_status
+            .iter()
+            .find(|s| s.status == "PENDING")
+            .map(|s| s.count)
+            .unwrap_or(0);
+        let running_workflows = workflows_by_status
+            .iter()
+            .find(|s| s.status == "RUNNING")
+            .map(|s| s.count)
+            .unwrap_or(0);
+        let completed_workflows = workflows_by_status
+            .iter()
+            .find(|s| s.status == "COMPLETED")
+            .map(|s| s.count)
+            .unwrap_or(0);
+        let failed_workflows = workflows_by_status
+            .iter()
+            .find(|s| s.status == "FAILED")
+            .map(|s| s.count)
+            .unwrap_or(0);
+
+        // Get worker counts
+        let worker_counts = sqlx::query!(
+            r#"
+            SELECT
+                COUNT(*) FILTER (WHERE status != 'OFFLINE') as total,
+                COUNT(*) FILTER (WHERE status = 'ONLINE') as online
             FROM kagzi.workers
-            WHERE namespace_id = $1
-              AND status != 'OFFLINE'
+            WHERE namespace = $1
             "#,
-            namespace_id
+            namespace
         )
         .fetch_one(&self.pool)
-        .await
-        .map_err(StoreError::from)?;
+        .await?;
 
-        // Count schedules (workflows with schedule_id that are in SCHEDULED status)
-        let schedule_count = sqlx::query_scalar!(
+        let total_workers = worker_counts.total.unwrap_or(0);
+        let online_workers = worker_counts.online.unwrap_or(0);
+
+        // Get schedule counts (scheduled workflows with cron expression)
+        let schedule_counts = sqlx::query!(
             r#"
-            SELECT COUNT(*) as "count!"
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) as enabled
             FROM kagzi.workflow_runs
-            WHERE namespace_id = $1
+            WHERE namespace = $1
               AND status = 'SCHEDULED'
               AND schedule_id IS NOT NULL
             "#,
-            namespace_id
+            namespace
         )
         .fetch_one(&self.pool)
-        .await
-        .map_err(StoreError::from)?;
+        .await?;
 
-        Ok(ResourceCount {
-            workflows: workflow_count,
-            workers: worker_count,
-            schedules: schedule_count,
+        let total_schedules = schedule_counts.total.unwrap_or(0);
+        let enabled_schedules = schedule_counts.enabled.unwrap_or(0);
+
+        Ok(NamespaceStats {
+            total_workflows,
+            pending_workflows,
+            running_workflows,
+            completed_workflows,
+            failed_workflows,
+            total_workers,
+            online_workers,
+            total_schedules,
+            enabled_schedules,
+            workflows_by_status,
+            workflows_by_type,
+        })
+    }
+
+    async fn list_workflow_types(
+        &self,
+        namespace: &str,
+        page_size: i32,
+        cursor: Option<String>,
+    ) -> Result<PaginatedResult<WorkflowTypeInfo, String>, StoreError> {
+        let limit = page_size.clamp(1, 100);
+
+        // Use dynamic query to avoid type issues with sqlx macro
+        let query_str = if cursor.is_some() {
+            r#"
+            SELECT
+                workflow_type,
+                COUNT(*) as total_runs,
+                COUNT(*) FILTER (
+                    WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                ) as active_runs
+            FROM kagzi.workflow_runs
+            WHERE namespace = $1 AND workflow_type > $2
+            GROUP BY workflow_type
+            ORDER BY workflow_type ASC
+            LIMIT $3
+            "#
+        } else {
+            r#"
+            SELECT
+                workflow_type,
+                COUNT(*) as total_runs,
+                COUNT(*) FILTER (
+                    WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                ) as active_runs
+            FROM kagzi.workflow_runs
+            WHERE namespace = $1
+            GROUP BY workflow_type
+            ORDER BY workflow_type ASC
+            LIMIT $2
+            "#
+        };
+
+        let rows = if let Some(cursor_type) = cursor {
+            sqlx::query(query_str)
+                .bind(namespace)
+                .bind(cursor_type)
+                .bind(limit as i64)
+                .fetch_all(&self.pool)
+                .await?
+        } else {
+            sqlx::query(query_str)
+                .bind(namespace)
+                .bind(limit as i64)
+                .fetch_all(&self.pool)
+                .await?
+        };
+
+        // For each workflow type, get the task queues separately
+        let mut items = Vec::new();
+        for row in rows {
+            let workflow_type: String = row.get("workflow_type");
+            let total_runs: i64 = row.get("total_runs");
+            let active_runs: i64 = row.get("active_runs");
+
+            // Get task queues for this workflow type
+            let queue_rows = sqlx::query!(
+                r#"
+                SELECT DISTINCT task_queue
+                FROM kagzi.workflow_runs
+                WHERE namespace = $1 AND workflow_type = $2
+                AND task_queue IS NOT NULL
+                LIMIT 50
+                "#,
+                namespace,
+                workflow_type
+            )
+            .fetch_all(&self.pool)
+            .await?;
+
+            let task_queues: Vec<String> =
+                queue_rows.iter().map(|r| r.task_queue.clone()).collect();
+
+            items.push(WorkflowTypeInfo {
+                workflow_type,
+                total_runs,
+                active_runs,
+                task_queues,
+            });
+        }
+
+        let has_more = items.len() == limit as usize;
+        let next_cursor = items.last().map(|t| t.workflow_type.clone());
+
+        Ok(PaginatedResult {
+            items,
+            next_cursor,
+            has_more,
         })
     }
 
     async fn list_distinct_namespaces(&self) -> Result<Vec<String>, StoreError> {
         let namespaces = sqlx::query_scalar!(
             r#"
-            SELECT DISTINCT namespace_id
+            SELECT DISTINCT namespace
             FROM kagzi.namespaces
-            WHERE deleted_at IS NULL
-            ORDER BY namespace_id ASC
+            ORDER BY namespace ASC
             "#
         )
         .fetch_all(&self.pool)
-        .await
-        .map_err(StoreError::from)?;
+        .await?;
 
         Ok(namespaces)
     }
 
-    async fn get_or_create(&self, namespace_id: &str) -> Result<Namespace, StoreError> {
+    async fn get_or_create(&self, namespace: &str) -> Result<Namespace, StoreError> {
         // First try to find existing namespace
-        if let Some(namespace) = self.find_by_id(namespace_id, false).await? {
-            return Ok(namespace);
+        if let Some(ns) = self.find_by_id(namespace).await? {
+            return Ok(ns);
         }
 
         // Namespace doesn't exist, create it
         let now = Utc::now();
-        let namespace = sqlx::query_as!(
+        let ns = sqlx::query_as!(
             Namespace,
             r#"
-            INSERT INTO kagzi.namespaces (namespace_id, display_name, description, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $4)
-            ON CONFLICT (namespace_id) DO UPDATE
-            SET updated_at = $4
-            RETURNING namespace_id, display_name, description, created_at, updated_at, deleted_at
+            INSERT INTO kagzi.namespaces (namespace, display_name, description, enabled, created_at, updated_at)
+            VALUES ($1, $2, NULL, TRUE, $3, $3)
+            ON CONFLICT (namespace) DO UPDATE
+            SET updated_at = $3
+            RETURNING id, namespace, display_name, description, enabled, created_at, updated_at
             "#,
-            namespace_id,
-            namespace_id, // Use namespace_id as display_name for auto-created namespaces
-            Option::<String>::None, // No description for auto-created namespaces
+            namespace,
+            namespace, // Use namespace as display_name for auto-created namespaces
             now
         )
         .fetch_one(&self.pool)
-        .await
-        .map_err(StoreError::from)?;
+        .await?;
 
-        Ok(namespace)
+        Ok(ns)
     }
 }

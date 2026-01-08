@@ -67,7 +67,7 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
         run_id: Uuid,
         allow_terminal: bool,
     ) -> Result<String, Status> {
-        let namespace_id = self
+        let namespace = self
             .store
             .workflows()
             .get_namespace(run_id)
@@ -78,7 +78,7 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
         let workflow_check = self
             .store
             .workflows()
-            .check_status(run_id, &namespace_id)
+            .check_status(run_id, &namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -100,7 +100,7 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
             )));
         }
 
-        Ok(namespace_id)
+        Ok(namespace)
     }
 }
 
@@ -117,18 +117,18 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
         let workflow_types = req.workflow_types;
 
         // Clone for logging after worker_id is assigned
-        let namespace_for_log = namespace_id.clone();
+        let namespace_for_log = namespace.clone();
         let workflows_for_log = workflow_types.clone();
 
         let worker_id = self
             .store
             .workers()
             .register(RegisterWorkerParams {
-                namespace_id,
+                namespace,
                 task_queue: req.task_queue,
                 workflow_types,
                 hostname: Some(req.hostname).filter(|s| !s.is_empty()),
@@ -241,22 +241,22 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Worker not found", "worker", req.worker_id.clone()))?;
 
-        let namespace_id = worker.namespace_id;
+        let namespace = worker.namespace;
 
         if req.drain {
             self.store
                 .workers()
-                .start_drain(worker_id, &namespace_id)
+                .start_drain(worker_id, &namespace)
                 .await
                 .map_err(map_store_error)?;
-            info!(worker_id = %worker_id, namespace = %namespace_id, "Worker draining");
+            info!(worker_id = %worker_id, namespace = %namespace, "Worker draining");
         } else {
             self.store
                 .workers()
-                .deregister(worker_id, &namespace_id)
+                .deregister(worker_id, &namespace)
                 .await
                 .map_err(map_store_error)?;
-            info!(worker_id = %worker_id, namespace = %namespace_id, "Worker disconnected");
+            info!(worker_id = %worker_id, namespace = %namespace, "Worker disconnected");
         }
 
         Ok(Response::new(DeregisterResponse { drained: req.drain }))
@@ -282,7 +282,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let worker = self
             .store
@@ -294,7 +294,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 precondition_failed_error("Worker not registered or offline. Call Register first.")
             })?;
 
-        if worker.namespace_id != namespace_id || worker.task_queue != req.task_queue {
+        if worker.namespace != namespace || worker.task_queue != req.task_queue {
             return Err(precondition_failed_error(
                 "Worker not registered for the requested namespace/task_queue",
             ));
@@ -333,7 +333,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 .store
                 .workflows()
                 .poll_workflow(
-                    &namespace_id,
+                    &namespace,
                     &req.task_queue,
                     &req.worker_id,
                     &effective_types,
@@ -370,7 +370,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 }));
             }
 
-            let mut rx = self.queue.subscribe(&namespace_id, &req.task_queue);
+            let mut rx = self.queue.subscribe(&namespace, &req.task_queue);
 
             let notification_result = tokio::time::timeout(remaining, rx.recv()).await;
 
@@ -472,7 +472,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let namespace_id = self.validate_workflow_action(run_id, false).await?;
+        let namespace = self.validate_workflow_action(run_id, false).await?;
 
         let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
@@ -488,7 +488,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .steps()
             .list(kagzi_store::ListStepsParams {
                 run_id,
-                namespace_id,
+                namespace,
                 step_id: Some(req.step_id.clone()),
                 page_size: 1,
                 cursor: None,

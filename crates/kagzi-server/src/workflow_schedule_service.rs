@@ -75,7 +75,7 @@ fn workflow_run_to_schedule_proto(w: WorkflowRun) -> Result<WorkflowSchedule, St
 
     Ok(WorkflowSchedule {
         schedule_id: w.run_id.to_string(),
-        namespace_id: w.namespace_id,
+        namespace: w.namespace,
         task_queue: w.task_queue,
         workflow_type: w.workflow_type,
         cron_expr,
@@ -120,12 +120,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let workflow_type = require_non_empty(req.workflow_type, "workflow_type")?;
         let cron_expr = require_non_empty(req.cron_expr, "cron_expr")?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         // Ensure namespace exists (auto-create if it doesn't)
         self.store
             .namespaces()
-            .get_or_create(&namespace_id)
+            .get_or_create(&namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -143,7 +143,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 task_queue,
                 workflow_type,
                 input,
-                namespace_id: namespace_id.clone(),
+                namespace: namespace.clone(),
                 version: req.version.unwrap_or_default(),
                 retry_policy: None,
                 cron_expr: Some(cron_expr),
@@ -156,7 +156,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let mut template = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| invalid_argument_error("Failed to create schedule"))?;
@@ -186,12 +186,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let schedule = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .map(workflow_run_to_schedule_proto)
@@ -208,7 +208,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         request: Request<ListWorkflowSchedulesRequest>,
     ) -> Result<Response<ListWorkflowSchedulesResponse>, Status> {
         let req = request.into_inner();
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let page_size = req
             .page
@@ -231,7 +231,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .store
             .workflows()
             .list(ListWorkflowsParams {
-                namespace_id: namespace_id.clone(),
+                namespace: namespace.clone(),
                 filter_status: Some("SCHEDULED".to_string()),
                 page_size,
                 cursor,
@@ -269,12 +269,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let current = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| {
@@ -329,7 +329,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let schedule = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .map(workflow_run_to_schedule_proto)
@@ -349,12 +349,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let result = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -386,12 +386,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let schedule = self
             .store
             .workflows()
-            .find_by_id(schedule_id, &namespace_id)
+            .find_by_id(schedule_id, &namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
@@ -406,7 +406,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 task_queue: schedule.task_queue.clone(),
                 workflow_type: schedule.workflow_type.clone(),
                 input: schedule.input.clone(),
-                namespace_id: namespace_id.clone(),
+                namespace: namespace.clone(),
                 version: schedule.version.clone().unwrap_or_default(),
                 retry_policy: None,
                 cron_expr: None,
@@ -428,12 +428,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let mut schedule = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
@@ -458,12 +458,12 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let run_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let mut schedule = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Schedule not found", "schedule", req.schedule_id))?;
@@ -499,7 +499,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let schedule_id = uuid::Uuid::parse_str(&req.schedule_id)
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let page_size = req
             .page
@@ -522,7 +522,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .store
             .workflows()
             .list(ListWorkflowsParams {
-                namespace_id,
+                namespace,
                 filter_status: None,
                 page_size,
                 cursor,

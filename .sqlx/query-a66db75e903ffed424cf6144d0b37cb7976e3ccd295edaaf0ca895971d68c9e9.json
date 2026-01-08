@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO kagzi.workers (\n                namespace, task_queue, hostname, pid, version,\n                workflow_types, labels, status, last_heartbeat_at, deregistered_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, 'ONLINE', NOW(), NULL)\n            ON CONFLICT (namespace, task_queue, hostname, pid) WHERE status != 'OFFLINE'\n            DO UPDATE SET\n                version = EXCLUDED.version,\n                workflow_types = EXCLUDED.workflow_types,\n                labels = EXCLUDED.labels,\n                status = 'ONLINE',\n                deregistered_at = NULL,\n                last_heartbeat_at = NOW()\n            RETURNING worker_id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "worker_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "TextArray",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a66db75e903ffed424cf6144d0b37cb7976e3ccd295edaaf0ca895971d68c9e9"
+}

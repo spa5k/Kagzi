@@ -374,7 +374,7 @@ pub async fn fetch_workflow(
     let resp = client
         .get_workflow(Request::new(GetWorkflowRequest {
             run_id: run_id.to_string(),
-            namespace_id: "default".to_string(),
+            namespace: "default".to_string(),
         }))
         .await?;
     resp.into_inner()

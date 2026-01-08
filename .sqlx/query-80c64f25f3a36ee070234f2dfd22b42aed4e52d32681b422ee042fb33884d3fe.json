@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE kagzi.workflow_runs\n        SET status = 'CANCELLED',\n            finished_at = NOW(),\n            locked_by = NULL,\n            available_at = NULL\n        WHERE run_id = $1 \n          AND namespace = $2\n          AND status IN ('PENDING', 'SLEEPING')\n        RETURNING run_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "80c64f25f3a36ee070234f2dfd22b42aed4e52d32681b422ee042fb33884d3fe"
+}

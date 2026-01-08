@@ -37,7 +37,7 @@ enum WorkflowStatus {
 
 // Workflow represents a workflow execution instance with its current state and metadata.
 message Workflow {
-  string namespace_id = 1;
+  string namespace = 1;
   string run_id = 2;
   string external_id = 3;
   string task_queue = 4;
@@ -63,7 +63,7 @@ message Workflow {
 
 // StartWorkflowRequest initiates a workflow with idempotency via external_id.
 message StartWorkflowRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string external_id = 2;
   string task_queue = 3;
   string workflow_type = 4;
@@ -79,7 +79,7 @@ message StartWorkflowResponse {
 }
 
 message GetWorkflowRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string run_id = 2;
 }
 
@@ -89,7 +89,7 @@ message GetWorkflowResponse {
 
 // ListWorkflowsRequest supports filtering by status, type, queue, and date range.
 message ListWorkflowsRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   optional WorkflowStatus status_filter = 2;
   PageRequest page = 3;
   optional string workflow_type = 4;
@@ -104,7 +104,7 @@ message ListWorkflowsResponse {
 }
 
 message CancelWorkflowRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string run_id = 2;
 }
 
@@ -115,7 +115,7 @@ message CancelWorkflowResponse {
 }
 
 message RetryWorkflowRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string run_id = 2;
 }
 
@@ -126,7 +126,7 @@ message RetryWorkflowResponse {
 }
 
 message GetWorkflowByExternalIdRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string external_id = 2;
 }
 
@@ -135,7 +135,7 @@ message GetWorkflowByExternalIdResponse {
 }
 
 message TerminateWorkflowRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   string run_id = 2;
   string reason = 3;
 }

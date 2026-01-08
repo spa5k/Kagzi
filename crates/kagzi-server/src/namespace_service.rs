@@ -1,9 +1,9 @@
 use kagzi_proto::kagzi::namespace_service_server::NamespaceService;
 use kagzi_proto::kagzi::{
-    CreateNamespaceRequest, CreateNamespaceResponse, DeleteNamespaceRequest,
-    DeleteNamespaceResponse, DeletionMode, GetNamespaceRequest, GetNamespaceResponse,
-    ListNamespacesRequest, ListNamespacesResponse, Namespace as ProtoNamespace, ResourceCount,
-    UpdateNamespaceRequest, UpdateNamespaceResponse,
+    CreateNamespaceRequest, CreateNamespaceResponse, DisableNamespaceRequest,
+    DisableNamespaceResponse, EnableNamespaceRequest, EnableNamespaceResponse, GetNamespaceRequest,
+    GetNamespaceResponse, ListNamespacesRequest, ListNamespacesResponse,
+    Namespace as ProtoNamespace, UpdateNamespaceRequest, UpdateNamespaceResponse,
 };
 use kagzi_store::postgres::PgStore;
 use kagzi_store::repository::NamespaceRepository;
@@ -36,16 +36,16 @@ impl NamespaceService for NamespaceServiceImpl {
     ) -> Result<Response<CreateNamespaceResponse>, Status> {
         let req = request.into_inner();
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
         let display_name = require_non_empty(req.display_name, "display_name")?;
 
         let params = kagzi_store::models::CreateNamespace {
-            namespace_id,
+            namespace,
             display_name,
             description: req.description,
         };
 
-        let namespace = self
+        let ns = self
             .store
             .namespaces()
             .create(params)
@@ -53,7 +53,7 @@ impl NamespaceService for NamespaceServiceImpl {
             .map_err(map_store_error)?;
 
         Ok(Response::new(CreateNamespaceResponse {
-            namespace: Some(namespace_to_proto(namespace)?),
+            namespace: Some(namespace_to_proto(ns)?),
         }))
     }
 
@@ -63,24 +63,24 @@ impl NamespaceService for NamespaceServiceImpl {
         request: Request<GetNamespaceRequest>,
     ) -> Result<Response<GetNamespaceResponse>, Status> {
         let req = request.into_inner();
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
-        let namespace = self
+        let ns = self
             .store
             .namespaces()
-            .find_by_id(&namespace_id, false)
+            .find_by_id(&namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| {
                 not_found_error(
-                    format!("Namespace '{}' not found", namespace_id),
+                    format!("Namespace '{}' not found", namespace),
                     "namespace",
-                    &namespace_id,
+                    &namespace,
                 )
             })?;
 
         Ok(Response::new(GetNamespaceResponse {
-            namespace: Some(namespace_to_proto(namespace)?),
+            namespace: Some(namespace_to_proto(ns)?),
         }))
     }
 
@@ -104,7 +104,7 @@ impl NamespaceService for NamespaceServiceImpl {
         let result = self
             .store
             .namespaces()
-            .list(page_size, cursor, req.include_deleted)
+            .list(page_size, cursor)
             .await
             .map_err(map_store_error)?;
 
@@ -129,125 +129,88 @@ impl NamespaceService for NamespaceServiceImpl {
         request: Request<UpdateNamespaceRequest>,
     ) -> Result<Response<UpdateNamespaceResponse>, Status> {
         let req = request.into_inner();
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
-        let namespace = self
+        let params = kagzi_store::models::UpdateNamespace {
+            display_name: req.display_name,
+            description: req.description,
+        };
+
+        let ns = self
             .store
             .namespaces()
-            .update(&namespace_id, req.display_name, req.description)
+            .update(&namespace, params)
             .await
             .map_err(map_store_error)?;
 
         Ok(Response::new(UpdateNamespaceResponse {
-            namespace: Some(namespace_to_proto(namespace)?),
+            namespace: Some(namespace_to_proto(ns)?),
         }))
     }
 
     #[instrument(skip(self, request))]
-    async fn delete_namespace(
+    async fn enable_namespace(
         &self,
-        request: Request<DeleteNamespaceRequest>,
-    ) -> Result<Response<DeleteNamespaceResponse>, Status> {
+        request: Request<EnableNamespaceRequest>,
+    ) -> Result<Response<EnableNamespaceResponse>, Status> {
         let req = request.into_inner();
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
-        let mode = DeletionMode::try_from(req.mode).unwrap_or(DeletionMode::FailIfResources);
+        self.store
+            .namespaces()
+            .enable(&namespace)
+            .await
+            .map_err(map_store_error)?;
 
-        match mode {
-            DeletionMode::FailIfResources | DeletionMode::Unspecified => {
-                // Check for resources first
-                let resources = self
-                    .store
-                    .namespaces()
-                    .count_resources(&namespace_id)
-                    .await
-                    .map_err(map_store_error)?;
+        let ns = self
+            .store
+            .namespaces()
+            .find_by_id(&namespace)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Namespace not found", "namespace", &namespace))?;
 
-                if resources.has_resources() {
-                    return Ok(Response::new(DeleteNamespaceResponse {
-                        deleted: false,
-                        message: format!(
-                            "Cannot delete namespace '{}': {} workflows, {} workers, {} schedules exist",
-                            namespace_id,
-                            resources.workflows,
-                            resources.workers,
-                            resources.schedules
-                        ),
-                        error: Some(kagzi_proto::kagzi::ErrorDetail {
-                            code: kagzi_proto::kagzi::ErrorCode::PreconditionFailed as i32,
-                            message: "Namespace has active resources".to_string(),
-                            non_retryable: true,
-                            retry_after_ms: 0,
-                            subject: "namespace".to_string(),
-                            subject_id: namespace_id.clone(),
-                            metadata: Default::default(),
-                        }),
-                        resources: Some(ResourceCount {
-                            workflows: resources.workflows,
-                            workers: resources.workers,
-                            schedules: resources.schedules,
-                        }),
-                    }));
-                }
+        Ok(Response::new(EnableNamespaceResponse {
+            namespace: Some(namespace_to_proto(ns)?),
+        }))
+    }
 
-                // No resources, proceed with hard delete
-                let deleted = self
-                    .store
-                    .namespaces()
-                    .delete(&namespace_id)
-                    .await
-                    .map_err(map_store_error)?;
+    #[instrument(skip(self, request))]
+    async fn disable_namespace(
+        &self,
+        request: Request<DisableNamespaceRequest>,
+    ) -> Result<Response<DisableNamespaceResponse>, Status> {
+        let req = request.into_inner();
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
-                Ok(Response::new(DeleteNamespaceResponse {
-                    deleted,
-                    message: if deleted {
-                        format!("Namespace '{}' deleted successfully", namespace_id)
-                    } else {
-                        format!("Namespace '{}' not found", namespace_id)
-                    },
-                    error: None,
-                    resources: None,
-                }))
-            }
-            DeletionMode::SoftDelete => {
-                let deleted = self
-                    .store
-                    .namespaces()
-                    .soft_delete(&namespace_id)
-                    .await
-                    .map_err(map_store_error)?;
+        self.store
+            .namespaces()
+            .disable(&namespace)
+            .await
+            .map_err(map_store_error)?;
 
-                Ok(Response::new(DeleteNamespaceResponse {
-                    deleted,
-                    message: if deleted {
-                        format!("Namespace '{}' soft-deleted successfully", namespace_id)
-                    } else {
-                        format!("Namespace '{}' not found", namespace_id)
-                    },
-                    error: None,
-                    resources: None,
-                }))
-            }
-            DeletionMode::Cascade => {
-                // CASCADE deletion: delete all resources first, then namespace
-                // Note: This is dangerous and should be used with caution
+        let ns = self
+            .store
+            .namespaces()
+            .find_by_id(&namespace)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| not_found_error("Namespace not found", "namespace", &namespace))?;
 
-                // For now, return an error as CASCADE requires careful implementation
-                // to handle foreign key constraints and transaction management
-                return Err(Status::unimplemented(
-                    "CASCADE deletion mode is not yet implemented. Use SOFT_DELETE or manually delete resources first.",
-                ));
-            }
-        }
+        Ok(Response::new(DisableNamespaceResponse {
+            namespace: Some(namespace_to_proto(ns)?),
+        }))
     }
 }
 
 /// Convert store Namespace model to proto Namespace
 fn namespace_to_proto(namespace: kagzi_store::models::Namespace) -> Result<ProtoNamespace, Status> {
     Ok(ProtoNamespace {
-        namespace_id: namespace.namespace_id,
+        id: namespace.id.to_string(),
+        namespace: namespace.namespace,
         display_name: namespace.display_name,
         description: namespace.description.unwrap_or_default(),
+        enabled: namespace.enabled,
         created_at: Some(timestamp_from(namespace.created_at)),
         updated_at: Some(timestamp_from(namespace.updated_at)),
     })

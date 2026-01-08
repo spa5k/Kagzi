@@ -7,7 +7,7 @@ use crate::models::WorkflowRun;
 #[derive(sqlx::FromRow)]
 pub(super) struct WorkflowRunRow {
     pub run_id: Uuid,
-    pub namespace_id: String,
+    pub namespace: String,
     pub external_id: String,
     pub task_queue: String,
     pub workflow_type: String,
@@ -38,7 +38,7 @@ impl WorkflowRunRow {
 
         Ok(WorkflowRun {
             run_id: self.run_id,
-            namespace_id: self.namespace_id,
+            namespace: self.namespace,
             external_id: self.external_id,
             task_queue: self.task_queue,
             workflow_type: self.workflow_type,
@@ -95,7 +95,7 @@ pub(super) async fn set_failed_tx(
             locked_by = NULL,
             available_at = NULL
         WHERE run_id = $1 AND status = 'RUNNING'
-        RETURNING namespace_id, task_queue, workflow_type
+        RETURNING namespace, task_queue, workflow_type
         "#,
         run_id,
         error
@@ -103,5 +103,5 @@ pub(super) async fn set_failed_tx(
     .fetch_optional(tx.as_mut())
     .await?;
 
-    Ok(row.map(|r| (r.namespace_id, r.task_queue, r.workflow_type)))
+    Ok(row.map(|r| (r.namespace, r.task_queue, r.workflow_type)))
 }

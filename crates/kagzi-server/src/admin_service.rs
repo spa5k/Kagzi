@@ -7,8 +7,8 @@ use kagzi_proto::kagzi::{
     ListWorkflowTypesRequest, ListWorkflowTypesResponse, PageInfo, ServingStatus, WorkerStatus,
 };
 use kagzi_store::{
-    PgStore, StepRepository, WorkerRepository, WorkerStatus as StoreWorkerStatus,
-    WorkflowRepository,
+    NamespaceRepository, PgStore, StepRepository, WorkerRepository,
+    WorkerStatus as StoreWorkerStatus, WorkflowRepository,
 };
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
@@ -52,10 +52,10 @@ impl AdminService for AdminServiceImpl {
         let req = request.into_inner();
         let page = req.page.unwrap_or_default();
 
-        if req.namespace_id.is_empty() {
-            return Err(invalid_argument_error("namespace_id is required"));
+        if req.namespace.is_empty() {
+            return Err(invalid_argument_error("namespace is required"));
         }
-        let namespace_id = req.namespace_id;
+        let namespace = req.namespace;
 
         let page_size = normalize_page_size(page.page_size, 20, 100);
 
@@ -76,7 +76,7 @@ impl AdminService for AdminServiceImpl {
             .store
             .workers()
             .list(kagzi_store::ListWorkersParams {
-                namespace_id: namespace_id.clone(),
+                namespace: namespace.clone(),
                 task_queue: task_queue.clone().filter(|t| !t.is_empty()),
                 filter_status,
                 page_size,
@@ -94,7 +94,7 @@ impl AdminService for AdminServiceImpl {
             self.store
                 .workers()
                 .count(
-                    &namespace_id,
+                    &namespace,
                     task_queue.as_deref().filter(|s| !s.is_empty()),
                     filter_status,
                 )
@@ -181,7 +181,7 @@ impl AdminService for AdminServiceImpl {
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
         // Discover namespace from run_id to ensure proper isolation
-        let namespace_id = self
+        let namespace = self
             .store
             .workflows()
             .get_namespace(run_id)
@@ -215,7 +215,7 @@ impl AdminService for AdminServiceImpl {
             .steps()
             .list(kagzi_store::ListStepsParams {
                 run_id,
-                namespace_id,
+                namespace,
                 step_id: step_name,
                 page_size,
                 cursor,
@@ -299,21 +299,44 @@ impl AdminService for AdminServiceImpl {
         &self,
         request: Request<GetStatsRequest>,
     ) -> Result<Response<GetStatsResponse>, Status> {
-        let _req = request.into_inner();
+        let req = request.into_inner();
 
-        // Return default stats for now - full implementation would require additional store methods
+        // Use "default" namespace if not specified
+        let namespace = req.namespace.unwrap_or_else(|| "default".to_string());
+
+        let stats = self
+            .store
+            .namespaces()
+            .get_stats(&namespace)
+            .await
+            .map_err(map_store_error)?;
+
+        // Convert Vec<WorkflowStatusCount> to map
+        let workflows_by_status: std::collections::HashMap<String, i64> = stats
+            .workflows_by_status
+            .into_iter()
+            .map(|s| (s.status, s.count))
+            .collect();
+
+        // Convert Vec<WorkflowTypeCount> to map
+        let workflows_by_type: std::collections::HashMap<String, i64> = stats
+            .workflows_by_type
+            .into_iter()
+            .map(|t| (t.workflow_type, t.total_runs))
+            .collect();
+
         Ok(Response::new(GetStatsResponse {
-            total_workflows: 0,
-            pending_workflows: 0,
-            running_workflows: 0,
-            completed_workflows: 0,
-            failed_workflows: 0,
-            total_workers: 0,
-            online_workers: 0,
-            total_schedules: 0,
-            enabled_schedules: 0,
-            workflows_by_status: Default::default(),
-            workflows_by_type: Default::default(),
+            total_workflows: stats.total_workflows,
+            pending_workflows: stats.pending_workflows,
+            running_workflows: stats.running_workflows,
+            completed_workflows: stats.completed_workflows,
+            failed_workflows: stats.failed_workflows,
+            total_workers: stats.total_workers,
+            online_workers: stats.online_workers,
+            total_schedules: stats.total_schedules,
+            enabled_schedules: stats.enabled_schedules,
+            workflows_by_status,
+            workflows_by_type,
         }))
     }
 
@@ -335,7 +358,7 @@ impl AdminService for AdminServiceImpl {
 
         self.store
             .workers()
-            .start_drain(worker_id, &worker.namespace_id)
+            .start_drain(worker_id, &worker.namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -351,24 +374,24 @@ impl AdminService for AdminServiceImpl {
         request: Request<GetQueueDepthRequest>,
     ) -> Result<Response<GetQueueDepthResponse>, Status> {
         let req = request.into_inner();
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let pending_count = self
             .store
             .workflows()
-            .count(&namespace_id, Some("PENDING"))
+            .count(&namespace, Some("PENDING"))
             .await
             .map_err(map_store_error)?;
         let running_count = self
             .store
             .workflows()
-            .count(&namespace_id, Some("RUNNING"))
+            .count(&namespace, Some("RUNNING"))
             .await
             .map_err(map_store_error)?;
         let sleeping_count = self
             .store
             .workflows()
-            .count(&namespace_id, Some("SLEEPING"))
+            .count(&namespace, Some("SLEEPING"))
             .await
             .map_err(map_store_error)?;
 
@@ -385,14 +408,41 @@ impl AdminService for AdminServiceImpl {
         request: Request<ListWorkflowTypesRequest>,
     ) -> Result<Response<ListWorkflowTypesResponse>, Status> {
         let req = request.into_inner();
-        let _namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
-        // For now, return an empty list - this would need to be implemented in the store
+        let page_req = req
+            .page
+            .ok_or_else(|| invalid_argument_error("page is required"))?;
+        let page_size = normalize_page_size(page_req.page_size, 20, 100);
+        let cursor = if page_req.page_token.is_empty() {
+            None
+        } else {
+            Some(page_req.page_token)
+        };
+
+        let result = self
+            .store
+            .namespaces()
+            .list_workflow_types(&namespace, page_size, cursor)
+            .await
+            .map_err(map_store_error)?;
+
+        let workflow_types: Vec<kagzi_proto::kagzi::WorkflowTypeInfo> = result
+            .items
+            .into_iter()
+            .map(|info| kagzi_proto::kagzi::WorkflowTypeInfo {
+                workflow_type: info.workflow_type,
+                total_runs: info.total_runs,
+                active_runs: info.active_runs,
+                task_queues: info.task_queues,
+            })
+            .collect();
+
         Ok(Response::new(ListWorkflowTypesResponse {
-            workflow_types: vec![],
+            workflow_types,
             page: Some(PageInfo {
-                next_page_token: String::new(),
-                has_more: false,
+                next_page_token: result.next_cursor.unwrap_or_default(),
+                has_more: result.has_more,
                 total_count: 0,
             }),
         }))

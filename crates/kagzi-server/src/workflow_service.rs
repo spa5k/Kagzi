@@ -43,7 +43,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         fields(
             workflow_type = tracing::field::Empty,
             external_id = tracing::field::Empty,
-            namespace_id = tracing::field::Empty,
+            namespace = tracing::field::Empty,
         )
     )]
     async fn start_workflow(
@@ -64,13 +64,13 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let input_bytes = payload_to_bytes(req.input);
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
-        tracing::Span::current().record("namespace_id", &namespace_id);
+        let namespace = require_non_empty(req.namespace, "namespace")?;
+        tracing::Span::current().record("namespace", &namespace);
 
         // Ensure namespace exists (auto-create if it doesn't)
         self.store
             .namespaces()
-            .get_or_create(&namespace_id)
+            .get_or_create(&namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -91,7 +91,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
                 task_queue: task_queue.clone(),
                 workflow_type,
                 input: input_bytes,
-                namespace_id: namespace_id.clone(),
+                namespace: namespace.clone(),
                 version,
                 retry_policy: merge_proto_policy(req.retry_policy, None),
                 cron_expr: None,
@@ -103,7 +103,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             Ok(id) => (id, false),
             Err(ref e) if e.is_unique_violation() => {
                 let existing_id = workflows
-                    .find_active_by_external_id(&namespace_id, &external_id)
+                    .find_active_by_external_id(&namespace, &external_id)
                     .await
                     .map_err(map_store_error)?
                     .ok_or_else(|| map_store_error(create_result.unwrap_err()))?;
@@ -113,7 +113,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         };
 
         if !already_exists {
-            let _ = self.queue.notify(&namespace_id, &task_queue).await;
+            let _ = self.queue.notify(&namespace, &task_queue).await;
         }
 
         Ok(Response::new(StartWorkflowResponse {
@@ -131,12 +131,12 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -149,8 +149,8 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             }
             None => Err(not_found_error(
                 format!(
-                    "Workflow not found: run_id={}, namespace_id={}",
-                    run_id, namespace_id
+                    "Workflow not found: run_id={}, namespace={}",
+                    run_id, namespace
                 ),
                 "workflow",
                 run_id.to_string(),
@@ -158,7 +158,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         }
     }
 
-    #[instrument(skip(self, request), fields(namespace_id = tracing::field::Empty))]
+    #[instrument(skip(self, request), fields(namespace = tracing::field::Empty))]
     async fn list_workflows(
         &self,
         request: Request<ListWorkflowsRequest>,
@@ -167,9 +167,9 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let req = request.into_inner();
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
-        tracing::Span::current().record("namespace_id", &namespace_id);
+        tracing::Span::current().record("namespace", &namespace);
 
         let page = req.page.unwrap_or_default();
         let page_size = normalize_page_size(page.page_size, 20, 100);
@@ -190,13 +190,13 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let filter_status_for_list = filter_status.clone();
 
-        let namespace_for_list = namespace_id.clone();
+        let namespace_for_list = namespace.clone();
 
         let result = self
             .store
             .workflows()
             .list(ListWorkflowsParams {
-                namespace_id: namespace_for_list,
+                namespace: namespace_for_list,
                 filter_status: filter_status_for_list,
                 page_size,
                 cursor,
@@ -208,7 +208,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let total_count = if page.include_total_count {
             self.store
                 .workflows()
-                .count(&namespace_id, filter_status.as_deref())
+                .count(&namespace, filter_status.as_deref())
                 .await
                 .map_err(map_store_error)?
         } else {
@@ -246,12 +246,12 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let workflows = self.store.workflows();
 
         let cancelled = workflows
-            .cancel(run_id, &namespace_id)
+            .cancel(run_id, &namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -262,7 +262,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             }))
         } else {
             let exists = workflows
-                .check_exists(run_id, &namespace_id)
+                .check_exists(run_id, &namespace)
                 .await
                 .map_err(map_store_error)?;
 
@@ -274,8 +274,8 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             } else {
                 Err(not_found_error(
                     format!(
-                        "Workflow not found: run_id={}, namespace_id={}",
-                        run_id, namespace_id
+                        "Workflow not found: run_id={}, namespace={}",
+                        run_id, namespace
                     ),
                     "workflow",
                     run_id.to_string(),
@@ -291,12 +291,12 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
     ) -> Result<Response<GetWorkflowByExternalIdResponse>, Status> {
         let req = request.into_inner();
         let external_id = require_non_empty(req.external_id, "external_id")?;
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let run_id = self
             .store
             .workflows()
-            .find_active_by_external_id(&namespace_id, &external_id)
+            .find_active_by_external_id(&namespace, &external_id)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Workflow not found", "workflow", external_id))?;
@@ -304,7 +304,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
@@ -325,12 +325,12 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let workflow = self
             .store
             .workflows()
-            .find_by_id(run_id, &namespace_id)
+            .find_by_id(run_id, &namespace)
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
@@ -353,7 +353,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
                 task_queue: workflow.task_queue.clone(),
                 workflow_type: workflow.workflow_type.clone(),
                 input: workflow.input.clone(),
-                namespace_id: namespace_id.clone(),
+                namespace: namespace.clone(),
                 version: workflow.version.clone().unwrap_or_default(),
                 retry_policy: None,
                 cron_expr: None,
@@ -377,7 +377,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        let _namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let _namespace = require_non_empty(req.namespace, "namespace")?;
 
         let workflows = self.store.workflows();
 
