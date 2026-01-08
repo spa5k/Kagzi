@@ -12,6 +12,7 @@ use kagzi_proto::kagzi::{
     UpdateWorkflowScheduleResponse, WorkflowSchedule,
 };
 use kagzi_store::{CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowRepository, WorkflowRun};
+use kagzi_store::repository::NamespaceRepository;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -120,6 +121,13 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let cron_expr = require_non_empty(req.cron_expr, "cron_expr")?;
 
         let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+
+        // Ensure namespace exists (auto-create if it doesn't)
+        self.store
+            .namespaces()
+            .get_or_create(&namespace_id)
+            .await
+            .map_err(map_store_error)?;
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
 

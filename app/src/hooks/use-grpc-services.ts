@@ -11,6 +11,14 @@ import {
   ListWorkersRequest,
   ListWorkflowTypesRequest,
 } from "@/gen/admin_pb";
+import { NamespaceService } from "@/gen/namespace_connect";
+import {
+  CreateNamespaceRequest,
+  DeleteNamespaceRequest,
+  GetNamespaceRequest,
+  ListNamespacesRequest,
+  UpdateNamespaceRequest,
+} from "@/gen/namespace_pb";
 import { WorkerService } from "@/gen/worker_connect";
 import { WorkflowService } from "@/gen/workflow_connect";
 import type {
@@ -42,6 +50,7 @@ const transport = getGrpcTransport();
 const workflowClient = createPromiseClient(WorkflowService, transport);
 const adminClient = createPromiseClient(AdminService, transport);
 const scheduleClient = createPromiseClient(WorkflowScheduleService, transport);
+const namespaceClient = createPromiseClient(NamespaceService, transport);
 
 // ============================================
 // WORKFLOW SERVICE HOOKS
@@ -396,6 +405,74 @@ export function useListScheduleRuns(request: ListScheduleRunsRequest) {
 // Note: Worker service is typically used by workers themselves,
 // not by the admin UI, but included for completeness
 
+// ============================================
+// NAMESPACE SERVICE HOOKS
+// ============================================
+
+/**
+ * Hook to list all namespaces
+ */
+export function useListNamespaces(request: ListNamespacesRequest = new ListNamespacesRequest()) {
+  return useTanstackQuery({
+    queryKey: ["namespaces", request.includeDeleted],
+    queryFn: () => namespaceClient.listNamespaces(request),
+  });
+}
+
+/**
+ * Hook to get a namespace by ID
+ */
+export function useGetNamespace(request: GetNamespaceRequest) {
+  return useTanstackQuery({
+    queryKey: ["namespace", request.namespaceId],
+    queryFn: () => namespaceClient.getNamespace(request),
+    enabled: !!request.namespaceId,
+  });
+}
+
+/**
+ * Hook to create a new namespace
+ */
+export function useCreateNamespace() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: CreateNamespaceRequest) => namespaceClient.createNamespace(request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["namespaces"] });
+    },
+  });
+}
+
+/**
+ * Hook to update a namespace
+ */
+export function useUpdateNamespace() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: UpdateNamespaceRequest) => namespaceClient.updateNamespace(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespaceId] });
+      queryClient.invalidateQueries({ queryKey: ["namespaces"] });
+    },
+  });
+}
+
+/**
+ * Hook to delete a namespace
+ */
+export function useDeleteNamespace() {
+  const queryClient = useQueryClient();
+
+  return useTanstackMutation({
+    mutationFn: (request: DeleteNamespaceRequest) => namespaceClient.deleteNamespace(request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["namespaces"] });
+    },
+  });
+}
+
 /**
  * Export all service definitions for advanced use cases
  */
@@ -404,4 +481,5 @@ export const services = {
   admin: AdminService,
   schedule: WorkflowScheduleService,
   worker: WorkerService,
+  namespace: NamespaceService,
 };

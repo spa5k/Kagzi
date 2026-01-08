@@ -13,6 +13,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  GetWorkflowScheduleRequest,
+  ListScheduleRunsRequest,
+  PauseWorkflowScheduleRequest,
+  ResumeWorkflowScheduleRequest,
+  TriggerWorkflowScheduleRequest,
+} from "@/gen/workflow_schedule_pb";
+import {
   useDeleteSchedule,
   useGetSchedule,
   useListScheduleRuns,
@@ -20,13 +27,7 @@ import {
   useResumeSchedule,
   useTriggerSchedule,
 } from "@/hooks/use-grpc-services";
-import {
-  GetWorkflowScheduleRequest,
-  ListScheduleRunsRequest,
-  PauseWorkflowScheduleRequest,
-  ResumeWorkflowScheduleRequest,
-  TriggerWorkflowScheduleRequest,
-} from "@/gen/workflow_schedule_pb";
+import { useNamespace } from "@/hooks/use-namespace";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import {
@@ -95,6 +96,7 @@ export const Route = createFileRoute("/schedules/$id")({
 function ScheduleDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const { namespace } = useNamespace();
 
   const {
     data: schedule,
@@ -104,7 +106,7 @@ function ScheduleDetailPage() {
   } = useGetSchedule(
     new GetWorkflowScheduleRequest({
       scheduleId: id,
-      namespaceId: "default",
+      namespaceId: namespace,
     }),
   );
 
@@ -115,7 +117,7 @@ function ScheduleDetailPage() {
   } = useListScheduleRuns(
     new ListScheduleRunsRequest({
       scheduleId: id,
-      namespaceId: "default",
+      namespaceId: namespace,
     }),
   );
 
@@ -129,7 +131,7 @@ function ScheduleDetailPage() {
       await triggerSchedule.mutateAsync(
         new TriggerWorkflowScheduleRequest({
           scheduleId: id,
-          namespaceId: "default",
+          namespaceId: namespace,
         }),
       );
       refetchSchedule();
@@ -144,7 +146,7 @@ function ScheduleDetailPage() {
       await pauseSchedule.mutateAsync(
         new PauseWorkflowScheduleRequest({
           scheduleId: id,
-          namespaceId: "default",
+          namespaceId: namespace,
         }),
       );
       refetchSchedule();
@@ -158,7 +160,7 @@ function ScheduleDetailPage() {
       await resumeSchedule.mutateAsync(
         new ResumeWorkflowScheduleRequest({
           scheduleId: id,
-          namespaceId: "default",
+          namespaceId: namespace,
         }),
       );
       refetchSchedule();
@@ -171,7 +173,7 @@ function ScheduleDetailPage() {
     try {
       await deleteSchedule.mutateAsync({
         scheduleId: id,
-        namespaceId: "default",
+        namespaceId: namespace,
       });
       navigate({ to: "/schedules" });
     } catch (error) {

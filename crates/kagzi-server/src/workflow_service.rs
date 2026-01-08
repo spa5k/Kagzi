@@ -10,6 +10,7 @@ use kagzi_queue::QueueNotifier;
 use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, WorkflowCursor, WorkflowRepository,
 };
+use kagzi_store::repository::NamespaceRepository;
 use tonic::{Request, Response, Status};
 use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -65,6 +66,13 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
         tracing::Span::current().record("namespace_id", &namespace_id);
+
+        // Ensure namespace exists (auto-create if it doesn't)
+        self.store
+            .namespaces()
+            .get_or_create(&namespace_id)
+            .await
+            .map_err(map_store_error)?;
 
         let version = if req.version.is_empty() {
             DEFAULT_VERSION.to_string()

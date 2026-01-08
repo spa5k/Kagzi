@@ -1,104 +1,102 @@
+"use client";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar";
-import type { Namespace } from "@/types";
-import { ArrowDown01, Check, ChevronDown, Database, Layers } from "@hugeicons/core-free-icons";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
+import { useNamespace } from "@/hooks/use-namespace";
+import { cn } from "@/lib/utils";
+import { Check, Layers, LoaderCircle } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import * as React from "react";
 
-const HARDCODED_NAMESPACES: Namespace[] = [
-  {
-    id: "default",
-    name: "default",
-    createdAt: new Date(Date.now() - 720 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "production",
-    name: "production",
-    createdAt: new Date(Date.now() - 2160 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "staging",
-    name: "staging",
-    createdAt: new Date(Date.now() - 1440 * 60 * 60 * 1000).toISOString(),
-  },
-];
+export function NamespaceSwitcher() {
+  const { namespace, setNamespace, namespaces, isLoadingNamespaces } = useNamespace();
 
-interface NamespaceSwitcherProps {
-  namespaces?: Namespace[];
-}
-
-export function NamespaceSwitcher({ namespaces = HARDCODED_NAMESPACES }: NamespaceSwitcherProps) {
-  const { isMobile } = useSidebar();
-  const [activeNamespace, setActiveNamespace] = React.useState(namespaces[0]);
-
-  if (!activeNamespace) {
-    return null;
-  }
+  const currentNamespace = namespaces.find((n) => n.namespaceId === namespace);
+  const displayName = currentNamespace?.displayName || currentNamespace?.namespaceId || "Namespace";
+  const isEmpty = !isLoadingNamespaces && namespaces.length === 0;
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
         <DropdownMenu>
-          <DropdownMenuTrigger className="ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground gap-2 rounded-lg p-2 text-left text-sm transition-[width,height,padding] focus-visible:ring-2 data-active:font-medium peer/menu-button flex w-full items-center overflow-hidden outline-hidden group/trigger disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&_svg]:size-4 [&_svg]:shrink-0 h-12 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
-            <div className="flex aspect-square size-8 items-center justify-center rounded-md bg-sidebar-accent text-sidebar-accent-foreground transition-colors group-hover/trigger:bg-sidebar-accent/80">
-              <HugeiconsIcon icon={Layers} className="size-4" />
+          <DropdownMenuTrigger
+            render={
+              <SidebarMenuButton
+                variant="outline"
+                size="lg"
+                className="hover:bg-transparent hover:text-sidebar-foreground hover:border-primary data-[state=open]:border-primary/60 border border-transparent transition-all group"
+              />
+            }
+          >
+            <div
+              className={cn(
+                "flex aspect-square size-8 items-center justify-center rounded-lg transition-all group-hover:bg-primary group-hover:text-primary-foreground",
+                isLoadingNamespaces && "bg-muted text-muted-foreground animate-pulse",
+                isEmpty && "bg-muted/50 text-muted-foreground",
+                !isLoadingNamespaces &&
+                  !isEmpty &&
+                  "bg-sidebar-primary text-sidebar-primary-foreground",
+              )}
+            >
+              {isLoadingNamespaces ? (
+                <HugeiconsIcon icon={LoaderCircle} className="size-4 animate-spin" />
+              ) : (
+                <HugeiconsIcon icon={Layers} className="size-4" />
+              )}
             </div>
-            <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-semibold">{activeNamespace.name}</span>
-              <span className="truncate text-xs">Active Namespace</span>
+            <div className="flex flex-col gap-0.5 leading-none">
+              <span className={cn("font-medium", isLoadingNamespaces && "text-muted-foreground")}>
+                {displayName}
+              </span>
+              <span
+                className={cn("text-xs", isEmpty ? "text-destructive" : "text-muted-foreground")}
+              >
+                {isLoadingNamespaces ? "Loading..." : namespace || "Select namespace"}
+              </span>
             </div>
-            <HugeiconsIcon icon={ChevronDown} className="ml-auto size-4 transition-colors" />
+            <HugeiconsIcon icon={Check} className="ml-auto size-4 opacity-50" />
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56"
             align="start"
-            side={isMobile ? "bottom" : "right"}
-            sideOffset={4}
           >
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Switch Namespace
-              </DropdownMenuLabel>
-              {namespaces.map((namespace) => (
+            {isLoadingNamespaces ? (
+              <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">
+                <HugeiconsIcon icon={LoaderCircle} className="mr-2 size-4 animate-spin" />
+                Loading namespaces...
+              </div>
+            ) : isEmpty ? (
+              <div className="flex items-center justify-center py-4 text-sm text-muted-foreground">
+                No namespaces found
+              </div>
+            ) : (
+              namespaces.map((ns) => (
                 <DropdownMenuItem
-                  key={namespace.id}
-                  onClick={() => setActiveNamespace(namespace)}
-                  className="gap-2 group/item"
+                  key={ns.namespaceId}
+                  onSelect={() => setNamespace(ns.namespaceId)}
+                  className="hover:border-border/40 hover:bg-transparent focus:bg-transparent border border-transparent transition-all"
                 >
-                  <div className="flex size-6 items-center justify-center rounded-sm border border-border bg-background transition-colors group-hover/item:border-primary/50 group-hover/item:bg-primary/5">
-                    <HugeiconsIcon
-                      icon={Database}
-                      className="size-3 text-muted-foreground transition-colors group-hover/item:text-primary"
-                    />
+                  <div className="flex size-6 items-center justify-center rounded-sm bg-muted/50">
+                    <HugeiconsIcon icon={Layers} className="size-3" />
                   </div>
-                  <span className="flex-1 truncate font-medium">{namespace.name}</span>
-                  {namespace.id === activeNamespace.id && (
-                    <HugeiconsIcon
-                      icon={Check}
-                      className="size-4 text-primary transition-colors group-hover/item:text-primary/90"
-                    />
+                  <div className="flex flex-col flex-1 min-w-0 ml-2">
+                    <span className="font-medium truncate">{ns.displayName || ns.namespaceId}</span>
+                    {ns.displayName && ns.displayName !== ns.namespaceId && (
+                      <span className="text-xs text-muted-foreground truncate">
+                        {ns.namespaceId}
+                      </span>
+                    )}
+                  </div>
+                  {ns.namespaceId === namespace && (
+                    <HugeiconsIcon icon={Check} className="ml-auto size-4 text-primary" />
                   )}
                 </DropdownMenuItem>
-              ))}
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled
-              className="gap-2 text-muted-foreground cursor-not-allowed opacity-60"
-            >
-              <div className="flex size-6 items-center justify-center rounded-sm border border-border bg-background">
-                <HugeiconsIcon icon={ArrowDown01} className="size-3 text-muted-foreground" />
-              </div>
-              <span className="text-xs font-medium">Create New (Coming Soon)</span>
-            </DropdownMenuItem>
+              ))
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

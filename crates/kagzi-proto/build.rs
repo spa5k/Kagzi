@@ -4,6 +4,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compile_protos(
             &[
                 "../../proto/common.proto",
+                "../../proto/namespace.proto",
                 "../../proto/workflow.proto",
                 "../../proto/worker.proto",
                 "../../proto/admin.proto",

@@ -27,6 +27,7 @@ import {
   useRetryWorkflow,
   useTerminateWorkflow,
 } from "@/hooks/use-grpc-services";
+import { useNamespace } from "@/hooks/use-namespace";
 import { cn } from "@/lib/utils";
 import { WorkflowStatus, WorkflowStatusLabel } from "@/types";
 import { Timestamp } from "@bufbuild/protobuf";
@@ -134,6 +135,7 @@ export const Route = createFileRoute("/workflows/$id")({
 function WorkflowDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const { namespace } = useNamespace();
   const { data: workflows } = useWorkflows();
   const terminateWorkflow = useTerminateWorkflow();
   const cancelWorkflow = useCancelWorkflow();
@@ -146,7 +148,7 @@ function WorkflowDetailPage() {
       await terminateWorkflow.mutateAsync(
         new TerminateWorkflowRequest({
           runId: id,
-          namespaceId: "default",
+          namespaceId: namespace,
         }),
       );
     } catch (error) {
@@ -159,7 +161,7 @@ function WorkflowDetailPage() {
       await cancelWorkflow.mutateAsync(
         new CancelWorkflowRequest({
           runId: id,
-          namespaceId: "default",
+          namespaceId: namespace,
         }),
       );
     } catch (error) {
@@ -172,7 +174,7 @@ function WorkflowDetailPage() {
       await retryWorkflow.mutateAsync(
         new RetryWorkflowRequest({
           runId: id,
-          namespaceId: "default",
+          namespaceId: namespace,
         }),
       );
     } catch (error) {
@@ -337,20 +339,20 @@ function WorkflowDetailPage() {
       </div>
 
       <div className="p-6 md:p-12 max-w-[1600px] mx-auto w-full">
-        <WorkflowDetailContent workflow={workflow} />
+        <WorkflowDetailContent workflow={workflow} namespace={namespace} />
       </div>
     </div>
   );
 }
 
-function WorkflowDetailContent({ workflow }: { workflow: Workflow }) {
+function WorkflowDetailContent({ workflow, namespace }: { workflow: Workflow; namespace: string }) {
   const [activeTab, setActiveTab] = useState("summary");
 
   // Fetch workflow steps for the history tab
   const { data: stepsData, isLoading: stepsLoading } = useListSteps(
     new ListStepsRequest({
       runId: workflow.runId,
-      namespaceId: "default",
+      namespaceId: namespace,
     }),
   );
   const steps = stepsData?.steps ?? [];

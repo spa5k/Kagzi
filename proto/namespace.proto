@@ -1,0 +1,96 @@
+syntax = "proto3";
+package kagzi.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+// NamespaceService provides CRUD operations for namespace management.
+// Namespaces provide multi-tenancy isolation for workflows, workers, and schedules.
+service NamespaceService {
+  // CreateNamespace creates a new namespace.
+
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+  // GetNamespace retrieves a namespace by its ID.
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
+  // ListNamespaces returns paginated namespaces.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  // UpdateNamespace modifies an existing namespace's display name or description.
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+  // DeleteNamespace removes a namespace with configurable deletion behavior.
+  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
+}
+
+// Namespace represents a multi-tenancy isolation boundary.
+message Namespace {
+  string namespace_id = 1;
+  string display_name = 2;
+  string description = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// DeletionMode controls how namespace deletion handles dependent resources.
+enum DeletionMode {
+  DELETION_MODE_UNSPECIFIED = 0; // defaults to FAIL_IF_RESOURCES
+  DELETION_MODE_FAIL_IF_RESOURCES = 1; // reject if workflows/workers/schedules exist
+  DELETION_MODE_SOFT_DELETE = 2; // mark deleted, keep resources
+  DELETION_MODE_CASCADE = 3; // delete all resources (dangerous)
+}
+
+message CreateNamespaceRequest {
+  string namespace_id = 1; // unique identifier (e.g., "production", "staging")
+  string display_name = 2; // human-readable name
+  optional string description = 3;
+}
+
+message CreateNamespaceResponse {
+  Namespace namespace = 1;
+}
+
+message GetNamespaceRequest {
+  string namespace_id = 1;
+}
+
+message GetNamespaceResponse {
+  Namespace namespace = 1;
+}
+
+message ListNamespacesRequest {
+  PageRequest page = 1;
+  bool include_deleted = 2; // include soft-deleted namespaces
+}
+
+message ListNamespacesResponse {
+  repeated Namespace namespaces = 1;
+  PageInfo page = 2;
+}
+
+message UpdateNamespaceRequest {
+  string namespace_id = 1;
+  optional string display_name = 2;
+  optional string description = 3;
+}
+
+message UpdateNamespaceResponse {
+  Namespace namespace = 1;
+}
+
+message DeleteNamespaceRequest {
+  string namespace_id = 1;
+  DeletionMode mode = 2;
+}
+
+// DeleteNamespaceResponse provides deletion status and resource counts.
+message DeleteNamespaceResponse {
+  bool deleted = 1;
+  string message = 2;
+  optional ErrorDetail error = 3;
+  optional ResourceCount resources = 4; // populated when deletion fails due to resources
+}
+
+// ResourceCount tracks dependent resources in a namespace.
+message ResourceCount {
+  int64 workflows = 1;
+  int64 workers = 2;
+  int64 schedules = 3;
+}

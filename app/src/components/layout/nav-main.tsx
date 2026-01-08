@@ -35,14 +35,17 @@ export function NavMain({ items, label = "Monitor" }: NavMainProps) {
 
           return (
             <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton
-                tooltip={item.title}
-                isActive={isActive}
-                render={<Link to={item.url} />}
-              >
-                {item.icon && <HugeiconsIcon icon={item.icon} />}
-                <span>{item.title}</span>
-              </SidebarMenuButton>
+              <Link to={item.url}>
+                {" "}
+                <SidebarMenuButton
+                  tooltip={item.title}
+                  isActive={isActive}
+                  // render={(props) => <Link to={item.url} {...props} />}
+                >
+                  {item.icon && <HugeiconsIcon icon={item.icon} />}
+                  <span>{item.title}</span>
+                </SidebarMenuButton>
+              </Link>
             </SidebarMenuItem>
           );
         })}
