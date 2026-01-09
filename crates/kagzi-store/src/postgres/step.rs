@@ -12,7 +12,7 @@ use crate::models::{
 use crate::repository::StepRepository;
 
 const STEP_COLUMNS: &str = "\
-    attempt_id, run_id, step_id, namespace_id, step_kind, attempt_number, status, \
+    attempt_id, run_id, step_id, namespace, step_kind, attempt_number, status, \
     input, output, error, child_workflow_run_id, created_at, started_at, \
     finished_at, retry_policy";
 
@@ -21,7 +21,7 @@ struct StepRunRow {
     attempt_id: Uuid,
     run_id: Uuid,
     step_id: String,
-    namespace_id: String,
+    namespace: String,
     step_kind: String,
     attempt_number: i32,
     status: String,
@@ -57,7 +57,7 @@ impl StepRunRow {
             attempt_id: self.attempt_id,
             run_id: self.run_id,
             step_id: self.step_id,
-            namespace_id: self.namespace_id,
+            namespace: self.namespace,
             step_kind,
             attempt_number: self.attempt_number,
             status,
@@ -127,10 +127,10 @@ impl PgStepRepository {
         let attempt_id = Uuid::now_v7();
         sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (attempt_id, run_id, step_id, step_kind, status, output, error, finished_at, is_latest, attempt_number, namespace_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), true, 
+            INSERT INTO kagzi.step_runs (attempt_id, run_id, step_id, step_kind, status, output, error, finished_at, is_latest, attempt_number, namespace)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), true,
                     COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $2 AND step_id = $3), 0) + 1,
-                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $2))
+                    (SELECT namespace FROM kagzi.workflow_runs WHERE run_id = $2))
             "#,
             attempt_id,
             params.run_id,
@@ -234,7 +234,7 @@ impl StepRepository for PgStepRepository {
                 attempt_id as "attempt_id!",
                 run_id as "run_id!",
                 step_id as "step_id!",
-                namespace_id as "namespace_id!",
+                namespace as "namespace!",
                 step_kind,
                 attempt_number,
                 status,
@@ -269,8 +269,8 @@ impl StepRepository for PgStepRepository {
         builder.push(STEP_COLUMNS);
         builder.push(" FROM kagzi.step_runs WHERE run_id = ");
         builder.push_bind(params.run_id);
-        builder.push(" AND namespace_id = ");
-        builder.push_bind(&params.namespace_id);
+        builder.push(" AND namespace = ");
+        builder.push_bind(&params.namespace);
         if let Some(step_id) = &params.step_id {
             builder.push(" AND step_id = ").push_bind(step_id);
         }
@@ -356,10 +356,10 @@ impl StepRepository for PgStepRepository {
 
         sqlx::query!(
             r#"
-            INSERT INTO kagzi.step_runs (attempt_id, run_id, step_id, step_kind, status, input, started_at, is_latest, attempt_number, namespace_id, retry_policy)
-            VALUES ($1, $2, $3, $4, 'RUNNING', $5, NOW(), true, 
+            INSERT INTO kagzi.step_runs (attempt_id, run_id, step_id, step_kind, status, input, started_at, is_latest, attempt_number, namespace, retry_policy)
+            VALUES ($1, $2, $3, $4, 'RUNNING', $5, NOW(), true,
                     COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $2 AND step_id = $3), 0) + 1,
-                    (SELECT namespace_id FROM kagzi.workflow_runs WHERE run_id = $2),
+                    (SELECT namespace FROM kagzi.workflow_runs WHERE run_id = $2),
                     $6)
             "#,
             attempt_id,

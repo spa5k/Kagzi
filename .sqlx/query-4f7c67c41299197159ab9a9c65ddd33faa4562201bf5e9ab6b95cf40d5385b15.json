@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.namespaces\n            SET enabled = FALSE, updated_at = $2\n            WHERE namespace = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4f7c67c41299197159ab9a9c65ddd33faa4562201bf5e9ab6b95cf40d5385b15"
+}

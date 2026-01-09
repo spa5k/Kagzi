@@ -160,7 +160,7 @@ impl Kagzi {
     /// # Arguments
     ///
     /// * `schedule_id` - The schedule identifier
-    /// * `namespace_id` - Optional namespace (defaults to "default")
+    /// * `namespace` - Optional namespace (defaults to "default")
     ///
     /// # Returns
     ///
@@ -169,12 +169,12 @@ impl Kagzi {
     pub async fn get_workflow_schedule(
         &self,
         schedule_id: &str,
-        namespace_id: Option<&str>,
+        namespace: Option<&str>,
     ) -> anyhow::Result<Option<WorkflowSchedule>> {
         let mut client = self.schedule_client.clone();
         let request = Request::new(GetWorkflowScheduleRequest {
             schedule_id: schedule_id.to_string(),
-            namespace_id: namespace_id.unwrap_or("default").to_string(),
+            namespace: namespace.unwrap_or("default").to_string(),
         });
 
         let resp = client
@@ -190,7 +190,7 @@ impl Kagzi {
     ///
     /// # Arguments
     ///
-    /// * `namespace_id` - The namespace to list schedules from
+    /// * `namespace` - The namespace to list schedules from
     /// * `page` - Optional pagination request (defaults to 100 items)
     ///
     /// # Returns
@@ -199,7 +199,7 @@ impl Kagzi {
     #[must_use = "Returns the list of workflow schedules"]
     pub async fn list_workflow_schedules(
         &self,
-        namespace_id: &str,
+        namespace: &str,
         page: Option<PageRequest>,
     ) -> anyhow::Result<Vec<WorkflowSchedule>> {
         let mut client = self.schedule_client.clone();
@@ -210,7 +210,7 @@ impl Kagzi {
         });
 
         let request = Request::new(ListWorkflowSchedulesRequest {
-            namespace_id: namespace_id.to_string(),
+            namespace: namespace.to_string(),
             task_queue: None,
             page: Some(page_request),
         });
@@ -229,16 +229,16 @@ impl Kagzi {
     /// # Arguments
     ///
     /// * `schedule_id` - The schedule identifier to delete
-    /// * `namespace_id` - Optional namespace (defaults to "default")
+    /// * `namespace` - Optional namespace (defaults to "default")
     pub async fn delete_workflow_schedule(
         &self,
         schedule_id: &str,
-        namespace_id: Option<&str>,
+        namespace: Option<&str>,
     ) -> anyhow::Result<()> {
         let mut client = self.schedule_client.clone();
         let request = Request::new(DeleteWorkflowScheduleRequest {
             schedule_id: schedule_id.to_string(),
-            namespace_id: namespace_id.unwrap_or("default").to_string(),
+            namespace: namespace.unwrap_or("default").to_string(),
         });
 
         client
@@ -408,7 +408,7 @@ impl StartWorkflowBuilder {
                     data,
                     metadata: HashMap::new(),
                 }),
-                namespace_id: self.namespace,
+                namespace: self.namespace,
                 version: String::default(),
                 retry_policy: None,
             }))
@@ -656,7 +656,7 @@ impl ScheduleBuilder {
             .ok_or_else(|| anyhow::anyhow!("cron expression is required"))?;
 
         let request = CreateWorkflowScheduleRequest {
-            namespace_id: self.namespace,
+            namespace: self.namespace,
             task_queue: workflow_type.clone(), // Queue = workflow type
             workflow_type,
             cron_expr: cron,

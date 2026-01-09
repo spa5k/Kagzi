@@ -17,7 +17,7 @@ pub enum WorkerStatus {
 #[derive(Debug, Clone)]
 pub struct Worker {
     pub worker_id: Uuid,
-    pub namespace_id: String,
+    pub namespace: String,
     pub task_queue: String,
     pub status: WorkerStatus,
 
@@ -44,7 +44,7 @@ pub struct WorkflowTypeConcurrency {
 
 #[derive(Debug, Clone)]
 pub struct RegisterWorkerParams {
-    pub namespace_id: String,
+    pub namespace: String,
     pub task_queue: String,
     pub workflow_types: Vec<String>,
     pub hostname: Option<String>,
@@ -62,7 +62,7 @@ pub struct WorkerHeartbeatParams {
 
 #[derive(Debug, Clone, Default)]
 pub struct ListWorkersParams {
-    pub namespace_id: String,
+    pub namespace: String,
     pub task_queue: Option<String>,
     pub filter_status: Option<WorkerStatus>,
     pub page_size: i32,

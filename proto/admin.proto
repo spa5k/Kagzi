@@ -5,28 +5,36 @@ import "common.proto";
 import "google/protobuf/timestamp.proto";
 import "worker.proto";
 
-// ============================================
-// SERVICE
-// ============================================
-
+// AdminService provides observability and operational control for monitoring
+// and managing the Kagzi workflow engine.
 service AdminService {
-  // Discovery
+  // ListWorkers retrieves registered workers with optional filtering by task queue and status.
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+  // GetWorker retrieves details for a specific worker by ID.
   rpc GetWorker(GetWorkerRequest) returns (GetWorkerResponse);
+  // GetStep retrieves execution details for a specific workflow step.
   rpc GetStep(GetStepRequest) returns (GetStepResponse);
+  // ListSteps retrieves all steps for a workflow run, optionally filtered by step name.
   rpc ListSteps(ListStepsRequest) returns (ListStepsResponse);
 
-  // Health & Info
+  // HealthCheck verifies server availability and serving status.
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  // GetServerInfo returns server version, API version, and supported features.
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+
+  // GetStats returns aggregate statistics for workflows, workers, and schedules.
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+  // DrainWorker gracefully stops a worker from accepting new tasks.
+  rpc DrainWorker(DrainWorkerRequest) returns (DrainWorkerResponse);
+  // GetQueueDepth returns pending, running, and sleeping task counts by queue.
+  rpc GetQueueDepth(GetQueueDepthRequest) returns (GetQueueDepthResponse);
+  // ListWorkflowTypes returns registered workflow types with run statistics.
+  rpc ListWorkflowTypes(ListWorkflowTypesRequest) returns (ListWorkflowTypesResponse);
 }
 
-// ============================================
-// DISCOVERY MESSAGES
-// ============================================
-
+// ListWorkersRequest supports filtering workers by task queue and status.
 message ListWorkersRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   optional string task_queue = 2;
   optional WorkerStatus status_filter = 3;
   PageRequest page = 4;
@@ -46,18 +54,20 @@ message GetWorkerResponse {
 }
 
 message GetStepRequest {
-  string step_id = 1;
-  string namespace_id = 2;
+  string namespace = 1;
+  string step_id = 2;
 }
 
 message GetStepResponse {
   Step step = 1;
 }
 
+// ListStepsRequest retrieves steps for a workflow run, optionally filtered by step name.
 message ListStepsRequest {
-  string run_id = 1;
-  optional string step_name = 2;
-  PageRequest page = 3;
+  string namespace = 1;
+  string run_id = 2;
+  optional string step_name = 3;
+  PageRequest page = 4;
 }
 
 message ListStepsResponse {
@@ -65,18 +75,14 @@ message ListStepsResponse {
   PageInfo page = 2;
 }
 
-// ============================================
-// HEALTH & INFO MESSAGES
-// ============================================
-
 message HealthCheckRequest {
   optional string service = 1;
 }
 
 enum ServingStatus {
   SERVING_STATUS_UNSPECIFIED = 0;
-  SERVING = 1;
-  NOT_SERVING = 2;
+  SERVING_STATUS_SERVING = 1;
+  SERVING_STATUS_NOT_SERVING = 2;
 }
 
 message HealthCheckResponse {
@@ -87,9 +93,72 @@ message HealthCheckResponse {
 
 message GetServerInfoRequest {}
 
+// GetServerInfoResponse includes version compatibility information for SDK validation.
 message GetServerInfoResponse {
   string version = 1;
   string api_version = 2;
   repeated string supported_features = 3;
   string min_sdk_version = 4;
+}
+
+// GetStatsRequest retrieves system-wide statistics, optionally scoped to a namespace.
+message GetStatsRequest {
+  optional string namespace = 1;
+}
+
+// GetStatsResponse provides aggregate counts and breakdowns for monitoring dashboards.
+message GetStatsResponse {
+  int64 total_workflows = 1;
+  int64 pending_workflows = 2;
+  int64 running_workflows = 3;
+  int64 completed_workflows = 4;
+  int64 failed_workflows = 5;
+  int64 total_workers = 6;
+  int64 online_workers = 7;
+  int64 total_schedules = 8;
+  int64 enabled_schedules = 9;
+  map<string, int64> workflows_by_status = 10;
+  map<string, int64> workflows_by_type = 11;
+}
+
+message DrainWorkerRequest {
+  string worker_id = 1;
+}
+
+message DrainWorkerResponse {
+  bool success = 1;
+  string message = 2;
+  optional ErrorDetail error = 3;
+}
+
+// GetQueueDepthRequest retrieves task counts, optionally filtered by task queue.
+message GetQueueDepthRequest {
+  string namespace = 1;
+  optional string task_queue = 2;
+}
+
+// GetQueueDepthResponse provides queue depth metrics for capacity planning and monitoring.
+message GetQueueDepthResponse {
+  int64 pending_count = 1;
+  int64 running_count = 2;
+  int64 sleeping_count = 3;
+  map<string, int64> depth_by_queue = 4;
+}
+
+message ListWorkflowTypesRequest {
+  string namespace = 1;
+  PageRequest page = 2;
+}
+
+message ListWorkflowTypesResponse {
+  repeated WorkflowTypeInfo workflow_types = 1;
+  PageInfo page = 2;
+}
+
+// WorkflowTypeInfo aggregates statistics for a registered workflow type.
+message WorkflowTypeInfo {
+  string workflow_type = 1;
+  int64 total_runs = 2;
+  int64 active_runs = 3;
+  repeated string task_queues = 4;
 }

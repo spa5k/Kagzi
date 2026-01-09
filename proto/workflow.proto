@@ -2,22 +2,27 @@ syntax = "proto3";
 package kagzi.v1;
 
 import "common.proto";
-import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-// ============================================
-// SERVICE
-// ============================================
+// WorkflowService manages the full workflow lifecycle from creation to completion.
+// All operations are namespace-isolated for multi-tenancy.
 service WorkflowService {
+  // StartWorkflow initiates a new workflow execution using external_id for idempotency.
   rpc StartWorkflow(StartWorkflowRequest) returns (StartWorkflowResponse);
+  // GetWorkflow retrieves a workflow by its unique run_id.
   rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+  // GetWorkflowByExternalId retrieves a workflow using the user-provided idempotency key.
+  rpc GetWorkflowByExternalId(GetWorkflowByExternalIdRequest) returns (GetWorkflowByExternalIdResponse);
+  // ListWorkflows returns paginated workflows with optional filtering by status, type, and date range.
   rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
-  rpc CancelWorkflow(CancelWorkflowRequest) returns (google.protobuf.Empty);
+  // CancelWorkflow attempts graceful cancellation of a running workflow.
+  rpc CancelWorkflow(CancelWorkflowRequest) returns (CancelWorkflowResponse);
+  // RetryWorkflow creates a new execution for a failed workflow with the same input.
+  rpc RetryWorkflow(RetryWorkflowRequest) returns (RetryWorkflowResponse);
+  // TerminateWorkflow forcefully stops a workflow with a termination reason.
+  rpc TerminateWorkflow(TerminateWorkflowRequest) returns (TerminateWorkflowResponse);
 }
 
-// ============================================
-// ENUMS
-// ============================================
 enum WorkflowStatus {
   WORKFLOW_STATUS_UNSPECIFIED = 0;
   WORKFLOW_STATUS_PENDING = 1;
@@ -30,35 +35,36 @@ enum WorkflowStatus {
   WORKFLOW_STATUS_PAUSED = 8;
 }
 
-// ============================================
-// MESSAGES
-// ============================================
+// Workflow represents a workflow execution instance with its current state and metadata.
 message Workflow {
-  string run_id = 1;
-  string external_id = 2; // User-provided, acts as idempotency key
-  string namespace_id = 3;
+  string namespace = 1;
+  string run_id = 2;
+  string external_id = 3;
   string task_queue = 4;
   string workflow_type = 5;
   WorkflowStatus status = 6;
-  Payload input = 7;
-  Payload output = 8;
-  ErrorDetail error = 9;
-  int32 attempts = 10;
-  google.protobuf.Timestamp created_at = 11;
-  google.protobuf.Timestamp started_at = 12;
-  google.protobuf.Timestamp finished_at = 13;
-  google.protobuf.Timestamp wake_up_at = 14;
-  string worker_id = 16;
-  string version = 17;
-  string parent_step_id = 18;
-  optional string cron_expr = 19; // For schedule templates only
-  optional string schedule_id = 20; // For fired instances only
+  string version = 7;
+  Payload input = 8;
+  optional Payload output = 9;
+  optional ErrorDetail error = 10;
+  int32 attempts = 11;
+  optional int32 priority = 12;
+  optional int64 timeout_ms = 13;
+  google.protobuf.Timestamp created_at = 14;
+  optional google.protobuf.Timestamp started_at = 15;
+  optional google.protobuf.Timestamp finished_at = 16;
+  optional google.protobuf.Timestamp wake_up_at = 17;
+  optional string worker_id = 18;
+  optional string parent_run_id = 19;
+  optional string parent_step_id = 20;
+  optional string schedule_id = 21;
+  optional string cron_expr = 22;
 }
 
-// --- Requests/Responses ---
+// StartWorkflowRequest initiates a workflow with idempotency via external_id.
 message StartWorkflowRequest {
-  string external_id = 1; // Acts as idempotency key
-  string namespace_id = 2;
+  string namespace = 1;
+  string external_id = 2;
   string task_queue = 3;
   string workflow_type = 4;
   Payload input = 5;
@@ -66,24 +72,30 @@ message StartWorkflowRequest {
   RetryPolicy retry_policy = 8;
 }
 
+// StartWorkflowResponse returns run_id and indicates if this was a duplicate request.
 message StartWorkflowResponse {
   string run_id = 1;
   bool already_exists = 2;
 }
 
 message GetWorkflowRequest {
-  string run_id = 1;
-  string namespace_id = 2;
+  string namespace = 1;
+  string run_id = 2;
 }
 
 message GetWorkflowResponse {
   Workflow workflow = 1;
 }
 
+// ListWorkflowsRequest supports filtering by status, type, queue, and date range.
 message ListWorkflowsRequest {
-  string namespace_id = 1;
+  string namespace = 1;
   optional WorkflowStatus status_filter = 2;
   PageRequest page = 3;
+  optional string workflow_type = 4;
+  optional string task_queue = 5;
+  optional google.protobuf.Timestamp created_after = 6;
+  optional google.protobuf.Timestamp created_before = 7;
 }
 
 message ListWorkflowsResponse {
@@ -92,6 +104,43 @@ message ListWorkflowsResponse {
 }
 
 message CancelWorkflowRequest {
-  string run_id = 1;
-  string namespace_id = 2;
+  string namespace = 1;
+  string run_id = 2;
+}
+
+// CancelWorkflowResponse indicates if cancellation succeeded and the resulting status.
+message CancelWorkflowResponse {
+  bool cancelled = 1;
+  WorkflowStatus status = 2;
+}
+
+message RetryWorkflowRequest {
+  string namespace = 1;
+  string run_id = 2;
+}
+
+// RetryWorkflowResponse returns the new run_id or indicates the workflow is still running.
+message RetryWorkflowResponse {
+  string new_run_id = 1;
+  bool already_running = 2;
+}
+
+message GetWorkflowByExternalIdRequest {
+  string namespace = 1;
+  string external_id = 2;
+}
+
+message GetWorkflowByExternalIdResponse {
+  Workflow workflow = 1;
+}
+
+message TerminateWorkflowRequest {
+  string namespace = 1;
+  string run_id = 2;
+  string reason = 3;
+}
+
+message TerminateWorkflowResponse {
+  bool terminated = 1;
+  WorkflowStatus status = 2;
 }

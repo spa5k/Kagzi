@@ -84,7 +84,7 @@ type WorkflowFn = Box<
 /// Builder for configuring and constructing a Worker
 pub struct WorkerBuilder {
     addr: String,
-    namespace_id: String,
+    namespace: String,
     max_concurrent: usize,
     default_retry: Option<Retry>,
     hostname: Option<String>,
@@ -97,7 +97,7 @@ impl WorkerBuilder {
     pub fn new(addr: impl Into<String>) -> Self {
         Self {
             addr: addr.into(),
-            namespace_id: "default".to_string(),
+            namespace: "default".to_string(),
             max_concurrent: DEFAULT_MAX_CONCURRENT_WORKFLOWS,
             default_retry: None,
             hostname: None,
@@ -108,7 +108,7 @@ impl WorkerBuilder {
     }
 
     pub fn namespace(mut self, ns: impl Into<String>) -> Self {
-        self.namespace_id = ns.into();
+        self.namespace = ns.into();
         self
     }
 
@@ -242,7 +242,7 @@ impl WorkerBuilder {
 
         Ok(Worker {
             client,
-            namespace_id: self.namespace_id,
+            namespace: self.namespace,
             max_concurrent: self.max_concurrent,
             hostname: self.hostname,
             version: self.version,
@@ -261,7 +261,7 @@ impl WorkerBuilder {
 
 pub struct Worker {
     pub(crate) client: WorkerServiceClient<tower::timeout::Timeout<Channel>>,
-    namespace_id: String,
+    namespace: String,
     max_concurrent: usize,
     hostname: Option<String>,
     version: Option<String>,
@@ -330,7 +330,7 @@ impl Worker {
         let resp = self
             .client
             .register(RegisterRequest {
-                namespace_id: self.namespace_id.clone(),
+                namespace: self.namespace.clone(),
                 task_queue: primary_queue.clone(),
                 workflow_types: self.workflow_types.clone(),
                 hostname: self.hostname.clone().unwrap_or_else(|| {
@@ -473,7 +473,7 @@ impl Worker {
         let request = Request::new(PollTaskRequest {
             task_queue,
             worker_id: worker_id.to_string(),
-            namespace_id: self.namespace_id.clone(),
+            namespace: self.namespace.clone(),
             workflow_types: self.workflow_types.clone(),
         });
 
@@ -510,10 +510,12 @@ impl Worker {
                     };
                     let run_id = task.run_id.clone();
                     let default_retry = self.default_retry.clone();
+                    let namespace = self.namespace.clone();
 
                     tokio::spawn(async move {
                         let _permit = permit;
-                        execute_workflow(client, handler, run_id, input, default_retry).await;
+                        execute_workflow(client, handler, run_id, namespace, input, default_retry)
+                            .await;
                     });
                 } else {
                     error!(workflow_type = %task.workflow_type, "No handler for workflow type");
@@ -553,12 +555,15 @@ async fn execute_workflow(
     mut client: WorkerServiceClient<tower::timeout::Timeout<Channel>>,
     handler: Arc<WorkflowFn>,
     run_id: String,
+    namespace: String,
     input: serde_json::Value,
     default_retry: Option<Retry>,
 ) {
+    let namespace_for_requests = namespace.clone();
     let ctx = Context {
         client: client.clone(),
         run_id: run_id.clone(),
+        namespace,
         default_retry,
     };
 
@@ -586,6 +591,7 @@ async fn execute_workflow(
 
             let mut complete_request = Request::new(CompleteWorkflowRequest {
                 run_id,
+                namespace: namespace_for_requests.clone(),
                 output: Some(ProtoPayload {
                     data,
                     metadata: HashMap::new(),
@@ -610,6 +616,7 @@ async fn execute_workflow(
 
             let mut fail_request = Request::new(FailWorkflowRequest {
                 run_id,
+                namespace: namespace_for_requests.clone(),
                 error: Some(kagzi_err.to_detail()),
             });
             inject_context(fail_request.metadata_mut());

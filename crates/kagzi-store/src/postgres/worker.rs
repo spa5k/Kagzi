@@ -11,13 +11,13 @@ use crate::models::{
 use crate::repository::WorkerRepository;
 
 const WORKER_COLUMNS: &str = "\
-    worker_id, namespace_id, task_queue, status, hostname, pid, version, \
+    worker_id, namespace, task_queue, status, hostname, pid, version, \
     workflow_types, registered_at, last_heartbeat_at, deregistered_at, labels";
 
 #[derive(sqlx::FromRow)]
 struct WorkerRow {
     worker_id: Uuid,
-    namespace_id: String,
+    namespace: String,
     task_queue: String,
     status: String,
     hostname: Option<String>,
@@ -42,7 +42,7 @@ impl WorkerRow {
 
         Ok(Worker {
             worker_id: self.worker_id,
-            namespace_id: self.namespace_id,
+            namespace: self.namespace,
             task_queue: self.task_queue,
             status,
             hostname: self.hostname,
@@ -77,11 +77,11 @@ impl WorkerRepository for PgWorkerRepository {
         let worker_id: Uuid = sqlx::query_scalar!(
             r#"
             INSERT INTO kagzi.workers (
-                namespace_id, task_queue, hostname, pid, version,
+                namespace, task_queue, hostname, pid, version,
                 workflow_types, labels, status, last_heartbeat_at, deregistered_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, 'ONLINE', NOW(), NULL)
-            ON CONFLICT (namespace_id, task_queue, hostname, pid) WHERE status != 'OFFLINE'
+            ON CONFLICT (namespace, task_queue, hostname, pid) WHERE status != 'OFFLINE'
             DO UPDATE SET
                 version = EXCLUDED.version,
                 workflow_types = EXCLUDED.workflow_types,
@@ -91,7 +91,7 @@ impl WorkerRepository for PgWorkerRepository {
                 last_heartbeat_at = NOW()
             RETURNING worker_id
             "#,
-            &params.namespace_id,
+            &params.namespace,
             &params.task_queue,
             params.hostname.as_deref(),
             params.pid,
@@ -124,15 +124,15 @@ impl WorkerRepository for PgWorkerRepository {
     }
 
     #[instrument(skip(self))]
-    async fn start_drain(&self, worker_id: Uuid, namespace_id: &str) -> Result<(), StoreError> {
+    async fn start_drain(&self, worker_id: Uuid, namespace: &str) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
             UPDATE kagzi.workers
             SET status = 'DRAINING'
-            WHERE worker_id = $1 AND namespace_id = $2
+            WHERE worker_id = $1 AND namespace = $2
             "#,
             worker_id,
-            namespace_id
+            namespace
         )
         .execute(&self.pool)
         .await?;
@@ -141,16 +141,16 @@ impl WorkerRepository for PgWorkerRepository {
     }
 
     #[instrument(skip(self))]
-    async fn deregister(&self, worker_id: Uuid, namespace_id: &str) -> Result<(), StoreError> {
+    async fn deregister(&self, worker_id: Uuid, namespace: &str) -> Result<(), StoreError> {
         sqlx::query!(
             r#"
             UPDATE kagzi.workers
             SET status = 'OFFLINE',
                 deregistered_at = NOW()
-            WHERE worker_id = $1 AND namespace_id = $2
+            WHERE worker_id = $1 AND namespace = $2
             "#,
             worker_id,
-            namespace_id
+            namespace
         )
         .execute(&self.pool)
         .await?;
@@ -165,7 +165,7 @@ impl WorkerRepository for PgWorkerRepository {
             r#"
             SELECT
                 worker_id,
-                namespace_id,
+                namespace,
                 task_queue,
                 status,
                 hostname,
@@ -200,8 +200,8 @@ impl WorkerRepository for PgWorkerRepository {
 
         let mut builder = QueryBuilder::new("SELECT ");
         builder.push(WORKER_COLUMNS);
-        builder.push(" FROM kagzi.workers WHERE namespace_id = ");
-        builder.push_bind(&params.namespace_id);
+        builder.push(" FROM kagzi.workers WHERE namespace = ");
+        builder.push_bind(&params.namespace);
         if let Some(task_queue) = &params.task_queue {
             builder.push(" AND task_queue = ").push_bind(task_queue);
         }
@@ -263,16 +263,16 @@ impl WorkerRepository for PgWorkerRepository {
     }
 
     #[instrument(skip(self))]
-    async fn count_online(&self, namespace_id: &str, task_queue: &str) -> Result<i64, StoreError> {
+    async fn count_online(&self, namespace: &str, task_queue: &str) -> Result<i64, StoreError> {
         let row = sqlx::query!(
             r#"
             SELECT COUNT(*) as count
             FROM kagzi.workers
-            WHERE namespace_id = $1
+            WHERE namespace = $1
               AND task_queue = $2
               AND status = 'ONLINE'
             "#,
-            namespace_id,
+            namespace,
             task_queue
         )
         .fetch_one(&self.pool)
@@ -284,7 +284,7 @@ impl WorkerRepository for PgWorkerRepository {
     #[instrument(skip(self))]
     async fn count(
         &self,
-        namespace_id: &str,
+        namespace: &str,
         task_queue: Option<&str>,
         filter_status: Option<WorkerStatus>,
     ) -> Result<i64, StoreError> {
@@ -294,11 +294,11 @@ impl WorkerRepository for PgWorkerRepository {
             r#"
             SELECT COUNT(*) as count
             FROM kagzi.workers
-            WHERE namespace_id = $1
+            WHERE namespace = $1
               AND ($2::TEXT IS NULL OR task_queue = $2)
               AND ($3::TEXT IS NULL OR status = $3)
             "#,
-            namespace_id,
+            namespace,
             task_queue,
             status_filter
         )
@@ -312,15 +312,15 @@ impl WorkerRepository for PgWorkerRepository {
     async fn list_distinct_namespaces(&self) -> Result<Vec<String>, StoreError> {
         let rows = sqlx::query!(
             r#"
-            SELECT DISTINCT namespace_id
+            SELECT DISTINCT namespace
             FROM kagzi.workers
             WHERE status != 'OFFLINE'
-            ORDER BY namespace_id
+            ORDER BY namespace
             "#
         )
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(|r| r.namespace_id).collect())
+        Ok(rows.into_iter().map(|r| r.namespace).collect())
     }
 }

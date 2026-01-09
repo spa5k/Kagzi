@@ -24,6 +24,7 @@ use crate::retry::Retry;
 pub struct Context {
     pub(crate) client: WorkerServiceClient<Timeout<Channel>>,
     pub(crate) run_id: String,
+    pub(crate) namespace: String,
     pub(crate) default_retry: Option<Retry>,
 }
 
@@ -75,6 +76,7 @@ impl Context {
                 metadata: HashMap::new(),
             }),
             retry_policy: None,
+            namespace: self.namespace.clone(),
         });
         inject_context(begin_request.metadata_mut());
 
@@ -98,6 +100,7 @@ impl Context {
         let mut sleep_request = Request::new(SleepRequest {
             run_id: self.run_id.clone(),
             step_id: step_id.clone(),
+            namespace: self.namespace.clone(),
             duration: Some(ProstDuration {
                 seconds: duration.as_secs() as i64,
                 nanos: duration.subsec_nanos() as i32,
@@ -154,6 +157,7 @@ impl<'a> StepBuilder<'a> {
             kind: StepKind::Function as i32,
             input: None, // No longer serializing input
             retry_policy: retry.map(Into::into),
+            namespace: self.ctx.namespace.clone(),
         });
         inject_context(begin_request.metadata_mut());
 
@@ -194,6 +198,7 @@ impl<'a> StepBuilder<'a> {
                     let mut complete_request = Request::new(CompleteStepRequest {
                         run_id: self.ctx.run_id.clone(),
                         step_id: step_id.clone(),
+                        namespace: self.ctx.namespace.clone(),
                         output: Some(ProtoPayload {
                             data: output.clone(),
                             metadata: HashMap::new(),
@@ -235,6 +240,7 @@ impl<'a> StepBuilder<'a> {
                 let mut fail_request = Request::new(FailStepRequest {
                     run_id: self.ctx.run_id.clone(),
                     step_id: step_id.clone(),
+                    namespace: self.ctx.namespace.clone(),
                     error: Some(kagzi_err.to_detail()),
                 });
                 inject_context(fail_request.metadata_mut());

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO kagzi.step_runs (attempt_id, run_id, step_id, step_kind, status, output, error, finished_at, is_latest, attempt_number, namespace)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), true,\n                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $2 AND step_id = $3), 0) + 1,\n                    (SELECT namespace FROM kagzi.workflow_runs WHERE run_id = $2))\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1ba9fb4142f2126ab7a9ab02546a5fe46f69196e6e0c560a519613d062a188c7"
+}

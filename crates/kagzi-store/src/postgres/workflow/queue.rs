@@ -16,7 +16,7 @@ use crate::models::ClaimedWorkflow;
 #[instrument(skip(repo, types))]
 pub(super) async fn poll_workflow(
     repo: &PgWorkflowRepository,
-    namespace_id: &str,
+    namespace: &str,
     task_queue: &str,
     worker_id: &str,
     types: &[String],
@@ -28,7 +28,7 @@ pub(super) async fn poll_workflow(
         WITH task AS (
             SELECT run_id
             FROM kagzi.workflow_runs
-            WHERE namespace_id = $1 
+            WHERE namespace = $1 
               AND task_queue = $2
               AND status IN ('PENDING', 'SLEEPING', 'RUNNING')
               AND available_at <= NOW()
@@ -52,7 +52,7 @@ pub(super) async fn poll_workflow(
                   (SELECT input FROM kagzi.workflow_payloads p WHERE p.run_id = w.run_id) as "input!",
                   w.locked_by
         "#,
-        namespace_id,
+        namespace,
         task_queue,
         types,
         worker_id,

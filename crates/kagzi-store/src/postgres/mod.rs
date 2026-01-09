@@ -1,9 +1,11 @@
 mod health;
+mod namespace;
 mod step;
 mod worker;
 mod workflow;
 
 pub use health::PgHealthRepository;
+pub use namespace::PgNamespaceRepository;
 use sqlx::PgPool;
 pub use step::PgStepRepository;
 pub use worker::PgWorkerRepository;
@@ -49,6 +51,10 @@ impl PgStore {
 
     pub fn health(&self) -> PgHealthRepository {
         PgHealthRepository::new(self.pool.clone())
+    }
+
+    pub fn namespaces(&self) -> PgNamespaceRepository {
+        PgNamespaceRepository::new(self.pool.clone())
     }
 
     pub fn pool(&self) -> &PgPool {

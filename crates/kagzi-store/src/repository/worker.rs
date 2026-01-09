@@ -13,9 +13,9 @@ pub trait WorkerRepository: Send + Sync {
 
     async fn heartbeat(&self, params: WorkerHeartbeatParams) -> Result<bool, StoreError>;
 
-    async fn start_drain(&self, worker_id: Uuid, namespace_id: &str) -> Result<(), StoreError>;
+    async fn start_drain(&self, worker_id: Uuid, namespace: &str) -> Result<(), StoreError>;
 
-    async fn deregister(&self, worker_id: Uuid, namespace_id: &str) -> Result<(), StoreError>;
+    async fn deregister(&self, worker_id: Uuid, namespace: &str) -> Result<(), StoreError>;
 
     async fn find_by_id(&self, worker_id: Uuid) -> Result<Option<Worker>, StoreError>;
 
@@ -26,16 +26,16 @@ pub trait WorkerRepository: Send + Sync {
 
     async fn mark_stale_offline(&self, threshold_secs: i64) -> Result<u64, StoreError>;
 
-    async fn count_online(&self, namespace_id: &str, task_queue: &str) -> Result<i64, StoreError>;
+    async fn count_online(&self, namespace: &str, task_queue: &str) -> Result<i64, StoreError>;
 
     async fn count(
         &self,
-        namespace_id: &str,
+        namespace: &str,
         task_queue: Option<&str>,
         filter_status: Option<WorkerStatus>,
     ) -> Result<i64, StoreError>;
 
-    /// Get list of distinct namespace_ids from workers table.
+    /// Get list of distinct namespaces from workers table.
     /// Useful for status reporting and administration.
     async fn list_distinct_namespaces(&self) -> Result<Vec<String>, StoreError>;
 }

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                workflow_type,\n                COUNT(*) as total_runs,\n                COUNT(*) FILTER (\n                    WHERE status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')\n                ) as active_runs,\n                ARRAY_AGG(DISTINCT task_queue) FILTER (WHERE task_queue IS NOT NULL) as task_queues\n            FROM kagzi.workflow_runs\n            WHERE namespace = $1\n            GROUP BY workflow_type\n            ORDER BY workflow_type\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "workflow_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_runs",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "active_runs",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "task_queues",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c8db893d821224d2f0f7b3e7a115d60e600b73177e767410d9b3755be71caa42"
+}

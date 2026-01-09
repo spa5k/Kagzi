@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let variant = args.get(1).map(|s| s.as_str()).unwrap_or("external");
 
     let server = env::var("KAGZI_SERVER_URL").unwrap_or_else(|_| "http://localhost:50051".into());
-    let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "idempotency".into());
+    let namespace = env::var("KAGZI_NAMESPACE").unwrap_or_else(|_| "default".into());
 
     match variant {
         "external" => external_id_demo(&server, &namespace).await?,

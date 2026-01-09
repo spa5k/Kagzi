@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE kagzi.workers\n            SET status = 'DRAINING'\n            WHERE worker_id = $1 AND namespace = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5c76282cff6c907217b4282f489fa07afdc9a17b56dd9d8a55832fd9bacb4f13"
+}

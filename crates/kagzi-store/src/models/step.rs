@@ -32,7 +32,7 @@ pub struct StepRun {
     pub attempt_id: Uuid,
     pub run_id: Uuid,
     pub step_id: String,
-    pub namespace_id: String,
+    pub namespace: String,
     pub step_kind: StepKind,
     pub attempt_number: i32,
     pub status: StepStatus,
@@ -93,7 +93,7 @@ pub struct StepRetryInfo {
 #[derive(Debug, Clone, Default)]
 pub struct ListStepsParams {
     pub run_id: Uuid,
-    pub namespace_id: String,
+    pub namespace: String,
     pub step_id: Option<String>,
     pub page_size: i32,
     pub cursor: Option<StepCursor>,

@@ -1,0 +1,87 @@
+syntax = "proto3";
+package kagzi.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+// NamespaceService provides CRUD operations for namespace management.
+// Namespaces provide multi-tenancy isolation for workflows, workers, and schedules.
+// Namespaces are enabled/disabled, not deleted.
+service NamespaceService {
+  // CreateNamespace creates a new namespace (enabled by default).
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+  // GetNamespace retrieves a namespace by its identifier.
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
+  // ListNamespaces returns paginated namespaces.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  // UpdateNamespace modifies an existing namespace's display name or description.
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+  // EnableNamespace enables a namespace, allowing workflows to run.
+  rpc EnableNamespace(EnableNamespaceRequest) returns (EnableNamespaceResponse);
+  // DisableNamespace disables a namespace, preventing new workflows from starting.
+  rpc DisableNamespace(DisableNamespaceRequest) returns (DisableNamespaceResponse);
+}
+
+// Namespace represents a multi-tenancy isolation boundary.
+message Namespace {
+  string id = 1; // Internal UUID primary key
+  string namespace = 2; // Unique identifier (e.g., "production", "staging")
+  string display_name = 3; // Human-readable name
+  string description = 4; // Optional description
+  bool enabled = 5; // Whether the namespace is enabled
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message CreateNamespaceRequest {
+  string namespace = 1; // Unique identifier
+  string display_name = 2; // Human-readable name
+  optional string description = 3;
+}
+
+message CreateNamespaceResponse {
+  Namespace namespace = 1;
+}
+
+message GetNamespaceRequest {
+  string namespace = 1; // Namespace identifier
+}
+
+message GetNamespaceResponse {
+  Namespace namespace = 1;
+}
+
+message ListNamespacesRequest {
+  PageRequest page = 1;
+}
+
+message ListNamespacesResponse {
+  repeated Namespace namespaces = 1;
+  PageInfo page = 2;
+}
+
+message UpdateNamespaceRequest {
+  string namespace = 1; // Namespace identifier
+  optional string display_name = 2;
+  optional string description = 3;
+}
+
+message UpdateNamespaceResponse {
+  Namespace namespace = 1;
+}
+
+message EnableNamespaceRequest {
+  string namespace = 1; // Namespace identifier
+}
+
+message EnableNamespaceResponse {
+  Namespace namespace = 1;
+}
+
+message DisableNamespaceRequest {
+  string namespace = 1; // Namespace identifier
+}
+
+message DisableNamespaceResponse {
+  Namespace namespace = 1;
+}

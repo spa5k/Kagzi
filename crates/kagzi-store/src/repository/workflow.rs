@@ -23,12 +23,12 @@ pub trait WorkflowRepository: Send + Sync {
     async fn find_by_id(
         &self,
         run_id: Uuid,
-        namespace_id: &str,
+        namespace: &str,
     ) -> Result<Option<WorkflowRun>, StoreError>;
 
     async fn find_active_by_external_id(
         &self,
-        namespace_id: &str,
+        namespace: &str,
         external_id: &str,
     ) -> Result<Option<Uuid>, StoreError>;
 
@@ -37,25 +37,21 @@ pub trait WorkflowRepository: Send + Sync {
         params: ListWorkflowsParams,
     ) -> Result<PaginatedResult<WorkflowRun, WorkflowCursor>, StoreError>;
 
-    async fn count(
-        &self,
-        namespace_id: &str,
-        filter_status: Option<&str>,
-    ) -> Result<i64, StoreError>;
+    async fn count(&self, namespace: &str, filter_status: Option<&str>) -> Result<i64, StoreError>;
 
     async fn check_exists(
         &self,
         run_id: Uuid,
-        namespace_id: &str,
+        namespace: &str,
     ) -> Result<WorkflowExistsResult, StoreError>;
 
     async fn check_status(
         &self,
         run_id: Uuid,
-        namespace_id: &str,
+        namespace: &str,
     ) -> Result<WorkflowExistsResult, StoreError>;
 
-    async fn cancel(&self, run_id: Uuid, namespace_id: &str) -> Result<bool, StoreError>;
+    async fn cancel(&self, run_id: Uuid, namespace: &str) -> Result<bool, StoreError>;
 
     async fn complete(&self, run_id: Uuid, output: Vec<u8>) -> Result<(), StoreError>;
 
@@ -85,7 +81,7 @@ pub trait WorkflowRepository: Send + Sync {
     /// Sets `available_at = NOW() + visibility_timeout_secs` to claim the workflow.
     async fn poll_workflow(
         &self,
-        namespace_id: &str,
+        namespace: &str,
         task_queue: &str,
         worker_id: &str,
         types: &[String],
@@ -96,7 +92,7 @@ pub trait WorkflowRepository: Send + Sync {
 
     async fn find_due_schedules(
         &self,
-        namespace_id: &str,
+        namespace: &str,
         now: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<WorkflowRun>, StoreError>;

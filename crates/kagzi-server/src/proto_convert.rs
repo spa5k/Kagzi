@@ -80,6 +80,7 @@ pub fn map_proto_step_kind(kind: i32) -> Result<StoreStepKind, Status> {
     match kind {
         StepKind::Function => Ok(StoreStepKind::Function),
         StepKind::Sleep => Ok(StoreStepKind::Sleep),
+        StepKind::ChildWorkflow => Ok(StoreStepKind::Function), // Map child workflow to function for now
         StepKind::Unspecified => Err(invalid_argument_error("step kind is required")),
     }
 }
@@ -100,7 +101,7 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
     Ok(Workflow {
         run_id: w.run_id.to_string(),
         external_id: w.external_id,
-        namespace_id: w.namespace_id,
+        namespace: w.namespace,
         task_queue: w.task_queue,
         workflow_type: w.workflow_type,
         status: map_workflow_status(w.status) as i32,
@@ -108,13 +109,18 @@ pub fn workflow_to_proto(w: WorkflowRun) -> Result<Workflow, Status> {
         output: Some(bytes_to_payload(w.output)),
         error,
         attempts: w.attempts,
-        created_at: w.created_at.map(timestamp_from),
+        created_at: Some(timestamp_from(
+            w.created_at.unwrap_or_else(chrono::Utc::now),
+        )),
         started_at: w.started_at.map(timestamp_from),
         finished_at: w.finished_at.map(timestamp_from),
         wake_up_at: w.available_at.map(timestamp_from),
-        worker_id: w.locked_by.unwrap_or_default(),
+        worker_id: w.locked_by,
         version: w.version.unwrap_or_default(),
-        parent_step_id: w.parent_step_attempt_id.unwrap_or_default(),
+        parent_step_id: w.parent_step_attempt_id,
+        parent_run_id: None,
+        priority: None,
+        timeout_ms: None,
         cron_expr: w.cron_expr,
         schedule_id: w.schedule_id.map(|id| id.to_string()),
     })
@@ -131,7 +137,7 @@ pub fn step_to_proto(s: StepRun) -> Result<Step, Status> {
     Ok(Step {
         step_id: step_id.clone(),
         run_id: s.run_id.to_string(),
-        namespace_id: s.namespace_id,
+        namespace: s.namespace,
         name: step_id,
         kind: map_step_kind(s.step_kind) as i32,
         status: map_step_status(s.status) as i32,
@@ -158,7 +164,6 @@ pub fn worker_to_proto(w: StoreWorker) -> Worker {
 
     Worker {
         worker_id: w.worker_id.to_string(),
-        namespace_id: w.namespace_id,
         task_queue: w.task_queue,
         status: map_worker_status(w.status) as i32,
         hostname: w.hostname.unwrap_or_default(),
@@ -177,6 +182,8 @@ pub fn worker_to_proto(w: StoreWorker) -> Worker {
                 max_concurrent: c.max_concurrent,
             })
             .collect(),
+        active_workflow_count: 0,
+        capabilities: HashMap::new(),
     }
 }
 

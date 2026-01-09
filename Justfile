@@ -117,6 +117,7 @@ tidy:
     cargo fmt --all
     buf format -w
     dprint fmt
+    cd app && npm run format
 
 fix:
     cargo fix --all-targets --all-features --allow-dirty

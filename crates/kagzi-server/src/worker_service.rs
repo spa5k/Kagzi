@@ -3,10 +3,10 @@ use std::time::Duration;
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
 use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
-    CompleteWorkflowRequest, CompleteWorkflowResponse, DeregisterRequest, ErrorCode, ErrorDetail,
-    FailStepRequest, FailStepResponse, FailWorkflowRequest, FailWorkflowResponse, HeartbeatRequest,
-    HeartbeatResponse, PollTaskRequest, PollTaskResponse, RegisterRequest, RegisterResponse,
-    SleepRequest,
+    CompleteWorkflowRequest, CompleteWorkflowResponse, DeregisterRequest, DeregisterResponse,
+    ErrorCode, ErrorDetail, FailStepRequest, FailStepResponse, FailWorkflowRequest,
+    FailWorkflowResponse, HeartbeatRequest, HeartbeatResponse, PollTaskRequest, PollTaskResponse,
+    RegisterRequest, RegisterResponse, SleepRequest, SleepResponse,
 };
 use kagzi_queue::QueueNotifier;
 use kagzi_store::{
@@ -67,7 +67,7 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
         run_id: Uuid,
         allow_terminal: bool,
     ) -> Result<String, Status> {
-        let namespace_id = self
+        let namespace = self
             .store
             .workflows()
             .get_namespace(run_id)
@@ -78,7 +78,7 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
         let workflow_check = self
             .store
             .workflows()
-            .check_status(run_id, &namespace_id)
+            .check_status(run_id, &namespace)
             .await
             .map_err(map_store_error)?;
 
@@ -100,11 +100,9 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
             )));
         }
 
-        Ok(namespace_id)
+        Ok(namespace)
     }
 }
-
-// StringExt trait removed - use Option::filter instead
 
 #[tonic::async_trait]
 impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
@@ -119,18 +117,18 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
         let workflow_types = req.workflow_types;
 
         // Clone for logging after worker_id is assigned
-        let namespace_for_log = namespace_id.clone();
+        let namespace_for_log = namespace.clone();
         let workflows_for_log = workflow_types.clone();
 
         let worker_id = self
             .store
             .workers()
             .register(RegisterWorkerParams {
-                namespace_id,
+                namespace,
                 task_queue: req.task_queue,
                 workflow_types,
                 hostname: Some(req.hostname).filter(|s| !s.is_empty()),
@@ -230,7 +228,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     async fn deregister(
         &self,
         request: Request<DeregisterRequest>,
-    ) -> Result<Response<()>, Status> {
+    ) -> Result<Response<DeregisterResponse>, Status> {
         let req = request.into_inner();
         let worker_id = Uuid::parse_str(&req.worker_id)
             .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
@@ -243,25 +241,25 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .map_err(map_store_error)?
             .ok_or_else(|| not_found_error("Worker not found", "worker", req.worker_id.clone()))?;
 
-        let namespace_id = worker.namespace_id;
+        let namespace = worker.namespace;
 
         if req.drain {
             self.store
                 .workers()
-                .start_drain(worker_id, &namespace_id)
+                .start_drain(worker_id, &namespace)
                 .await
                 .map_err(map_store_error)?;
-            info!(worker_id = %worker_id, namespace = %namespace_id, "Worker draining");
+            info!(worker_id = %worker_id, namespace = %namespace, "Worker draining");
         } else {
             self.store
                 .workers()
-                .deregister(worker_id, &namespace_id)
+                .deregister(worker_id, &namespace)
                 .await
                 .map_err(map_store_error)?;
-            info!(worker_id = %worker_id, namespace = %namespace_id, "Worker disconnected");
+            info!(worker_id = %worker_id, namespace = %namespace, "Worker disconnected");
         }
 
-        Ok(Response::new(()))
+        Ok(Response::new(DeregisterResponse { drained: req.drain }))
     }
 
     #[instrument(
@@ -284,7 +282,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             return Err(invalid_argument_error("workflow_types cannot be empty"));
         }
 
-        let namespace_id = require_non_empty(req.namespace_id, "namespace_id")?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let worker = self
             .store
@@ -296,7 +294,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 precondition_failed_error("Worker not registered or offline. Call Register first.")
             })?;
 
-        if worker.namespace_id != namespace_id || worker.task_queue != req.task_queue {
+        if worker.namespace != namespace || worker.task_queue != req.task_queue {
             return Err(precondition_failed_error(
                 "Worker not registered for the requested namespace/task_queue",
             ));
@@ -335,7 +333,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 .store
                 .workflows()
                 .poll_workflow(
-                    &namespace_id,
+                    &namespace,
                     &req.task_queue,
                     &req.worker_id,
                     &effective_types,
@@ -372,7 +370,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 }));
             }
 
-            let mut rx = self.queue.subscribe(&namespace_id, &req.task_queue);
+            let mut rx = self.queue.subscribe(&namespace, &req.task_queue);
 
             let notification_result = tokio::time::timeout(remaining, rx.recv()).await;
 
@@ -415,7 +413,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         let _ = self.validate_workflow_action(run_id, false).await?;
 
-        let workflow_retry = self
+        let workflow_retry_policy = self
             .store
             .workflows()
             .get_retry_policy(run_id)
@@ -433,7 +431,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 step_id: req.step_name.clone(),
                 step_kind,
                 input,
-                retry_policy: merge_proto_policy(req.retry_policy, workflow_retry.as_ref()),
+                retry_policy: merge_proto_policy(req.retry_policy, workflow_retry_policy.as_ref()),
             })
             .await
             .map_err(map_store_error)?;
@@ -466,7 +464,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteStepRequest>,
     ) -> Result<Response<CompleteStepResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
 
@@ -475,7 +472,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         let run_id =
             Uuid::parse_str(&req.run_id).map_err(|_| invalid_argument_error("Invalid run_id"))?;
 
-        let namespace_id = self.validate_workflow_action(run_id, false).await?;
+        let namespace = self.validate_workflow_action(run_id, false).await?;
 
         let output = payload_to_optional_bytes(req.output).unwrap_or_default();
 
@@ -491,7 +488,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .steps()
             .list(kagzi_store::ListStepsParams {
                 run_id,
-                namespace_id,
+                namespace,
                 step_id: Some(req.step_id.clone()),
                 page_size: 1,
                 cursor: None,
@@ -521,7 +518,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<FailStepResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
 
@@ -574,7 +570,6 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteWorkflowRequest>,
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
 
@@ -639,12 +634,12 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     }
 
     #[instrument(skip(self, request), fields(run_id = %request.get_ref().run_id))]
-    async fn sleep(&self, request: Request<SleepRequest>) -> Result<Response<()>, Status> {
-        // Extract parent trace context and set it as the parent of current span
+    async fn sleep(
+        &self,
+        request: Request<SleepRequest>,
+    ) -> Result<Response<SleepResponse>, Status> {
         let parent_cx = extract_context(request.metadata());
         let _ = tracing::Span::current().set_parent(parent_cx);
-
-        const MAX_SLEEP_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
 
         let req = request.into_inner();
 
@@ -662,14 +657,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         // Validate duration
         if duration_seconds == 0 {
             // Zero duration sleep is a no-op, return immediately
-            return Ok(Response::new(()));
-        }
-
-        if duration_seconds > MAX_SLEEP_SECONDS {
-            return Err(invalid_argument_error(format!(
-                "Sleep duration cannot exceed {} seconds (30 days)",
-                MAX_SLEEP_SECONDS
-            )));
+            return Ok(Response::new(SleepResponse {}));
         }
 
         self.store
@@ -678,7 +666,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
-        Ok(Response::new(()))
+        Ok(Response::new(SleepResponse {}))
     }
 }
 

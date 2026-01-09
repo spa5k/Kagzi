@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+axum = "0.8"
 base64.workspace = true
 chrono.workspace = true
 config.workspace = true
@@ -25,6 +26,7 @@ kagzi-proto = { path = "../kagzi-proto" }
 kagzi-queue = { path = "../kagzi-queue" }
 kagzi-store = { path = "../kagzi-store" }
 md5.workspace = true
+mime_guess = "2"
 opentelemetry.workspace = true
 opentelemetry-semantic-conventions.workspace = true
 opentelemetry-stdout.workspace = true
@@ -32,6 +34,7 @@ opentelemetry_sdk.workspace = true
 prost.workspace = true
 prost-types.workspace = true
 rand.workspace = true
+rust-embed = "8"
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
@@ -39,7 +42,11 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tonic.workspace = true
+tonic-prost = "0.14.2"
 tonic-reflection.workspace = true
+tonic-web = "0.14"
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors"] }
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true

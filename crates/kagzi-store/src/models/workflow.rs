@@ -91,7 +91,7 @@ impl RetryPolicy {
 #[derive(Debug, Clone)]
 pub struct WorkflowRun {
     pub run_id: Uuid,
-    pub namespace_id: String,
+    pub namespace: String,
     pub external_id: String,
     pub task_queue: String,
     pub workflow_type: String,
@@ -133,7 +133,7 @@ pub struct CreateWorkflow {
     pub task_queue: String,
     pub workflow_type: String,
     pub input: Vec<u8>,
-    pub namespace_id: String,
+    pub namespace: String,
     pub version: String,
     pub retry_policy: Option<RetryPolicy>,
     pub cron_expr: Option<String>,
@@ -142,7 +142,7 @@ pub struct CreateWorkflow {
 
 #[derive(Debug, Clone, Default)]
 pub struct ListWorkflowsParams {
-    pub namespace_id: String,
+    pub namespace: String,
     pub filter_status: Option<String>,
     pub page_size: i32,
     pub cursor: Option<WorkflowCursor>,
