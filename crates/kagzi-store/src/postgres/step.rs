@@ -584,7 +584,9 @@ impl StepRepository for PgStepRepository {
         };
 
         let error = if step_kind == StepKind::WorkflowFailed {
-            output.as_ref().and_then(|b| String::from_utf8(b.clone()).ok())
+            output
+                .as_ref()
+                .and_then(|b| String::from_utf8(b.clone()).ok())
         } else {
             None
         };
