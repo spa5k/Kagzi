@@ -16,7 +16,7 @@ use kagzi_store::{
 };
 use rand::Rng;
 use tonic::{Request, Response, Status};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
@@ -345,6 +345,23 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             if let Some(work_item) = work_item {
                 let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 
+                if let Err(err) = self
+                    .store
+                    .steps()
+                    .record_lifecycle_event(
+                        work_item.run_id,
+                        kagzi_store::StepKind::WorkflowStarted,
+                        None,
+                    )
+                    .await
+                {
+                    warn!(
+                        run_id = %work_item.run_id,
+                        error = %err,
+                        "Failed to record WorkflowStarted lifecycle event"
+                    );
+                }
+
                 info!(
                     run_id = %work_item.run_id,
                     workflow_type = %work_item.workflow_type,
@@ -580,13 +597,30 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         let _ = self.validate_workflow_action(run_id, false).await?;
 
-        let output = payload_to_optional_bytes(req.output).unwrap_or_default();
+        let output = payload_to_optional_bytes(req.output.clone()).unwrap_or_default();
 
         self.store
             .workflows()
-            .complete(run_id, output)
+            .complete(run_id, output.clone())
             .await
             .map_err(map_store_error)?;
+
+        if let Err(err) = self
+            .store
+            .steps()
+            .record_lifecycle_event(
+                run_id,
+                kagzi_store::StepKind::WorkflowCompleted,
+                Some(output),
+            )
+            .await
+        {
+            warn!(
+                run_id = %run_id,
+                error = %err,
+                "Failed to record WorkflowCompleted lifecycle event"
+            );
+        }
 
         info!(run_id = %run_id, "Workflow completed");
 
@@ -621,6 +655,23 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .fail(run_id, &error_detail.message)
             .await
             .map_err(map_store_error)?;
+
+        if let Err(err) = self
+            .store
+            .steps()
+            .record_lifecycle_event(
+                run_id,
+                kagzi_store::StepKind::WorkflowFailed,
+                Some(error_detail.message.clone().into_bytes()),
+            )
+            .await
+        {
+            warn!(
+                run_id = %run_id,
+                error = %err,
+                "Failed to record WorkflowFailed lifecycle event"
+            );
+        }
 
         info!(
             run_id = %run_id,

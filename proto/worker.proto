@@ -46,6 +46,7 @@ enum StepKind {
   STEP_KIND_FUNCTION = 1;
   STEP_KIND_SLEEP = 2;
   STEP_KIND_CHILD_WORKFLOW = 3;
+  STEP_KIND_LIFECYCLE = 4;
 }
 
 enum StepStatus {

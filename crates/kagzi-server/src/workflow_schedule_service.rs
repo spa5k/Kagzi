@@ -116,10 +116,10 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
     ) -> Result<Response<CreateWorkflowScheduleResponse>, Status> {
         let req = request.into_inner();
 
+        let schedule_id = require_non_empty(req.schedule_id, "schedule_id")?;
         let task_queue = require_non_empty(req.task_queue, "task_queue")?;
         let workflow_type = require_non_empty(req.workflow_type, "workflow_type")?;
         let cron_expr = require_non_empty(req.cron_expr, "cron_expr")?;
-
         let namespace = require_non_empty(req.namespace, "namespace")?;
 
         // Ensure namespace exists (auto-create if it doesn't)
@@ -130,8 +130,47 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(map_store_error)?;
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
-
         let first_fire = next_fire_from_now(&cron_expr, Utc::now())?;
+        let enabled = req.enabled.unwrap_or(true);
+        let max_catchup = req.max_catchup.unwrap_or(self.default_max_catchup);
+
+        let external_id = format!("schedule:{}", schedule_id);
+
+        if let Some(existing_run_id) = self
+            .store
+            .workflows()
+            .find_active_by_external_id(&namespace, &external_id)
+            .await
+            .map_err(map_store_error)?
+        {
+            let mut existing = self
+                .store
+                .workflows()
+                .find_by_id(existing_run_id, &namespace)
+                .await
+                .map_err(map_store_error)?
+                .ok_or_else(|| invalid_argument_error("Schedule not found after lookup"))?;
+
+            existing.cron_expr = Some(cron_expr);
+            existing.available_at = Some(first_fire);
+            existing.max_catchup = max_catchup;
+            existing.status = if enabled {
+                kagzi_store::WorkflowStatus::Scheduled
+            } else {
+                kagzi_store::WorkflowStatus::Paused
+            };
+
+            self.store
+                .workflows()
+                .update(existing_run_id, existing.clone())
+                .await
+                .map_err(map_store_error)?;
+
+            let schedule = workflow_run_to_schedule_proto(existing)?;
+            return Ok(Response::new(CreateWorkflowScheduleResponse {
+                schedule: Some(schedule),
+            }));
+        }
 
         let run_id = Uuid::now_v7();
 
@@ -139,7 +178,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .workflows()
             .create(CreateWorkflow {
                 run_id,
-                external_id: format!("schedule-{}", run_id),
+                external_id,
                 task_queue,
                 workflow_type,
                 input,
@@ -161,9 +200,13 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(map_store_error)?
             .ok_or_else(|| invalid_argument_error("Failed to create schedule"))?;
 
-        template.status = kagzi_store::WorkflowStatus::Scheduled;
+        template.status = if enabled {
+            kagzi_store::WorkflowStatus::Scheduled
+        } else {
+            kagzi_store::WorkflowStatus::Paused
+        };
         template.available_at = Some(first_fire);
-        template.max_catchup = req.max_catchup.unwrap_or(self.default_max_catchup);
+        template.max_catchup = max_catchup;
 
         self.store
             .workflows()

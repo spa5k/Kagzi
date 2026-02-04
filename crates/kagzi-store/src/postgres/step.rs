@@ -566,6 +566,106 @@ impl StepRepository for PgStepRepository {
 
         Ok(result.rows_affected())
     }
+
+    #[instrument(skip(self, output))]
+    async fn record_lifecycle_event(
+        &self,
+        run_id: Uuid,
+        step_kind: StepKind,
+        output: Option<Vec<u8>>,
+    ) -> Result<(), StoreError> {
+        match step_kind {
+            StepKind::WorkflowStarted
+            | StepKind::WorkflowCompleted
+            | StepKind::WorkflowFailed
+            | StepKind::WorkflowCancelled => {}
+            _ => {
+                return Err(StoreError::invalid_argument(format!(
+                    "Invalid lifecycle step_kind: {step_kind}"
+                )));
+            }
+        }
+
+        let step_id = format!("__lifecycle:{}", step_kind.as_ref().to_lowercase());
+
+        if let Some(ref bytes) = output {
+            self.validate_payload_size(bytes, "Lifecycle output")?;
+        }
+
+        let status = match step_kind {
+            StepKind::WorkflowFailed => "FAILED",
+            _ => "COMPLETED",
+        };
+
+        let error = if step_kind == StepKind::WorkflowFailed {
+            output
+                .as_ref()
+                .and_then(|b| String::from_utf8(b.clone()).ok())
+        } else {
+            None
+        };
+
+        let mut tx = self.pool.begin().await?;
+
+        let updated = sqlx::query!(
+            r#"
+            UPDATE kagzi.step_runs
+            SET status = $3, output = $4, error = $5, finished_at = NOW(),
+                started_at = COALESCE(started_at, NOW())
+            WHERE run_id = $1 AND step_id = $2 AND is_latest = true
+            "#,
+            run_id,
+            step_id,
+            status,
+            output.as_deref(),
+            error
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        if updated.rows_affected() == 0 {
+            sqlx::query!(
+                r#"
+                UPDATE kagzi.step_runs
+                SET is_latest = false
+                WHERE run_id = $1 AND step_id = $2 AND is_latest = true
+                "#,
+                run_id,
+                step_id
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            let attempt_id = Uuid::now_v7();
+            sqlx::query!(
+                r#"
+                INSERT INTO kagzi.step_runs (
+                    attempt_id, run_id, step_id, step_kind, status,
+                    output, error, started_at, finished_at, is_latest, attempt_number, namespace
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5,
+                    $6, $7, NOW(), NOW(), true,
+                    COALESCE((SELECT MAX(attempt_number) FROM kagzi.step_runs WHERE run_id = $2 AND step_id = $3), 0) + 1,
+                    (SELECT namespace FROM kagzi.workflow_runs WHERE run_id = $2)
+                )
+                "#,
+                attempt_id,
+                run_id,
+                step_id,
+                step_kind.as_ref(),
+                status,
+                output.as_deref(),
+                error
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -594,6 +694,21 @@ mod tests {
         let err = repo
             .validate_payload_size(&data, "Step input")
             .expect_err("should reject oversized payload");
+        assert!(matches!(err, StoreError::InvalidArgument { .. }));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_payload_rejects_when_over_limit() {
+        let repo = make_repo(2, 1);
+        let data = vec![0u8; 3];
+        let err = <PgStepRepository as StepRepository>::record_lifecycle_event(
+            &repo,
+            Uuid::nil(),
+            StepKind::WorkflowCompleted,
+            Some(data),
+        )
+        .await
+        .expect_err("should reject oversized payload");
         assert!(matches!(err, StoreError::InvalidArgument { .. }));
     }
 }
