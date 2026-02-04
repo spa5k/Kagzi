@@ -3,13 +3,12 @@ use std::time::Duration;
 
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
 use kagzi_proto::kagzi::{
-    BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
-    CompleteWorkflowRequest, CompleteWorkflowResponse, DeregisterRequest, DeregisterResponse,
-    ErrorCode, ErrorDetail, FailStepRequest, FailStepResponse, FailWorkflowRequest,
-    FailWorkflowResponse, HeartbeatRequest, HeartbeatResponse, RegisterRequest, RegisterResponse,
-    SleepRequest, SleepResponse,
-    ClaimTaskRequest, ClaimTaskResponse, ClaimedTask, NoTask, SubscribeWorkRequest,
-    WorkAvailable as ProtoWorkAvailable,
+    BeginStepRequest, BeginStepResponse, ClaimTaskRequest, ClaimTaskResponse, ClaimedTask,
+    CompleteStepRequest, CompleteStepResponse, CompleteWorkflowRequest, CompleteWorkflowResponse,
+    DeregisterRequest, DeregisterResponse, ErrorCode, ErrorDetail, FailStepRequest,
+    FailStepResponse, FailWorkflowRequest, FailWorkflowResponse, HeartbeatRequest,
+    HeartbeatResponse, NoTask, RegisterRequest, RegisterResponse, SleepRequest, SleepResponse,
+    SubscribeWorkRequest, WorkAvailable as ProtoWorkAvailable,
 };
 use kagzi_queue::WorkSignalBus;
 use kagzi_store::{
@@ -49,6 +48,7 @@ pub struct WorkerServiceImpl<Q: WorkSignalBus = kagzi_queue::PostgresNotifier> {
     pub worker_settings: WorkerSettings,
     pub queue_settings: crate::config::QueueSettings,
     pub queue: Q,
+    pub subscribe_work_enabled: bool,
 }
 
 impl<Q: WorkSignalBus> WorkerServiceImpl<Q> {
@@ -57,12 +57,14 @@ impl<Q: WorkSignalBus> WorkerServiceImpl<Q> {
         worker_settings: WorkerSettings,
         queue_settings: crate::config::QueueSettings,
         queue: Q,
+        subscribe_work_enabled: bool,
     ) -> Self {
         Self {
             store,
             worker_settings,
             queue_settings,
             queue,
+            subscribe_work_enabled,
         }
     }
 
@@ -274,6 +276,12 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<SubscribeWorkRequest>,
     ) -> Result<Response<Self::SubscribeWorkStream>, Status> {
+        if !self.subscribe_work_enabled {
+            return Err(precondition_failed_error(
+                "SubscribeWork is only supported with the Postgres work-signal backend. Use broker direct-subscribe and call ClaimTask on wakeup.",
+            ));
+        }
+
         let req = request.into_inner();
 
         let worker_id = Uuid::parse_str(&req.worker_id)
@@ -359,7 +367,9 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
             }
         });
 
-        Ok(Response::new(Box::pin(ReceiverStream::new(out_rx)) as Self::SubscribeWorkStream))
+        Ok(Response::new(
+            Box::pin(ReceiverStream::new(out_rx)) as Self::SubscribeWorkStream
+        ))
     }
 
     #[instrument(skip(self, request), fields(worker_id = %request.get_ref().worker_id, task_queue = %request.get_ref().task_queue))]

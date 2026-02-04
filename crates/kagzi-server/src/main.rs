@@ -56,13 +56,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_settings = settings.worker.clone();
     let queue_settings = settings.queue.clone();
 
-    // Create the queue notifier and start background listener
-    let queue = kagzi_queue::PostgresNotifier::new(
-        store.pool().clone(),
-        queue_settings.channel_capacity,
-        queue_settings.cleanup_interval_secs,
-        queue_settings.max_reconnect_secs,
+    let subscribe_work_enabled = matches!(
+        queue_settings.backend,
+        kagzi_server::config::QueueBackend::Postgres
     );
+
+    // Create the work-signal bus backend.
+    let queue = match queue_settings.backend {
+        kagzi_server::config::QueueBackend::Postgres => {
+            kagzi_queue::WorkBus::Postgres(kagzi_queue::PostgresNotifier::new(
+                store.pool().clone(),
+                queue_settings.channel_capacity,
+                queue_settings.cleanup_interval_secs,
+                queue_settings.max_reconnect_secs,
+            ))
+        }
+        kagzi_server::config::QueueBackend::Nats => {
+            tracing::info!(
+                nats_url = %queue_settings.nats_url,
+                subject_prefix = %queue_settings.nats_subject_prefix,
+                "Using NATS work-signal backend"
+            );
+            let bus = kagzi_queue::NatsBus::connect(
+                &queue_settings.nats_url,
+                queue_settings.nats_subject_prefix.clone(),
+                queue_settings.channel_capacity,
+                Some(queue_settings.nats_queue_group.clone()),
+            )
+            .await?;
+            kagzi_queue::WorkBus::Nats(bus)
+        }
+        kagzi_server::config::QueueBackend::Kafka => {
+            let bus = kagzi_queue::KafkaBus::new(
+                queue_settings.kafka_brokers.clone(),
+                queue_settings.kafka_topic.clone(),
+                queue_settings.channel_capacity,
+                queue_settings.kafka_group_id_prefix.clone(),
+            )?;
+            kagzi_queue::WorkBus::Kafka(bus)
+        }
+    };
+
+    // Start background listener (needed for Postgres LISTEN/NOTIFY; other backends are no-op here).
     let queue_listener = queue.clone();
     let queue_listener_token = shutdown_token.child_token();
     let queue_listener_handle = tokio::spawn(async move {
@@ -102,7 +137,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         WorkflowScheduleServiceImpl::new(store.clone(), settings.coordinator.default_max_catchup);
     let admin_service = AdminServiceImpl::new(store.clone());
     let namespace_service = NamespaceServiceImpl::new(store.clone());
-    let worker_service = WorkerServiceImpl::new(store, worker_settings, queue_settings, queue);
+    let worker_service = WorkerServiceImpl::new(
+        store,
+        worker_settings,
+        queue_settings,
+        queue,
+        subscribe_work_enabled,
+    );
 
     // Build gRPC services using Routes
     let reflection_service = tonic_reflection::server::Builder::configure()

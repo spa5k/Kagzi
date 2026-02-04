@@ -208,11 +208,22 @@ graph TD
 
 **Server**: A gRPC service handling client requests, workflow lifecycle operations, and coordinating background tasks like schedule firing.
 
-**Work-signal bus**: A lossy wakeup distribution mechanism (default: PostgreSQL LISTEN/NOTIFY). Signals indicate “there may be runnable work”; workers must always go through an authoritative DB lease/claim before executing.
+**Work-signal bus**: A lossy wakeup distribution mechanism. Signals indicate “there may be runnable work”; workers must always go through an authoritative DB lease/claim before executing.
+
+Supported backends:
+
+- **Postgres**: `LISTEN/NOTIFY` (default)
+- **NATS**: publish/subscribe subjects (`kagzi.work.<namespace>.<task_queue>`)
+- **Kafka**: topic messages keyed by `<namespace>:<task_queue>`
+
+Worker wakeup delivery:
+
+- **Postgres backend**: workers use the server-streaming `SubscribeWork` RPC.
+- **NATS/Kafka backends**: workers subscribe directly to the broker and then call `ClaimTask` on wakeup. In these modes, `SubscribeWork` is disabled on the server (returns `FailedPrecondition`) to avoid multi-server routing traps.
 
 **Store**: The persistence layer abstracting database operations through repository traits, enabling type-safe SQL via sqlx.
 
-### 2.4. Queue Notification Flow
+### 2.4. Queue Notification Flow (Postgres backend)
 
 The queue notification system enables low-latency work distribution:
 
@@ -256,7 +267,19 @@ The queue notification system enables low-latency work distribution:
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Worker Subscribe + Claim Sequence
+#### Local Broker Backends (NATS/Kafka)
+
+- Start brokers:
+  - NATS: `docker-compose -f docker/queue/docker-compose.nats.yml up -d`
+  - Kafka: `docker-compose -f docker/queue/docker-compose.kafka.yml up -d`
+- Run server:
+  - NATS: `KAGZI_QUEUE_BACKEND=nats` (optional: `KAGZI_QUEUE_NATS_URL`, `KAGZI_QUEUE_NATS_SUBJECT_PREFIX`)
+  - Kafka: `KAGZI_QUEUE_BACKEND=kafka` (optional: `KAGZI_QUEUE_KAFKA_BROKERS`, `KAGZI_QUEUE_KAFKA_TOPIC`)
+- Run workers: use direct-subscribe (`SignalBackend::Nats` / `SignalBackend::Kafka`) and keep the same `ClaimTask` drain loop.
+
+#### Worker Subscribe + Claim Sequence (Postgres backend)
+
+In NATS/Kafka backends, replace the `SubscribeWork` stream with a direct broker subscription in the worker; on each broker message, the worker calls `ClaimTask` (the DB lease/claim path remains the same).
 
 ```mermaid
 sequenceDiagram

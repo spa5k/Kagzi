@@ -113,8 +113,13 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             Err(e) => return Err(map_store_error(e)),
         };
 
-        if !already_exists {
-            let _ = self.queue.publish(&namespace, &task_queue).await;
+        if !already_exists && let Err(e) = self.queue.publish(&namespace, &task_queue).await {
+            tracing::warn!(
+                error = ?e,
+                namespace = %namespace,
+                task_queue = %task_queue,
+                "Failed to publish work wakeup"
+            );
         }
 
         Ok(Response::new(StartWorkflowResponse {

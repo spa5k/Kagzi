@@ -51,4 +51,3 @@ pub trait WorkSignalBus: Send + Sync + Clone {
     /// Start the backend listener loop (e.g. Postgres LISTEN/NOTIFY bridge).
     async fn start(&self, shutdown: CancellationToken) -> Result<(), QueueError>;
 }
-

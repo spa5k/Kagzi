@@ -153,10 +153,12 @@ impl TestHarness {
 
         // Use default queue settings for tests
         let queue_settings = kagzi_server::config::QueueSettings {
+            backend: kagzi_server::config::QueueBackend::Postgres,
             channel_capacity: 64,
             cleanup_interval_secs: 300,
             poll_jitter_ms: 100,
             max_reconnect_secs: 300,
+            ..Default::default()
         };
 
         let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
@@ -168,6 +170,7 @@ impl TestHarness {
             worker_settings,
             queue_settings,
             queue.clone(),
+            true,
         );
 
         let server_shutdown = shutdown.child_token();

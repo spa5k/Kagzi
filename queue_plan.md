@@ -2,7 +2,7 @@
 
 ## Summary
 
-We want Kagzi workers to “connect to a queue” (Kafka / NATS JetStream / RabbitMQ / Postgres / later SQLite) and have the queue be responsible for *distribution* of wakeups, while Kagzi remains correct and durable.
+We want Kagzi workers to “connect to a queue” (Kafka / NATS JetStream / RabbitMQ / Postgres / later SQLite) and have the queue be responsible for _distribution_ of wakeups, while Kagzi remains correct and durable.
 
 The core rule that keeps this correct across crashes, redeliveries, and outages:
 
@@ -39,7 +39,7 @@ So the external queue becomes a **work-signal bus** (notification + coarse distr
 
 **Fix:** Always have a durable fallback:
 
-- Server-side periodic **due-work enqueuer**: query Postgres for *distinct* `{namespace, task_queue}` that currently have due work and publish `WorkAvailable`.
+- Server-side periodic **due-work enqueuer**: query Postgres for _distinct_ `{namespace, task_queue}` that currently have due work and publish `WorkAvailable`.
 - Worker-side periodic **try-claim tick** (belt-and-suspenders): even if no signals arrive, occasionally call `ClaimTask`.
 
 Either one alone can work; having both is ideal.
@@ -168,7 +168,7 @@ Authorization / correctness checks (must enforce in server):
 - Worker is **not draining** (draining workers must not claim new tasks).
 - Worker is registered for `{namespace, task_queue}`.
 - Worker type filtering is server-authoritative:
-  - Treat request `workflow_types` as a *requested subset*.
+  - Treat request `workflow_types` as a _requested subset_.
   - Intersect it with the worker’s registered `workflow_types`.
   - Reject if the intersection is empty (worker must not claim tasks it is not registered for, even if it received a signal).
 
@@ -199,9 +199,9 @@ Post-claim side effects (must preserve current behavior):
 - Worker opens a `SubscribeWork` stream for `{namespace, task_queue}`.
 - On each signal, worker does bounded drain-claim:
   - Stop conditions (in this order):
-    1) no permits left
-    2) claim budget exhausted
-    3) empty claim returned (`NoTask`)
+    1. no permits left
+    2. claim budget exhausted
+    3. empty claim returned (`NoTask`)
   - While it has permits and claim budget remaining:
     - call `ClaimTask(...)`
     - if empty: stop draining

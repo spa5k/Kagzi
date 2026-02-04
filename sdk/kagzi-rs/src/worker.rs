@@ -36,21 +36,27 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use backon::{BackoffBuilder, ExponentialBuilder};
+use futures::StreamExt;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
-    CompleteWorkflowRequest, DeregisterRequest, ErrorCode, FailWorkflowRequest, HeartbeatRequest,
-    Payload as ProtoPayload, RegisterRequest,
-    ClaimTaskRequest, SubscribeWorkRequest,
+    ClaimTaskRequest, CompleteWorkflowRequest, DeregisterRequest, ErrorCode, FailWorkflowRequest,
+    HeartbeatRequest, Payload as ProtoPayload, RegisterRequest, SubscribeWorkRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tonic::transport::Channel;
 use tower::ServiceBuilder;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+#[cfg(feature = "kafka")]
+use rdkafka::Message;
+#[cfg(feature = "kafka")]
+use rdkafka::consumer::Consumer;
 
 use crate::BoxFuture;
 use crate::context::Context;
@@ -72,6 +78,28 @@ const FALLBACK_CLAIM_TICK_SECS: u64 = 10;
 
 /// Maximum number of claim attempts per wakeup signal (bounded by available permits)
 const DRAIN_CLAIM_BUDGET: usize = 100;
+
+#[derive(Clone, Debug)]
+pub enum SignalBackend {
+    /// Use gRPC `SubscribeWork` wakeups from the server (default Postgres mode).
+    Server,
+
+    /// Subscribe directly to NATS subjects (work-signal bus), then call `ClaimTask` on wakeup.
+    #[cfg(feature = "nats")]
+    Nats {
+        url: String,
+        subject_prefix: String,
+        queue_group: String,
+    },
+
+    /// Consume Kafka wakeups from a topic, then call `ClaimTask` on wakeup.
+    #[cfg(feature = "kafka")]
+    Kafka {
+        brokers: String,
+        topic: String,
+        group_id: String,
+    },
+}
 
 /// Workflow handler function type.
 ///
@@ -98,6 +126,7 @@ pub struct WorkerBuilder {
     version: Option<String>,
     labels: HashMap<String, String>,
     workflows: Vec<(String, Arc<WorkflowFn>)>,
+    signal_backend: SignalBackend,
 }
 
 impl WorkerBuilder {
@@ -111,6 +140,7 @@ impl WorkerBuilder {
             version: None,
             labels: HashMap::new(),
             workflows: Vec::new(),
+            signal_backend: SignalBackend::Server,
         }
     }
 
@@ -148,6 +178,11 @@ impl WorkerBuilder {
 
     pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.labels.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn signal_backend(mut self, backend: SignalBackend) -> Self {
+        self.signal_backend = backend;
         self
     }
 
@@ -257,9 +292,11 @@ impl WorkerBuilder {
             default_retry: self.default_retry,
             workflows: workflow_map,
             workflow_types,
+            signal_backend: self.signal_backend,
             worker_id: None,
             heartbeat_interval: Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS),
             semaphore: Arc::new(Semaphore::new(self.max_concurrent)),
+            wakeup_tx: None,
             shutdown: CancellationToken::new(),
             consecutive_poll_failures: Arc::new(AtomicU32::new(0)),
         })
@@ -278,11 +315,13 @@ pub struct Worker {
     /// Arc is used to clone handlers into each spawned task for concurrent execution.
     workflows: HashMap<String, Arc<WorkflowFn>>,
     workflow_types: Vec<String>,
+    signal_backend: SignalBackend,
     worker_id: Option<Uuid>,
     heartbeat_interval: Duration,
     /// Semaphore limits concurrent workflow executions.
     /// Arc allows cloning permits into spawned tasks.
     semaphore: Arc<Semaphore>,
+    wakeup_tx: Option<mpsc::Sender<()>>,
     shutdown: CancellationToken,
     /// Counter for exponential backoff on poll failures.
     /// Arc allows atomic updates from both main loop and spawned tasks.
@@ -383,10 +422,13 @@ impl Worker {
             }
         };
 
-        let mut stream = self.subscribe_work_stream(&worker_id, &primary_queue).await?;
+        let (wakeup_tx, mut wakeups) = mpsc::channel::<()>(256);
+        self.wakeup_tx = Some(wakeup_tx.clone());
 
         // Prime the pump: try a single claim at startup, in case signals were missed.
         let _ = self.drain_claim_and_execute(&primary_queue, 1).await;
+
+        self.spawn_wakeup_task(worker_id.clone(), primary_queue.clone(), wakeup_tx);
 
         let mut fallback_ticker =
             tokio::time::interval(Duration::from_secs(FALLBACK_CLAIM_TICK_SECS));
@@ -400,21 +442,13 @@ impl Worker {
                 _ = fallback_ticker.tick() => {
                     let _ = self.drain_claim_and_execute(&primary_queue, 1).await;
                 }
-                msg = stream.message() => {
-                    match msg {
-                        Ok(Some(_work_available)) => {
-                            let _ = self.drain_claim_and_execute(&primary_queue, DRAIN_CLAIM_BUDGET).await;
-                        }
-                        Ok(None) => {
-                            error!("SubscribeWork stream closed by server, resubscribing");
-                            stream = self.subscribe_work_stream(&worker_id, &primary_queue).await?;
-                        }
-                        Err(e) => {
-                            error!(error = %e, "SubscribeWork stream error");
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                            stream = self.subscribe_work_stream(&worker_id, &primary_queue).await?;
-                        }
+                msg = wakeups.recv() => {
+                    if msg.is_none() {
+                        error!("Wakeup source closed, triggering shutdown");
+                        self.shutdown.cancel();
+                        break;
                     }
+                    let _ = self.drain_claim_and_execute(&primary_queue, DRAIN_CLAIM_BUDGET).await;
                 }
             }
         }
@@ -440,6 +474,214 @@ impl Worker {
 
         info!("Worker deregistered");
         Ok(())
+    }
+
+    fn spawn_wakeup_task(&self, worker_id: String, task_queue: String, tx: mpsc::Sender<()>) {
+        match self.signal_backend.clone() {
+            SignalBackend::Server => {
+                let mut client = self.client.clone();
+                let namespace = self.namespace.clone();
+                let workflow_types = self.workflow_types.clone();
+
+                tokio::spawn(async move {
+                    let mut backoff = ExponentialBuilder::default()
+                        .with_min_delay(Duration::from_millis(100))
+                        .with_max_delay(Duration::from_secs(10))
+                        .with_jitter()
+                        .build();
+
+                    loop {
+                        let res = client
+                            .subscribe_work(Request::new(SubscribeWorkRequest {
+                                namespace: namespace.clone(),
+                                worker_id: worker_id.clone(),
+                                task_queue: task_queue.clone(),
+                                workflow_types: workflow_types.clone(),
+                            }))
+                            .await;
+
+                        let mut stream = match res {
+                            Ok(r) => r.into_inner(),
+                            Err(e) => {
+                                error!(error = %e, "Failed to SubscribeWork, retrying");
+                                let d = backoff.next().unwrap_or(Duration::from_secs(10));
+                                tokio::time::sleep(d).await;
+                                continue;
+                            }
+                        };
+
+                        backoff = ExponentialBuilder::default()
+                            .with_min_delay(Duration::from_millis(100))
+                            .with_max_delay(Duration::from_secs(10))
+                            .with_jitter()
+                            .build();
+
+                        loop {
+                            match stream.message().await {
+                                Ok(Some(_)) => {
+                                    if tx.send(()).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                Ok(None) => {
+                                    warn!("SubscribeWork closed by server, resubscribing");
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "SubscribeWork error, resubscribing");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            #[cfg(feature = "nats")]
+            SignalBackend::Nats {
+                url,
+                subject_prefix,
+                queue_group,
+            } => {
+                let namespace = self.namespace.clone();
+                tokio::spawn(async move {
+                    let subject = format!("{subject_prefix}.{namespace}.{task_queue}");
+                    let mut url = url;
+                    if !url.contains("://") {
+                        url = format!("nats://{url}");
+                    }
+                    let mut backoff = ExponentialBuilder::default()
+                        .with_min_delay(Duration::from_millis(100))
+                        .with_max_delay(Duration::from_secs(10))
+                        .with_jitter()
+                        .build();
+
+                    loop {
+                        let client = match async_nats::connect(&url).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                warn!(error = %e, "Failed to connect to NATS, retrying");
+                                let d = backoff.next().unwrap_or(Duration::from_secs(10));
+                                tokio::time::sleep(d).await;
+                                continue;
+                            }
+                        };
+
+                        let mut sub = match client
+                            .queue_subscribe(subject.clone(), queue_group.clone())
+                            .await
+                        {
+                            Ok(s) => s,
+                            Err(e) => {
+                                warn!(error = %e, "Failed to subscribe to NATS, retrying");
+                                let d = backoff.next().unwrap_or(Duration::from_secs(10));
+                                tokio::time::sleep(d).await;
+                                continue;
+                            }
+                        };
+
+                        backoff = ExponentialBuilder::default()
+                            .with_min_delay(Duration::from_millis(100))
+                            .with_max_delay(Duration::from_secs(10))
+                            .with_jitter()
+                            .build();
+
+                        while let Some(_msg) = sub.next().await {
+                            if tx.send(()).await.is_err() {
+                                return;
+                            }
+                        }
+
+                        warn!("NATS subscription ended, reconnecting");
+                    }
+                });
+            }
+
+            #[cfg(feature = "kafka")]
+            SignalBackend::Kafka {
+                brokers,
+                topic,
+                group_id,
+            } => {
+                let namespace = self.namespace.clone();
+                tokio::spawn(async move {
+                    let key = format!("{namespace}:{task_queue}");
+                    let mut backoff = ExponentialBuilder::default()
+                        .with_min_delay(Duration::from_millis(200))
+                        .with_max_delay(Duration::from_secs(10))
+                        .with_jitter()
+                        .build();
+
+                    loop {
+                        let consumer: rdkafka::consumer::StreamConsumer =
+                            match rdkafka::ClientConfig::new()
+                                .set("bootstrap.servers", &brokers)
+                                .set("group.id", &group_id)
+                                .set("enable.auto.commit", "false")
+                                // Wakeup messages are idempotent: consuming earlier messages is safe.
+                                // Using "earliest" avoids missing a wakeup that was published just
+                                // before this consumer successfully joins the group.
+                                .set("auto.offset.reset", "earliest")
+                                .create()
+                            {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    warn!(error = %e, "Failed to create Kafka consumer, retrying");
+                                    let d = backoff.next().unwrap_or(Duration::from_secs(10));
+                                    tokio::time::sleep(d).await;
+                                    continue;
+                                }
+                            };
+
+                        if let Err(e) = consumer.subscribe(&[&topic]) {
+                            warn!(error = %e, "Failed to subscribe to Kafka topic, retrying");
+                            let d = backoff.next().unwrap_or(Duration::from_secs(10));
+                            tokio::time::sleep(d).await;
+                            continue;
+                        }
+
+                        info!(
+                            brokers = %brokers,
+                            topic = %topic,
+                            group_id = %group_id,
+                            namespace = %namespace,
+                            task_queue = %task_queue,
+                            key = %key,
+                            "Kafka wakeup subscription started"
+                        );
+
+                        backoff = ExponentialBuilder::default()
+                            .with_min_delay(Duration::from_millis(200))
+                            .with_max_delay(Duration::from_secs(10))
+                            .with_jitter()
+                            .build();
+
+                        let mut stream = consumer.stream();
+                        while let Some(msg) = stream.next().await {
+                            let msg = match msg {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    warn!(error = %e, "Kafka consume error");
+                                    continue;
+                                }
+                            };
+
+                            if msg.key() == Some(key.as_bytes()) {
+                                tracing::debug!("Kafka wakeup received");
+                                if tx.send(()).await.is_err() {
+                                    return;
+                                }
+                            }
+
+                            let _ =
+                                consumer.commit_message(&msg, rdkafka::consumer::CommitMode::Async);
+                        }
+
+                        warn!("Kafka stream ended, reconnecting");
+                    }
+                });
+            }
+        }
     }
 
     /// Spawn a background task to send periodic heartbeats to the server
@@ -490,39 +732,6 @@ impl Worker {
                 }
             }
         }))
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn subscribe_work_stream(
-        &mut self,
-        worker_id: &str,
-        task_queue: &str,
-    ) -> anyhow::Result<tonic::Streaming<kagzi_proto::kagzi::WorkAvailable>> {
-        let mut backoff = ExponentialBuilder::default()
-            .with_min_delay(Duration::from_millis(100))
-            .with_max_delay(Duration::from_secs(10))
-            .with_jitter()
-            .build();
-
-        loop {
-            match self
-                .client
-                .subscribe_work(Request::new(SubscribeWorkRequest {
-                    namespace: self.namespace.clone(),
-                    worker_id: worker_id.to_string(),
-                    task_queue: task_queue.to_string(),
-                    workflow_types: self.workflow_types.clone(),
-                }))
-                .await
-            {
-                Ok(r) => return Ok(r.into_inner()),
-                Err(e) => {
-                    error!(error = %e, "Failed to SubscribeWork, retrying");
-                    let d = backoff.next().unwrap_or(Duration::from_secs(10));
-                    tokio::time::sleep(d).await;
-                }
-            }
-        }
     }
 
     #[tracing::instrument(skip(self))]
@@ -599,9 +808,10 @@ impl Worker {
                                 let run_id = task.run_id.clone();
                                 let default_retry = self.default_retry.clone();
                                 let namespace = self.namespace.clone();
+                                let wakeup_tx = self.wakeup_tx.clone();
 
                                 tokio::spawn(async move {
-                                    let _permit = permit;
+                                    let permit = permit;
                                     execute_workflow(
                                         client,
                                         handler,
@@ -611,6 +821,10 @@ impl Worker {
                                         default_retry,
                                     )
                                     .await;
+                                    drop(permit);
+                                    if let Some(tx) = wakeup_tx {
+                                        let _ = tx.try_send(());
+                                    }
                                 });
                             } else {
                                 error!(
@@ -628,7 +842,8 @@ impl Worker {
                     // If NotFound or FailedPrecondition, the server thinks we're offline/draining
                     // or otherwise unauthorized for this queue. Trigger shutdown to prevent
                     // double execution if tasks are reassigned.
-                    if e.code() == tonic::Code::NotFound || e.code() == tonic::Code::FailedPrecondition
+                    if e.code() == tonic::Code::NotFound
+                        || e.code() == tonic::Code::FailedPrecondition
                     {
                         error!(
                             error = %e,

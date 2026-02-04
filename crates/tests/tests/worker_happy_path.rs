@@ -36,21 +36,21 @@ async fn workflow_executes_via_subscribe_work_and_claim_task() -> anyhow::Result
 
     let run_id = Uuid::parse_str(&run.id)?;
 
-    let wait_result: anyhow::Result<()> = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            let status = harness.db_workflow_status(&run_id).await?;
-            if status == "COMPLETED" {
-                return Ok(());
+    let wait_result: anyhow::Result<()> =
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let status = harness.db_workflow_status(&run_id).await?;
+                if status == "COMPLETED" {
+                    return Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("Timed out waiting for workflow to complete"))?;
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Timed out waiting for workflow to complete"))?;
 
     shutdown.cancel();
     let _ = worker_handle.await;
 
     wait_result
 }
-

@@ -282,20 +282,19 @@ async fn fire_due_schedules<Q: WorkSignalBus>(
                     missed_count = missed_count,
                     "Fired schedule"
                 );
-                if publish_debouncer.should_publish(&template.namespace, &template.task_queue) {
-                    if let Err(e) = queue
+                if publish_debouncer.should_publish(&template.namespace, &template.task_queue)
+                    && let Err(e) = queue
                         .publish(&template.namespace, &template.task_queue)
                         .await
-                    {
-                        error!(
-                            schedule_id = %template.run_id,
-                            run_id = %run_id,
-                            namespace = %template.namespace,
-                            task_queue = %template.task_queue,
-                            error = ?e,
-                            "Failed to notify queue after firing schedule"
-                        );
-                    }
+                {
+                    error!(
+                        schedule_id = %template.run_id,
+                        run_id = %run_id,
+                        namespace = %template.namespace,
+                        task_queue = %template.task_queue,
+                        error = ?e,
+                        "Failed to notify queue after firing schedule"
+                    );
                 }
                 fired += 1;
             }

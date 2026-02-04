@@ -1,6 +1,15 @@
 use config::{Config, ConfigError, Environment};
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum QueueBackend {
+    #[default]
+    Postgres,
+    Nats,
+    Kafka,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Settings {
     pub database_url: String,
@@ -110,7 +119,9 @@ impl Default for PayloadSettings {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct QueueSettings {
+    pub backend: QueueBackend,
     /// Broadcast channel capacity for queue notifications
     pub channel_capacity: usize,
     /// Interval in seconds for cleaning up stale notification channels
@@ -119,15 +130,38 @@ pub struct QueueSettings {
     pub poll_jitter_ms: u64,
     /// Maximum time in seconds to retry reconnecting the queue listener before giving up
     pub max_reconnect_secs: u64,
+
+    /// NATS connection URL (used when backend=nats)
+    pub nats_url: String,
+    /// NATS subject prefix (used when backend=nats)
+    pub nats_subject_prefix: String,
+    /// NATS queue group for worker direct-subscribe (used when backend=nats)
+    pub nats_queue_group: String,
+
+    /// Kafka bootstrap brokers (used when backend=kafka)
+    pub kafka_brokers: String,
+    /// Kafka topic for work wakeups (used when backend=kafka)
+    pub kafka_topic: String,
+    /// Kafka consumer group id prefix (used when backend=kafka)
+    pub kafka_group_id_prefix: String,
 }
 
 impl Default for QueueSettings {
     fn default() -> Self {
         Self {
+            backend: QueueBackend::Postgres,
             channel_capacity: 64,       // Broadcast channel capacity per queue
             cleanup_interval_secs: 300, // 5 minutes
             poll_jitter_ms: 100,        // 100ms max jitter
             max_reconnect_secs: 300,    // 5 minutes max reconnection attempts
+
+            nats_url: "localhost:4222".to_string(),
+            nats_subject_prefix: "kagzi.work".to_string(),
+            nats_queue_group: "kagzi-workers".to_string(),
+
+            kafka_brokers: "localhost:9094".to_string(),
+            kafka_topic: "kagzi-work".to_string(),
+            kafka_group_id_prefix: "kagzi-workers".to_string(),
         }
     }
 }

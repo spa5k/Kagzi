@@ -9,8 +9,8 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::error::QueueError;
 use crate::bus::{WorkAvailable, WorkSignalBus};
+use crate::error::QueueError;
 
 #[derive(Clone)]
 pub struct PostgresNotifier {
@@ -189,13 +189,13 @@ impl WorkSignalBus for PostgresNotifier {
                             let key = notification.payload();
                             debug!(queue = %key, "Received pg_notify");
 
-                            if let Some((namespace, task_queue)) = key.split_once(':') {
-                                if let Some(tx) = self.channels.get(key) {
-                                    let _ = tx.send(WorkAvailable {
-                                        namespace: namespace.to_string(),
-                                        task_queue: task_queue.to_string(),
-                                    });
-                                }
+                            if let (Some((namespace, task_queue)), Some(tx)) =
+                                (key.split_once(':'), self.channels.get(key))
+                            {
+                                let _ = tx.send(WorkAvailable {
+                                    namespace: namespace.to_string(),
+                                    task_queue: task_queue.to_string(),
+                                });
                             }
                         }
                         Err(e) => {

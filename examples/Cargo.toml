@@ -70,6 +70,10 @@ name = "12_backfill_demo"
 path = "12_backfill_demo/main.rs"
 
 [[example]]
+name = "13_broker_smoke"
+path = "13_broker_smoke/main.rs"
+
+[[example]]
 name = "worker_hub"
 path = "worker_hub.rs"
 
