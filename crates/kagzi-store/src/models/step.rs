@@ -13,6 +13,10 @@ use super::RetryPolicy;
 pub enum StepKind {
     Function,
     Sleep,
+    WorkflowStarted,
+    WorkflowCompleted,
+    WorkflowFailed,
+    WorkflowCancelled,
 }
 
 #[derive(

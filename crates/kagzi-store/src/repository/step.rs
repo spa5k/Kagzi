@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::error::StoreError;
 use crate::models::{
     BeginStepParams, BeginStepResult, FailStepParams, FailStepResult, ListStepsParams,
-    PaginatedResult, StepCursor, StepRun,
+    PaginatedResult, StepCursor, StepKind, StepRun,
 };
 
 /// Repository trait for step persistence operations.
@@ -42,4 +42,11 @@ pub trait StepRepository: Send + Sync {
     /// Called when a workflow wakes up from sleep to mark sleep steps as completed.
     /// Returns the number of steps completed.
     async fn complete_pending_sleeps(&self, run_id: Uuid) -> Result<u64, StoreError>;
+
+    async fn record_lifecycle_event(
+        &self,
+        run_id: Uuid,
+        step_kind: StepKind,
+        output: Option<Vec<u8>>,
+    ) -> Result<(), StoreError>;
 }

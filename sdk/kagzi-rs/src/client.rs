@@ -657,7 +657,8 @@ impl ScheduleBuilder {
 
         let request = CreateWorkflowScheduleRequest {
             namespace: self.namespace,
-            task_queue: workflow_type.clone(), // Queue = workflow type
+            schedule_id: self._schedule_id,
+            task_queue: workflow_type.clone(),
             workflow_type,
             cron_expr: cron,
             input: self.input.map(|data| ProtoPayload {

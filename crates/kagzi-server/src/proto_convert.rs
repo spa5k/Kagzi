@@ -69,6 +69,10 @@ pub fn map_step_kind(kind: StoreStepKind) -> StepKind {
     match kind {
         StoreStepKind::Function => StepKind::Function,
         StoreStepKind::Sleep => StepKind::Sleep,
+        StoreStepKind::WorkflowStarted
+        | StoreStepKind::WorkflowCompleted
+        | StoreStepKind::WorkflowFailed
+        | StoreStepKind::WorkflowCancelled => StepKind::Lifecycle,
     }
 }
 
@@ -80,7 +84,8 @@ pub fn map_proto_step_kind(kind: i32) -> Result<StoreStepKind, Status> {
     match kind {
         StepKind::Function => Ok(StoreStepKind::Function),
         StepKind::Sleep => Ok(StoreStepKind::Sleep),
-        StepKind::ChildWorkflow => Ok(StoreStepKind::Function), // Map child workflow to function for now
+        StepKind::ChildWorkflow => Ok(StoreStepKind::Function),
+        StepKind::Lifecycle => Ok(StoreStepKind::WorkflowStarted),
         StepKind::Unspecified => Err(invalid_argument_error("step kind is required")),
     }
 }

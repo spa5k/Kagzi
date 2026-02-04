@@ -566,6 +566,54 @@ impl StepRepository for PgStepRepository {
 
         Ok(result.rows_affected())
     }
+
+    #[instrument(skip(self, output))]
+    async fn record_lifecycle_event(
+        &self,
+        run_id: Uuid,
+        step_kind: StepKind,
+        output: Option<Vec<u8>>,
+    ) -> Result<(), StoreError> {
+        let step_id = format!("__lifecycle:{}", step_kind.as_ref().to_lowercase());
+        let attempt_id = Uuid::now_v7();
+
+        let status = match step_kind {
+            StepKind::WorkflowFailed => "FAILED",
+            StepKind::WorkflowCancelled => "COMPLETED",
+            _ => "COMPLETED",
+        };
+
+        let error = if step_kind == StepKind::WorkflowFailed {
+            output.as_ref().and_then(|b| String::from_utf8(b.clone()).ok())
+        } else {
+            None
+        };
+
+        sqlx::query!(
+            r#"
+            INSERT INTO kagzi.step_runs (
+                attempt_id, run_id, step_id, step_kind, status,
+                output, error, started_at, finished_at, is_latest, attempt_number, namespace
+            )
+            VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, NOW(), NOW(), true, 1,
+                (SELECT namespace FROM kagzi.workflow_runs WHERE run_id = $2)
+            )
+            "#,
+            attempt_id,
+            run_id,
+            step_id,
+            step_kind.as_ref(),
+            status,
+            output.as_deref(),
+            error
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -345,6 +345,16 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             if let Some(work_item) = work_item {
                 let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 
+                let _ = self
+                    .store
+                    .steps()
+                    .record_lifecycle_event(
+                        work_item.run_id,
+                        kagzi_store::StepKind::WorkflowStarted,
+                        None,
+                    )
+                    .await;
+
                 info!(
                     run_id = %work_item.run_id,
                     workflow_type = %work_item.workflow_type,
@@ -580,13 +590,23 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         let _ = self.validate_workflow_action(run_id, false).await?;
 
-        let output = payload_to_optional_bytes(req.output).unwrap_or_default();
+        let output = payload_to_optional_bytes(req.output.clone()).unwrap_or_default();
 
         self.store
             .workflows()
-            .complete(run_id, output)
+            .complete(run_id, output.clone())
             .await
             .map_err(map_store_error)?;
+
+        let _ = self
+            .store
+            .steps()
+            .record_lifecycle_event(
+                run_id,
+                kagzi_store::StepKind::WorkflowCompleted,
+                Some(output),
+            )
+            .await;
 
         info!(run_id = %run_id, "Workflow completed");
 
@@ -621,6 +641,16 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             .fail(run_id, &error_detail.message)
             .await
             .map_err(map_store_error)?;
+
+        let _ = self
+            .store
+            .steps()
+            .record_lifecycle_event(
+                run_id,
+                kagzi_store::StepKind::WorkflowFailed,
+                Some(error_detail.message.clone().into_bytes()),
+            )
+            .await;
 
         info!(
             run_id = %run_id,
