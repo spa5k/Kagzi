@@ -13,7 +13,7 @@ use kagzi_store::{
     WorkflowRepository,
 };
 use tonic::{Request, Response, Status};
-use tracing::instrument;
+use tracing::{instrument, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
@@ -257,11 +257,18 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             .map_err(map_store_error)?;
 
         if cancelled {
-            let _ = self
+            if let Err(err) = self
                 .store
                 .steps()
                 .record_lifecycle_event(run_id, kagzi_store::StepKind::WorkflowCancelled, None)
-                .await;
+                .await
+            {
+                warn!(
+                    run_id = %run_id,
+                    error = %err,
+                    "Failed to record WorkflowCancelled lifecycle event"
+                );
+            }
 
             Ok(Response::new(CancelWorkflowResponse {
                 cancelled: true,

@@ -85,7 +85,9 @@ pub fn map_proto_step_kind(kind: i32) -> Result<StoreStepKind, Status> {
         StepKind::Function => Ok(StoreStepKind::Function),
         StepKind::Sleep => Ok(StoreStepKind::Sleep),
         StepKind::ChildWorkflow => Ok(StoreStepKind::Function),
-        StepKind::Lifecycle => Ok(StoreStepKind::WorkflowStarted),
+        StepKind::Lifecycle => Err(invalid_argument_error(
+            "lifecycle steps are synthetic and cannot be created by workers",
+        )),
         StepKind::Unspecified => Err(invalid_argument_error("step kind is required")),
     }
 }

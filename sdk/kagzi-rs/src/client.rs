@@ -602,6 +602,10 @@ impl ScheduleBuilder {
     /// Checks that required fields are set, validates the cron expression,
     /// and ensures constraints are satisfied.
     fn validate(&self) -> anyhow::Result<()> {
+        if self._schedule_id.trim().is_empty() {
+            anyhow::bail!("schedule_id cannot be empty");
+        }
+
         if self.namespace.is_empty() {
             anyhow::bail!("namespace cannot be empty");
         }
