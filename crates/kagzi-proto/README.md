@@ -74,7 +74,8 @@ Handles worker registration, lifecycle management, and task execution.
 | **Lifecycle** | `Register`         | `RegisterRequest`         | `RegisterResponse`         | Register worker and receive worker_id and heartbeat interval |
 |               | `Heartbeat`        | `HeartbeatRequest`        | `HeartbeatResponse`        | Send heartbeat with activity stats                           |
 |               | `Deregister`       | `DeregisterRequest`       | `google.protobuf.Empty`    | Unregister worker (optionally drain)                         |
-| **Execution** | `PollTask`         | `PollTaskRequest`         | `PollTaskResponse`         | Poll for next available task                                 |
+| **Execution** | `SubscribeWork`    | `SubscribeWorkRequest`    | `stream WorkAvailable`     | Subscribe to wakeups when work may be available              |
+|               | `ClaimTask`        | `ClaimTaskRequest`        | `ClaimTaskResponse`        | Attempt a single authoritative DB claim                      |
 |               | `BeginStep`        | `BeginStepRequest`        | `BeginStepResponse`        | Begin step execution, receive step_id and cached output      |
 |               | `CompleteStep`     | `CompleteStepRequest`     | `CompleteStepResponse`     | Complete a step with output                                  |
 |               | `FailStep`         | `FailStepRequest`         | `FailStepResponse`         | Report step failure with optional retry scheduling           |
@@ -87,7 +88,7 @@ Handles worker registration, lifecycle management, and task execution.
 ```rust
 use kagzi_proto::kagzi::v1::{
     worker_service_client::WorkerServiceClient,
-    RegisterRequest, PollTaskRequest, BeginStepRequest, CompleteStepRequest,
+    RegisterRequest, SubscribeWorkRequest, ClaimTaskRequest, BeginStepRequest, CompleteStepRequest,
     StepKind,
 };
 
@@ -105,14 +106,27 @@ let register_response = client.register(RegisterRequest {
 }).await?;
 let worker_id = register_response.into_inner().worker_id;
 
-// Poll for tasks
-loop {
-    let task = client.poll_task(PollTaskRequest {
+// Subscribe for wakeups and claim tasks
+let mut stream = client.subscribe_work(SubscribeWorkRequest {
+    worker_id: worker_id.clone(),
+    namespace: "default".to_string(),
+    task_queue: "main".to_string(),
+    workflow_types: vec!["process-order".to_string()],
+}).await?.into_inner();
+
+while let Some(_wakeup) = stream.message().await? {
+    let resp = client.claim_task(ClaimTaskRequest {
         worker_id: worker_id.clone(),
-        namespace_id: "default".to_string(),
+        namespace: "default".to_string(),
         task_queue: "main".to_string(),
         workflow_types: vec!["process-order".to_string()],
-    }).await?;
+    }).await?.into_inner();
+
+    let Some(result) = resp.result else { continue };
+    let task = match result {
+        kagzi_proto::kagzi::v1::claim_task_response::Result::Task(task) => task,
+        kagzi_proto::kagzi::v1::claim_task_response::Result::NoTask(_) => continue,
+    };
 
     // Begin step
     let begin_response = client.begin_step(BeginStepRequest {
@@ -695,7 +709,7 @@ impl KagziClient {
 ```rust
 use kagzi_proto::kagzi::v1::{
     worker_service_client::WorkerServiceClient,
-    RegisterRequest, PollTaskRequest, BeginStepRequest,
+    RegisterRequest, SubscribeWorkRequest, ClaimTaskRequest, BeginStepRequest,
     CompleteStepRequest, Payload,
 };
 use tonic::transport::Channel;
@@ -705,7 +719,7 @@ async fn run_worker(server_addr: &str) -> Result<(), Box<dyn std::error::Error>>
 
     // Register worker
     let register_response = client.register(RegisterRequest {
-        namespace_id: "default".to_string(),
+        namespace: "default".to_string(),
         task_queue: "main".to_string(),
         workflow_types: vec!["process-order".to_string()],
         hostname: hostname::get()?.to_string_lossy().to_string(),
@@ -734,16 +748,30 @@ async fn run_worker(server_addr: &str) -> Result<(), Box<dyn std::error::Error>>
         }
     });
 
-    // Main task loop
+    // Subscribe + claim loop
+    let mut stream = client.subscribe_work(SubscribeWorkRequest {
+        worker_id: worker_id.clone(),
+        namespace: "default".to_string(),
+        task_queue: "main".to_string(),
+        workflow_types: vec!["process-order".to_string()],
+    }).await?.into_inner();
+
     loop {
-        match client.poll_task(PollTaskRequest {
-            worker_id: worker_id.clone(),
-            namespace_id: "default".to_string(),
-            task_queue: "main".to_string(),
-            workflow_types: vec!["process-order".to_string()],
-        }).await {
-            Ok(response) => {
-                let task = response.into_inner();
+        match stream.message().await {
+            Ok(Some(_wakeup)) => {
+                let resp = client.claim_task(ClaimTaskRequest {
+                    worker_id: worker_id.clone(),
+                    namespace: "default".to_string(),
+                    task_queue: "main".to_string(),
+                    workflow_types: vec!["process-order".to_string()],
+                }).await?.into_inner();
+
+                let Some(result) = resp.result else { continue };
+                let task = match result {
+                    kagzi_proto::kagzi::v1::claim_task_response::Result::Task(task) => task,
+                    kagzi_proto::kagzi::v1::claim_task_response::Result::NoTask(_) => continue,
+                };
+
                 if let Some(input) = task.input {
                     // Begin step
                     let begin_response = client.begin_step(BeginStepRequest {
@@ -770,10 +798,26 @@ async fn run_worker(server_addr: &str) -> Result<(), Box<dyn std::error::Error>>
                     }).await?;
                 }
             }
+            Ok(None) => {
+                eprintln!("SubscribeWork closed, reconnecting...");
+                client = WorkerServiceClient::connect(server_addr).await?;
+                stream = client.subscribe_work(SubscribeWorkRequest {
+                    worker_id: worker_id.clone(),
+                    namespace: "default".to_string(),
+                    task_queue: "main".to_string(),
+                    workflow_types: vec!["process-order".to_string()],
+                }).await?.into_inner();
+            }
             Err(e) => {
-                eprintln!("Poll error: {}, reconnecting...", e);
+                eprintln!("SubscribeWork error: {}, reconnecting...", e);
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 client = WorkerServiceClient::connect(server_addr).await?;
+                stream = client.subscribe_work(SubscribeWorkRequest {
+                    worker_id: worker_id.clone(),
+                    namespace: "default".to_string(),
+                    task_queue: "main".to_string(),
+                    workflow_types: vec!["process-order".to_string()],
+                }).await?.into_inner();
             }
         }
     }

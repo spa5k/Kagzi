@@ -10,12 +10,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::error::QueueError;
-use crate::traits::QueueNotifier;
+use crate::bus::{WorkAvailable, WorkSignalBus};
 
 #[derive(Clone)]
 pub struct PostgresNotifier {
     pool: PgPool,
-    channels: Arc<DashMap<String, broadcast::Sender<()>>>,
+    channels: Arc<DashMap<String, broadcast::Sender<WorkAvailable>>>,
     channel_capacity: usize,
     cleanup_interval_secs: u64,
     max_reconnect_secs: u64,
@@ -41,7 +41,7 @@ impl PostgresNotifier {
         format!("{}:{}", namespace, task_queue)
     }
 
-    fn get_or_create_channel(&self, key: &str) -> broadcast::Sender<()> {
+    fn get_or_create_channel(&self, key: &str) -> broadcast::Sender<WorkAvailable> {
         self.channels
             .entry(key.to_string())
             .or_insert_with(|| {
@@ -132,9 +132,9 @@ impl PostgresNotifier {
 }
 
 #[async_trait]
-impl QueueNotifier for PostgresNotifier {
+impl WorkSignalBus for PostgresNotifier {
     #[instrument(skip(self), fields(queue_key))]
-    async fn notify(&self, namespace: &str, task_queue: &str) -> Result<(), QueueError> {
+    async fn publish(&self, namespace: &str, task_queue: &str) -> Result<(), QueueError> {
         let key = Self::queue_key(namespace, task_queue);
         tracing::Span::current().record("queue_key", &key);
 
@@ -146,13 +146,16 @@ impl QueueNotifier for PostgresNotifier {
         debug!(queue = %key, "Sent pg_notify");
 
         if let Some(tx) = self.channels.get(&key) {
-            let _ = tx.send(());
+            let _ = tx.send(WorkAvailable {
+                namespace: namespace.to_string(),
+                task_queue: task_queue.to_string(),
+            });
         }
 
         Ok(())
     }
 
-    fn subscribe(&self, namespace: &str, task_queue: &str) -> broadcast::Receiver<()> {
+    fn subscribe(&self, namespace: &str, task_queue: &str) -> broadcast::Receiver<WorkAvailable> {
         let key = Self::queue_key(namespace, task_queue);
         let tx = self.get_or_create_channel(&key);
         tx.subscribe()
@@ -186,8 +189,13 @@ impl QueueNotifier for PostgresNotifier {
                             let key = notification.payload();
                             debug!(queue = %key, "Received pg_notify");
 
-                            if let Some(tx) = self.channels.get(key) {
-                                let _ = tx.send(());
+                            if let Some((namespace, task_queue)) = key.split_once(':') {
+                                if let Some(tx) = self.channels.get(key) {
+                                    let _ = tx.send(WorkAvailable {
+                                        namespace: namespace.to_string(),
+                                        task_queue: task_queue.to_string(),
+                                    });
+                                }
                             }
                         }
                         Err(e) => {

@@ -1,3 +1,4 @@
+use std::pin::Pin;
 use std::time::Duration;
 
 use kagzi_proto::kagzi::worker_service_server::WorkerService;
@@ -5,16 +6,19 @@ use kagzi_proto::kagzi::{
     BeginStepRequest, BeginStepResponse, CompleteStepRequest, CompleteStepResponse,
     CompleteWorkflowRequest, CompleteWorkflowResponse, DeregisterRequest, DeregisterResponse,
     ErrorCode, ErrorDetail, FailStepRequest, FailStepResponse, FailWorkflowRequest,
-    FailWorkflowResponse, HeartbeatRequest, HeartbeatResponse, PollTaskRequest, PollTaskResponse,
-    RegisterRequest, RegisterResponse, SleepRequest, SleepResponse,
+    FailWorkflowResponse, HeartbeatRequest, HeartbeatResponse, RegisterRequest, RegisterResponse,
+    SleepRequest, SleepResponse,
+    ClaimTaskRequest, ClaimTaskResponse, ClaimedTask, NoTask, SubscribeWorkRequest,
+    WorkAvailable as ProtoWorkAvailable,
 };
-use kagzi_queue::QueueNotifier;
+use kagzi_queue::WorkSignalBus;
 use kagzi_store::{
     BeginStepParams, FailStepParams, PgStore, RegisterWorkerParams, StepRepository,
     WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus, WorkflowRepository,
     WorkflowTypeConcurrency,
 };
-use rand::Rng;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -25,7 +29,7 @@ use crate::helpers::{
     bytes_to_payload, invalid_argument_error, map_store_error, merge_proto_policy, not_found_error,
     payload_to_optional_bytes, precondition_failed_error, require_non_empty,
 };
-use crate::proto_convert::{empty_payload, map_proto_step_kind, step_to_proto};
+use crate::proto_convert::{map_proto_step_kind, step_to_proto};
 use crate::telemetry::extract_context;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
@@ -40,14 +44,14 @@ fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
 }
 
 #[derive(Clone)]
-pub struct WorkerServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
+pub struct WorkerServiceImpl<Q: WorkSignalBus = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
     pub worker_settings: WorkerSettings,
     pub queue_settings: crate::config::QueueSettings,
     pub queue: Q,
 }
 
-impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
+impl<Q: WorkSignalBus> WorkerServiceImpl<Q> {
     pub fn new(
         store: PgStore,
         worker_settings: WorkerSettings,
@@ -105,7 +109,10 @@ impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
 }
 
 #[tonic::async_trait]
-impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
+impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
+    type SubscribeWorkStream =
+        Pin<Box<dyn tokio_stream::Stream<Item = Result<ProtoWorkAvailable, Status>> + Send>>;
+
     #[instrument(skip(self, request), fields(task_queue = %request.get_ref().task_queue))]
     async fn register(
         &self,
@@ -262,27 +269,17 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
         Ok(Response::new(DeregisterResponse { drained: req.drain }))
     }
 
-    #[instrument(
-        skip(self, request),
-        fields(
-            worker_id = %request.get_ref().worker_id,
-            task_queue = %request.get_ref().task_queue,
-        )
-    )]
-    async fn poll_task(
+    #[instrument(skip(self, request), fields(worker_id = %request.get_ref().worker_id, task_queue = %request.get_ref().task_queue))]
+    async fn subscribe_work(
         &self,
-        request: Request<PollTaskRequest>,
-    ) -> Result<Response<PollTaskResponse>, Status> {
+        request: Request<SubscribeWorkRequest>,
+    ) -> Result<Response<Self::SubscribeWorkStream>, Status> {
         let req = request.into_inner();
 
         let worker_id = Uuid::parse_str(&req.worker_id)
             .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
-
-        if req.workflow_types.is_empty() {
-            return Err(invalid_argument_error("workflow_types cannot be empty"));
-        }
-
         let namespace = require_non_empty(req.namespace, "namespace")?;
+        let task_queue = require_non_empty(req.task_queue, "task_queue")?;
 
         let worker = self
             .store
@@ -294,7 +291,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
                 precondition_failed_error("Worker not registered or offline. Call Register first.")
             })?;
 
-        if worker.namespace != namespace || worker.task_queue != req.task_queue {
+        if worker.namespace != namespace || worker.task_queue != task_queue {
             return Err(precondition_failed_error(
                 "Worker not registered for the requested namespace/task_queue",
             ));
@@ -312,6 +309,105 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             ));
         }
 
+        if !req.workflow_types.is_empty() {
+            let effective_types: Vec<String> = worker
+                .workflow_types
+                .iter()
+                .filter(|t| req.workflow_types.iter().any(|r| r == *t))
+                .cloned()
+                .collect();
+            if effective_types.is_empty() {
+                return Err(precondition_failed_error(
+                    "Worker is not registered for the requested workflow types",
+                ));
+            }
+        }
+
+        let mut rx = self.queue.subscribe(&namespace, &task_queue);
+        let (tx, out_rx) = mpsc::channel::<Result<ProtoWorkAvailable, Status>>(64);
+
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(evt) => {
+                        if tx
+                            .send(Ok(ProtoWorkAvailable {
+                                namespace: evt.namespace,
+                                task_queue: evt.task_queue,
+                            }))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        // If lagged, still emit a wakeup; signal is lossy by design.
+                        if tx
+                            .send(Ok(ProtoWorkAvailable {
+                                namespace: namespace.clone(),
+                                task_queue: task_queue.clone(),
+                            }))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
+        Ok(Response::new(Box::pin(ReceiverStream::new(out_rx)) as Self::SubscribeWorkStream))
+    }
+
+    #[instrument(skip(self, request), fields(worker_id = %request.get_ref().worker_id, task_queue = %request.get_ref().task_queue))]
+    async fn claim_task(
+        &self,
+        request: Request<ClaimTaskRequest>,
+    ) -> Result<Response<ClaimTaskResponse>, Status> {
+        let req = request.into_inner();
+
+        let worker_id = Uuid::parse_str(&req.worker_id)
+            .map_err(|_| invalid_argument_error("Invalid worker_id"))?;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
+        let task_queue = require_non_empty(req.task_queue, "task_queue")?;
+
+        if req.workflow_types.is_empty() {
+            return Err(invalid_argument_error("workflow_types cannot be empty"));
+        }
+
+        let worker = self
+            .store
+            .workers()
+            .find_by_id(worker_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| {
+                precondition_failed_error("Worker not registered or offline. Call Register first.")
+            })?;
+
+        if worker.namespace != namespace || worker.task_queue != task_queue {
+            return Err(precondition_failed_error(
+                "Worker not registered for the requested namespace/task_queue",
+            ));
+        }
+
+        if worker.status == StoreWorkerStatus::Offline {
+            return Err(precondition_failed_error(
+                "Worker not registered or offline. Call Register first.",
+            ));
+        }
+
+        if worker.status == StoreWorkerStatus::Draining {
+            return Err(precondition_failed_error(
+                "Worker is draining and not accepting new work",
+            ));
+        }
+
+        // Server-authoritative workflow type filtering:
+        // treat request workflow_types as a requested subset, then intersect with the worker's registered types.
         let effective_types: Vec<String> = worker
             .workflow_types
             .iter()
@@ -325,87 +421,64 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
             ));
         }
 
-        let timeout = Duration::from_secs(self.worker_settings.poll_timeout_secs);
-        let deadline = tokio::time::Instant::now() + timeout;
+        let work_item = self
+            .store
+            .workflows()
+            .poll_workflow(
+                &namespace,
+                &task_queue,
+                &req.worker_id,
+                &effective_types,
+                self.worker_settings.visibility_timeout_secs,
+            )
+            .await
+            .map_err(map_store_error)?;
 
-        loop {
-            let work_item = self
-                .store
-                .workflows()
-                .poll_workflow(
-                    &namespace,
-                    &req.task_queue,
-                    &req.worker_id,
-                    &effective_types,
-                    self.worker_settings.visibility_timeout_secs,
-                )
-                .await
-                .map_err(map_store_error)?;
+        let Some(work_item) = work_item else {
+            return Ok(Response::new(ClaimTaskResponse {
+                result: Some(kagzi_proto::kagzi::claim_task_response::Result::NoTask(
+                    NoTask {},
+                )),
+            }));
+        };
 
-            if let Some(work_item) = work_item {
-                let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
+        let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 
-                if let Err(err) = self
-                    .store
-                    .steps()
-                    .record_lifecycle_event(
-                        work_item.run_id,
-                        kagzi_store::StepKind::WorkflowStarted,
-                        None,
-                    )
-                    .await
-                {
-                    warn!(
-                        run_id = %work_item.run_id,
-                        error = %err,
-                        "Failed to record WorkflowStarted lifecycle event"
-                    );
-                }
+        if let Err(err) = self
+            .store
+            .steps()
+            .record_lifecycle_event(
+                work_item.run_id,
+                kagzi_store::StepKind::WorkflowStarted,
+                None,
+            )
+            .await
+        {
+            warn!(
+                run_id = %work_item.run_id,
+                error = %err,
+                "Failed to record WorkflowStarted lifecycle event"
+            );
+        }
 
-                info!(
-                    run_id = %work_item.run_id,
-                    workflow_type = %work_item.workflow_type,
-                    worker_id = %req.worker_id,
-                    "Dispatched workflow"
-                );
+        info!(
+            run_id = %work_item.run_id,
+            workflow_type = %work_item.workflow_type,
+            worker_id = %req.worker_id,
+            "Claimed workflow"
+        );
 
-                let payload = bytes_to_payload(Some(work_item.input));
+        let payload = bytes_to_payload(Some(work_item.input));
 
-                return Ok(Response::new(PollTaskResponse {
+        Ok(Response::new(ClaimTaskResponse {
+            result: Some(kagzi_proto::kagzi::claim_task_response::Result::Task(
+                ClaimedTask {
                     run_id: work_item.run_id.to_string(),
                     workflow_type: work_item.workflow_type,
                     input: Some(payload),
-                }));
-            }
-
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Ok(Response::new(PollTaskResponse {
-                    run_id: String::new(),
-                    workflow_type: String::new(),
-                    input: Some(empty_payload()),
-                }));
-            }
-
-            let mut rx = self.queue.subscribe(&namespace, &req.task_queue);
-
-            let notification_result = tokio::time::timeout(remaining, rx.recv()).await;
-
-            match notification_result {
-                Ok(Ok(_)) => {
-                    // Add jitter to prevent thundering herd, but handle zero config gracefully
-                    if self.queue_settings.poll_jitter_ms > 0 {
-                        let jitter_ms =
-                            rand::rng().random_range(0..self.queue_settings.poll_jitter_ms);
-                        tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
-                    }
-                }
-                Ok(Err(_)) => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                Err(_) => {}
-            }
-        }
+                },
+            )),
+        }))
     }
 
     #[instrument(
@@ -721,7 +794,7 @@ impl<Q: QueueNotifier + 'static> WorkerService for WorkerServiceImpl<Q> {
     }
 }
 
-impl<Q: QueueNotifier> WorkerServiceImpl<Q> {
+impl<Q: WorkSignalBus> WorkerServiceImpl<Q> {
     async fn complete_pending_sleep_steps(&self, run_id: Uuid) -> Result<(), Status> {
         let _ = self
             .store

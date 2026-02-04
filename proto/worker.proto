@@ -16,8 +16,13 @@ service WorkerService {
   // Deregister removes worker registration, optionally draining in-flight workflows first.
   rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
 
-  // PollTask blocks until a workflow task is available or timeout expires.
-  rpc PollTask(PollTaskRequest) returns (PollTaskResponse);
+  // SubscribeWork provides a stream of wakeups when a task queue may have runnable work.
+  // This is primarily used for the Postgres LISTEN/NOTIFY "easy start" mode.
+  rpc SubscribeWork(SubscribeWorkRequest) returns (stream WorkAvailable);
+
+  // ClaimTask attempts a single authoritative DB claim and returns a task if claimed.
+  rpc ClaimTask(ClaimTaskRequest) returns (ClaimTaskResponse);
+
   // BeginStep initiates a step execution with idempotency support via step name.
   rpc BeginStep(BeginStepRequest) returns (BeginStepResponse);
   // CompleteStep marks a step as successfully completed with output data.
@@ -133,14 +138,36 @@ message DeregisterRequest {
   bool drain = 2;
 }
 
-message PollTaskRequest {
+message SubscribeWorkRequest {
   string namespace = 1;
   string worker_id = 2;
   string task_queue = 3;
   repeated string workflow_types = 4;
 }
 
-message PollTaskResponse {
+message WorkAvailable {
+  string namespace = 1;
+  string task_queue = 2;
+}
+
+message ClaimTaskRequest {
+  string namespace = 1;
+  string worker_id = 2;
+  string task_queue = 3;
+  // Requested subset; the server intersects this with the worker's registered types.
+  repeated string workflow_types = 4;
+}
+
+message ClaimTaskResponse {
+  oneof result {
+    ClaimedTask task = 1;
+    NoTask no_task = 2;
+  }
+}
+
+message NoTask {}
+
+message ClaimedTask {
   string run_id = 1;
   string workflow_type = 2;
   Payload input = 3;

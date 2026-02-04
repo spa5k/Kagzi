@@ -6,7 +6,7 @@ use kagzi_proto::kagzi::{
     StartWorkflowRequest, StartWorkflowResponse, TerminateWorkflowRequest,
     TerminateWorkflowResponse, WorkflowStatus,
 };
-use kagzi_queue::QueueNotifier;
+use kagzi_queue::WorkSignalBus;
 use kagzi_store::repository::NamespaceRepository;
 use kagzi_store::{
     CreateWorkflow, ListWorkflowsParams, PgStore, StepRepository, WorkflowCursor,
@@ -26,19 +26,19 @@ use crate::helpers::{
 use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
 use crate::telemetry::extract_context;
 
-pub struct WorkflowServiceImpl<Q: QueueNotifier = kagzi_queue::PostgresNotifier> {
+pub struct WorkflowServiceImpl<Q: WorkSignalBus = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
     pub queue: Q,
 }
 
-impl<Q: QueueNotifier> WorkflowServiceImpl<Q> {
+impl<Q: WorkSignalBus> WorkflowServiceImpl<Q> {
     pub fn new(store: PgStore, queue: Q) -> Self {
         Self { store, queue }
     }
 }
 
 #[tonic::async_trait]
-impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
+impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
     #[instrument(
         skip(self, request),
         fields(
@@ -114,7 +114,7 @@ impl<Q: QueueNotifier + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         };
 
         if !already_exists {
-            let _ = self.queue.notify(&namespace, &task_queue).await;
+            let _ = self.queue.publish(&namespace, &task_queue).await;
         }
 
         Ok(Response::new(StartWorkflowResponse {

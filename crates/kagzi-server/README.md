@@ -224,29 +224,48 @@ Removes worker registration.
 - Drain: Worker stops accepting new work, completes current workflows
 - Immediate: Worker marked offline, workflows recovered as orphans
 
-##### PollTask
+##### SubscribeWork
 
-Long-poll for available work. Uses PostgreSQL LISTEN/NOTIFY for efficiency.
+Server-streaming wakeups when a `{namespace, task_queue}` may have runnable work.
 
 **Fields:**
 
 - `worker_id` (string, required)
-- `workflow_types` (repeated string): Subset of registered types to poll for
-- `task_queue` (string): Queue to poll from
-- `namespace_id` (string): Namespace (default: "default")
+- `task_queue` (string, required)
+- `namespace` (string, required; default: "default")
+- `workflow_types` (repeated string, optional): Allows server to reject obviously-incompatible subscriptions early
 
-**Returns:**
+**Returns (stream):**
 
-- `run_id` (string): Workflow to execute, or empty if timeout
-- `workflow_type` (string): Type of workflow
-- `input` (Payload): Workflow input data
+- `WorkAvailable { namespace, task_queue }` events (payload is a wakeup signal; duplicates are normal)
 
 **Behavior:**
 
-- Immediately returns available workflow if present
-- Waits on PostgreSQL channel for new work notification (up to `poll_timeout_secs`)
-- Uses jitter (0-500ms) on notification to prevent thundering herd
-- Decrements worker active count on timeout
+- Validates worker is ONLINE, not draining, and registered for `{namespace, task_queue}`
+- Uses PostgreSQL LISTEN/NOTIFY to wake workers efficiently (Postgres “easy start” mode)
+
+##### ClaimTask
+
+Attempt a single authoritative DB claim for a workflow task.
+
+**Fields:**
+
+- `worker_id` (string, required)
+- `task_queue` (string, required)
+- `namespace` (string, required; default: "default")
+- `workflow_types` (repeated string, required): Requested subset; server intersects with worker’s registered types
+
+**Returns:**
+
+- `ClaimTaskResponse` with `oneof`:
+  - `task`: `ClaimedTask { run_id, workflow_type, input }`
+  - `no_task`: `NoTask {}`
+
+**Behavior:**
+
+- Validates worker is ONLINE, not draining, and registered for `{namespace, task_queue}`
+- Enforces workflow type authorization via intersection of requested and registered types
+- On successful claim, performs best-effort post-claim actions (sleep completion + `WorkflowStarted` lifecycle event)
 
 ##### BeginStep
 
@@ -491,7 +510,7 @@ Configuration is loaded from environment variables with the `KAGZI_` prefix.
 | `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK`     | Max workflows per scheduler tick | `1000`          |
 | `KAGZI_WATCHDOG_INTERVAL_SECS`               | Watchdog tick interval           | `1`             |
 | `KAGZI_WATCHDOG_WORKER_STALE_THRESHOLD_SECS` | Time before worker marked stale  | `30`            |
-| `KAGZI_WORKER_POLL_TIMEOUT_SECS`             | PollTask timeout                 | `60`            |
+| `KAGZI_WORKER_POLL_TIMEOUT_SECS`             | Legacy PollTask timeout (unused) | `60`            |
 | `KAGZI_WORKER_HEARTBEAT_INTERVAL_SECS`       | Required heartbeat interval      | `10`            |
 | `KAGZI_PAYLOAD_WARN_THRESHOLD_BYTES`         | Payload size warning threshold   | `1048576` (1MB) |
 | `KAGZI_PAYLOAD_MAX_SIZE_BYTES`               | Payload max size                 | `2097152` (2MB) |
@@ -745,7 +764,7 @@ The server handles graceful shutdown via SIGINT/SIGTERM:
 Worker drain process:
 
 1. Mark worker as DRAINING via Deregister
-2. Worker stops accepting new work (PollTask returns precondition_failed)
+2. Worker stops accepting new work (`ClaimTask` returns precondition_failed)
 3. Worker completes in-flight workflows
 4. Worker calls Deregister again (or process exits)
 

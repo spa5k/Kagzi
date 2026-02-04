@@ -5,7 +5,7 @@ use kagzi_proto::kagzi::namespace_service_server::NamespaceServiceServer;
 use kagzi_proto::kagzi::worker_service_server::WorkerServiceServer;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServiceServer;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
-use kagzi_queue::QueueNotifier;
+use kagzi_queue::WorkSignalBus;
 use kagzi_server::config::Settings;
 use kagzi_server::{
     AdminServiceImpl, NamespaceServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl,

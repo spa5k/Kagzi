@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use kagzi::{Kagzi, Worker, WorkerBuilder};
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
-use kagzi_queue::QueueNotifier;
+use kagzi_queue::WorkSignalBus;
 use kagzi_server::config::{CoordinatorSettings, WorkerSettings};
 use kagzi_server::{
     AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,

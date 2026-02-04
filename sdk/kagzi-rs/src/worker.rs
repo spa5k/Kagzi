@@ -39,7 +39,8 @@ use backon::{BackoffBuilder, ExponentialBuilder};
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
     CompleteWorkflowRequest, DeregisterRequest, ErrorCode, FailWorkflowRequest, HeartbeatRequest,
-    Payload as ProtoPayload, PollTaskRequest, RegisterRequest,
+    Payload as ProtoPayload, RegisterRequest,
+    ClaimTaskRequest, SubscribeWorkRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -65,6 +66,12 @@ const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 10;
 
 /// Long poll timeout for task polling (slightly longer than server hold time)
 const POLL_TIMEOUT_SECS: u64 = 65;
+
+/// Fallback claim tick in seconds (belt-and-suspenders for lost wakeups)
+const FALLBACK_CLAIM_TICK_SECS: u64 = 10;
+
+/// Maximum number of claim attempts per wakeup signal (bounded by available permits)
+const DRAIN_CLAIM_BUDGET: usize = 100;
 
 /// Workflow handler function type.
 ///
@@ -313,7 +320,7 @@ impl Worker {
     /// This method will:
     /// 1. Register the worker with the server
     /// 2. Start a heartbeat task
-    /// 3. Poll for tasks and execute them
+    /// 3. Subscribe for work wakeups and claim tasks
     /// 4. Handle graceful shutdown
     #[tracing::instrument(skip(self))]
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -325,6 +332,7 @@ impl Worker {
         let primary_queue = self
             .workflow_types
             .first()
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("No workflows registered"))?;
 
         let resp = self
@@ -367,7 +375,21 @@ impl Worker {
             }
         };
 
-        let primary_queue_clone = primary_queue.clone();
+        let worker_id = match &self.worker_id {
+            Some(id) => id.to_string(),
+            None => {
+                warn!("Worker not registered, cannot subscribe");
+                return Ok(());
+            }
+        };
+
+        let mut stream = self.subscribe_work_stream(&worker_id, &primary_queue).await?;
+
+        // Prime the pump: try a single claim at startup, in case signals were missed.
+        let _ = self.drain_claim_and_execute(&primary_queue, 1).await;
+
+        let mut fallback_ticker =
+            tokio::time::interval(Duration::from_secs(FALLBACK_CLAIM_TICK_SECS));
         let shutdown = self.shutdown.clone();
         loop {
             tokio::select! {
@@ -375,7 +397,25 @@ impl Worker {
                     info!("Worker shutdown signal received");
                     break;
                 }
-                _ = self.poll_and_execute(primary_queue_clone.clone()) => {}
+                _ = fallback_ticker.tick() => {
+                    let _ = self.drain_claim_and_execute(&primary_queue, 1).await;
+                }
+                msg = stream.message() => {
+                    match msg {
+                        Ok(Some(_work_available)) => {
+                            let _ = self.drain_claim_and_execute(&primary_queue, DRAIN_CLAIM_BUDGET).await;
+                        }
+                        Ok(None) => {
+                            error!("SubscribeWork stream closed by server, resubscribing");
+                            stream = self.subscribe_work_stream(&worker_id, &primary_queue).await?;
+                        }
+                        Err(e) => {
+                            error!(error = %e, "SubscribeWork stream error");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            stream = self.subscribe_work_stream(&worker_id, &primary_queue).await?;
+                        }
+                    }
+                }
             }
         }
 
@@ -452,80 +492,153 @@ impl Worker {
         }))
     }
 
-    /// Poll for a task from the server and execute it
     #[tracing::instrument(skip(self))]
-    async fn poll_and_execute(&mut self, task_queue: String) {
-        let permit = match self.semaphore.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => return,
-        };
+    async fn subscribe_work_stream(
+        &mut self,
+        worker_id: &str,
+        task_queue: &str,
+    ) -> anyhow::Result<tonic::Streaming<kagzi_proto::kagzi::WorkAvailable>> {
+        let mut backoff = ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(100))
+            .with_max_delay(Duration::from_secs(10))
+            .with_jitter()
+            .build();
 
+        loop {
+            match self
+                .client
+                .subscribe_work(Request::new(SubscribeWorkRequest {
+                    namespace: self.namespace.clone(),
+                    worker_id: worker_id.to_string(),
+                    task_queue: task_queue.to_string(),
+                    workflow_types: self.workflow_types.clone(),
+                }))
+                .await
+            {
+                Ok(r) => return Ok(r.into_inner()),
+                Err(e) => {
+                    error!(error = %e, "Failed to SubscribeWork, retrying");
+                    let d = backoff.next().unwrap_or(Duration::from_secs(10));
+                    tokio::time::sleep(d).await;
+                }
+            }
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn drain_claim_and_execute(&mut self, task_queue: &str, budget: usize) -> usize {
         let worker_id = match &self.worker_id {
-            Some(id) => id,
+            Some(id) => id.to_string(),
             None => {
-                warn!("Worker not registered, skipping poll");
+                warn!("Worker not registered, skipping claim");
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                return;
+                return 0;
             }
         };
 
-        // Timeout is handled by tower middleware at the channel level
-        let request = Request::new(PollTaskRequest {
-            task_queue,
-            worker_id: worker_id.to_string(),
-            namespace: self.namespace.clone(),
-            workflow_types: self.workflow_types.clone(),
-        });
+        let mut claimed = 0usize;
 
-        let resp = self.client.poll_task(request).await;
+        for _ in 0..budget {
+            let permit = match self.semaphore.clone().try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => break, // no permits left
+            };
 
-        match resp {
-            Ok(r) => {
-                let task = r.into_inner();
-                // Reset failure counter on successful poll
-                self.consecutive_poll_failures.store(0, Ordering::Relaxed);
-                if task.run_id.is_empty() {
-                    drop(permit);
-                    return;
-                }
+            let resp = self
+                .client
+                .claim_task(Request::new(ClaimTaskRequest {
+                    namespace: self.namespace.clone(),
+                    worker_id: worker_id.clone(),
+                    task_queue: task_queue.to_string(),
+                    workflow_types: self.workflow_types.clone(),
+                }))
+                .await;
 
-                if let Some(handler) = self.workflows.get(&task.workflow_type) {
-                    let handler = handler.clone();
-                    let client = self.client.clone();
-                    let payload = task.input.unwrap_or(ProtoPayload {
-                        data: Vec::new(),
-                        metadata: HashMap::new(),
-                    });
-                    let input: serde_json::Value = match serde_json::from_slice(&payload.data) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            warn!(
-                                run_id = %task.run_id,
-                                error = %e,
-                                payload_len = payload.data.len(),
-                                "Failed to deserialize task input, using null"
-                            );
-                            serde_json::Value::Null
-                        }
+            match resp {
+                Ok(r) => {
+                    // Reset failure counter on successful round-trip
+                    self.consecutive_poll_failures.store(0, Ordering::Relaxed);
+                    let inner = r.into_inner();
+                    let Some(result) = inner.result else {
+                        drop(permit);
+                        break;
                     };
-                    let run_id = task.run_id.clone();
-                    let default_retry = self.default_retry.clone();
-                    let namespace = self.namespace.clone();
 
-                    tokio::spawn(async move {
-                        let _permit = permit;
-                        execute_workflow(client, handler, run_id, namespace, input, default_retry)
-                            .await;
-                    });
-                } else {
-                    error!(workflow_type = %task.workflow_type, "No handler for workflow type");
-                    drop(permit);
+                    match result {
+                        kagzi_proto::kagzi::claim_task_response::Result::NoTask(_) => {
+                            if claimed == 0 && budget > 1 {
+                                // Avoid hammering ClaimTask when signals are racing across workers.
+                                tokio::time::sleep(Duration::from_millis(25)).await;
+                            }
+                            drop(permit);
+                            break;
+                        }
+                        kagzi_proto::kagzi::claim_task_response::Result::Task(task) => {
+                            claimed += 1;
+
+                            if let Some(handler) = self.workflows.get(&task.workflow_type) {
+                                let handler = handler.clone();
+                                let client = self.client.clone();
+                                let payload = task.input.unwrap_or(ProtoPayload {
+                                    data: Vec::new(),
+                                    metadata: HashMap::new(),
+                                });
+                                let input: serde_json::Value =
+                                    match serde_json::from_slice(&payload.data) {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            warn!(
+                                                run_id = %task.run_id,
+                                                error = %e,
+                                                payload_len = payload.data.len(),
+                                                "Failed to deserialize task input, using null"
+                                            );
+                                            serde_json::Value::Null
+                                        }
+                                    };
+                                let run_id = task.run_id.clone();
+                                let default_retry = self.default_retry.clone();
+                                let namespace = self.namespace.clone();
+
+                                tokio::spawn(async move {
+                                    let _permit = permit;
+                                    execute_workflow(
+                                        client,
+                                        handler,
+                                        run_id,
+                                        namespace,
+                                        input,
+                                        default_retry,
+                                    )
+                                    .await;
+                                });
+                            } else {
+                                error!(
+                                    workflow_type = %task.workflow_type,
+                                    "No handler for workflow type"
+                                );
+                                drop(permit);
+                            }
+                        }
+                    }
                 }
-            }
-            Err(e) => {
-                drop(permit);
-                if e.code() != tonic::Code::DeadlineExceeded {
-                    error!(error = %e, "Poll failed");
+                Err(e) => {
+                    drop(permit);
+
+                    // If NotFound or FailedPrecondition, the server thinks we're offline/draining
+                    // or otherwise unauthorized for this queue. Trigger shutdown to prevent
+                    // double execution if tasks are reassigned.
+                    if e.code() == tonic::Code::NotFound || e.code() == tonic::Code::FailedPrecondition
+                    {
+                        error!(
+                            error = %e,
+                            "Claim rejected by server (offline/draining/not registered), triggering shutdown"
+                        );
+                        self.shutdown.cancel();
+                        break;
+                    }
+
+                    error!(error = %e, "ClaimTask failed");
                     let _failures = self
                         .consecutive_poll_failures
                         .fetch_add(1, Ordering::Relaxed)
@@ -539,9 +652,12 @@ impl Worker {
 
                     let backoff_duration = backoff.next().unwrap_or(Duration::from_secs(30));
                     tokio::time::sleep(backoff_duration).await;
+                    break;
                 }
             }
         }
+
+        claimed
     }
 }
 

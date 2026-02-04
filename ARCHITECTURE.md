@@ -172,9 +172,10 @@ graph TD
 
 **kagzi-queue** (`crates/kagzi-queue`)
 
-- Queue notification abstraction
-- `QueueNotifier` trait for pluggable implementations
-- `PostgresNotifier`: PostgreSQL LISTEN/NOTIFY implementation
+- Work-signal bus abstraction (lossy wakeups; never a claim)
+- `WorkSignalBus` trait for pluggable implementations
+- `WorkAvailable`: wakeup signal `{namespace, task_queue}`
+- `PostgresNotifier`: PostgreSQL LISTEN/NOTIFY implementation (default)
   - In-memory broadcast channels for local subscribers
   - Automatic reconnection with exponential backoff
   - Periodic cleanup of stale channels
@@ -207,7 +208,7 @@ graph TD
 
 **Server**: A gRPC service handling client requests, workflow lifecycle operations, and coordinating background tasks like schedule firing.
 
-**Queue**: PostgreSQL's LISTEN/NOTIFY mechanism provides event-driven wake-up, reducing polling latency when new work arrives.
+**Work-signal bus**: A lossy wakeup distribution mechanism (default: PostgreSQL LISTEN/NOTIFY). Signals indicate “there may be runnable work”; workers must always go through an authoritative DB lease/claim before executing.
 
 **Store**: The persistence layer abstracting database operations through repository traits, enabling type-safe SQL via sqlx.
 
@@ -255,12 +256,12 @@ The queue notification system enables low-latency work distribution:
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Worker Polling Sequence
+#### Worker Subscribe + Claim Sequence
 
 ```mermaid
 sequenceDiagram
     participant W as Worker
-    participant Q as QueueNotifier
+    participant Q as WorkSignalBus
     participant PG as PostgreSQL
     participant S as Server
 
@@ -269,19 +270,20 @@ sequenceDiagram
     S->>PG: INSERT INTO workers
     S-->>W: Registration confirmed
 
-    W->>Q: subscribe(namespace, task_queue)
-    Q-->>W: broadcast::Receiver
+    W->>S: SubscribeWork(namespace, task_queue, worker_id)
+    S->>Q: subscribe(namespace, task_queue)
+    Q-->>S: broadcast::Receiver<WorkAvailable>
 
-    loop Polling Loop
-        par Wait for notification or timeout
-            W->>Q: rx.recv() with timeout
+    loop Main Loop
+        par Wait for wakeup
+            S-->>W: stream WorkAvailable
         and Periodic heartbeat
             W->>S: Heartbeat(worker_id)
             S->>PG: UPDATE workers SET last_heartbeat_at
         end
 
-        alt Notification received or timeout
-            W->>S: PollTask(namespace, task_queue)
+        alt Wakeup received
+            W->>S: ClaimTask(namespace, task_queue, worker_id)
             S->>PG: SELECT ... FOR UPDATE SKIP LOCKED
 
             alt Work available
@@ -295,12 +297,12 @@ sequenceDiagram
                 S->>PG: UPDATE workflow_runs
 
                 alt Workflow completed successfully
-                    S->>Q: notify(namespace, task_queue)
+                    S->>Q: publish(namespace, task_queue)
                     Q->>PG: pg_notify('kagzi_work', key)
                 end
             else No work
                 S-->>W: Empty response
-                Note over W: Continue polling
+                Note over W: Wait for next wakeup
             end
         end
     end
@@ -808,7 +810,7 @@ The `workflow_runs` table is the primary job queue:
 | Column                 | Type        | Purpose                                                              |
 | ---------------------- | ----------- | -------------------------------------------------------------------- |
 | run_id                 | UUID        | Primary key (UUID v7 for time ordering)                              |
-| namespace_id           | TEXT        | Multi-tenant isolation (default: 'default')                          |
+| namespace              | TEXT        | Multi-tenant isolation (default: 'default')                          |
 | external_id            | TEXT        | User-provided idempotency key                                        |
 | task_queue             | TEXT        | Work distribution queue                                              |
 | workflow_type          | TEXT        | Workflow identifier                                                  |
@@ -821,8 +823,9 @@ The `workflow_runs` table is the primary job queue:
 | error                  | TEXT        | Error message if failed                                              |
 | parent_step_attempt_id | TEXT        | Parent step if spawned from another workflow                         |
 | cron_expr              | TEXT        | Cron expression (for schedule templates)                             |
-| schedule_group_id      | UUID        | Groups fired runs to their schedule template                         |
-| max_catchup            | INTEGER     | Max missed firings to catch up (default: 100)                        |
+| schedule_id            | UUID        | Points fired runs to their schedule template                         |
+| last_fired_at          | TIMESTAMPTZ | Last fired timestamp (schedule templates only)                       |
+| max_catchup            | INTEGER     | Max missed firings to catch up (default: 50)                         |
 | created_at             | TIMESTAMPTZ | Workflow creation time                                               |
 | started_at             | TIMESTAMPTZ | First execution time                                                 |
 | finished_at            | TIMESTAMPTZ | Completion time                                                      |
@@ -831,9 +834,10 @@ The `available_at` timestamp unifies scheduling, visibility timeout, and retry b
 
 **Key Indexes:**
 
-- `idx_workflow_available`: (namespace_id, task_queue, available_at) for polling
-- `idx_workflow_scheduled`: (namespace_id, task_queue) WHERE status = 'SCHEDULED'
-- `idx_workflow_schedule_group`: (schedule_group_id, created_at) for history
+- `idx_workflow_available`: (namespace, task_queue, available_at) for polling/claiming (partial on claimable statuses)
+- `idx_workflow_available_by_type`: (namespace, task_queue, workflow_type, available_at) for claim-by-type filtering (partial on claimable statuses)
+- `idx_workflow_schedules_due`: (namespace, available_at) WHERE status = 'SCHEDULED'
+- `idx_workflow_schedule_history`: (schedule_id, created_at DESC) WHERE schedule_id IS NOT NULL
 
 ### 7.2. Step Runs
 
@@ -844,7 +848,7 @@ The `step_runs` table stores step execution history:
 | attempt_id            | UUID        | Primary key                                      |
 | run_id                | UUID        | Foreign key to workflow_runs                     |
 | step_id               | TEXT        | Step name (user-defined)                         |
-| namespace_id          | TEXT        | Namespace for isolation                          |
+| namespace             | TEXT        | Namespace for isolation                          |
 | status                | TEXT        | Step state (PENDING/RUNNING/COMPLETED/FAILED)    |
 | output                | BYTEA       | Step result (cached for replay)                  |
 | input                 | BYTEA       | Step input (optional)                            |
@@ -871,7 +875,7 @@ The `workers` table tracks registered workers:
 | Column            | Type        | Purpose                                |
 | ----------------- | ----------- | -------------------------------------- |
 | worker_id         | UUID        | Primary key (auto-generated)           |
-| namespace_id      | TEXT        | Registration namespace                 |
+| namespace         | TEXT        | Registration namespace                 |
 | task_queue        | TEXT        | Registered queue                       |
 | hostname          | TEXT        | Worker hostname                        |
 | pid               | INTEGER     | Process ID                             |
@@ -887,9 +891,9 @@ The `workers` table tracks registered workers:
 
 **Key Indexes:**
 
-- `idx_workers_active_unique`: Unique on (namespace_id, task_queue, hostname, pid) for active workers
+- `idx_workers_active_unique`: Unique on (namespace, task_queue, hostname, pid) for active workers
 - `idx_workers_heartbeat`: (status, last_heartbeat_at) for stale detection
-- `idx_workers_queue`: (namespace_id, task_queue, status) for online workers
+- `idx_workers_queue`: (namespace, task_queue, status) for online workers
 
 ### 7.4. Workflow Payloads
 
@@ -930,16 +934,17 @@ service WorkerService {
   // Lifecycle
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-  rpc Deregister(DeregisterRequest) returns (google.protobuf.Empty);
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
 
   // Execution
-  rpc PollTask(PollTaskRequest) returns (PollTaskResponse);
+  rpc SubscribeWork(SubscribeWorkRequest) returns (stream WorkAvailable);
+  rpc ClaimTask(ClaimTaskRequest) returns (ClaimTaskResponse);
   rpc BeginStep(BeginStepRequest) returns (BeginStepResponse);
   rpc CompleteStep(CompleteStepRequest) returns (CompleteStepResponse);
   rpc FailStep(FailStepRequest) returns (FailStepResponse);
   rpc CompleteWorkflow(CompleteWorkflowRequest) returns (CompleteWorkflowResponse);
   rpc FailWorkflow(FailWorkflowRequest) returns (FailWorkflowResponse);
-  rpc Sleep(SleepRequest) returns (google.protobuf.Empty);
+  rpc Sleep(SleepRequest) returns (SleepResponse);
 }
 ```
 
@@ -1017,6 +1022,7 @@ Unlike Temporal's architecture with separate frontend, history, and matching ser
 - **Vertical scaling**: Designed for single-node throughput.
 
 - **Simpler mental model**: Workers poll directly from the database.
+- **Simpler mental model**: Workers subscribe for wakeups and always claim via the authoritative DB lease/claim before executing.
 
 This trade-off prioritizes developer experience and operational simplicity over horizontal scalability.
 

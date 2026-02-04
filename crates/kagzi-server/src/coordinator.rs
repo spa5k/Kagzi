@@ -4,20 +4,64 @@
 //! - Firing due cron schedules
 //! - Marking stale workers offline
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::time::Duration;
+use std::time::Instant;
 
 use chrono::Utc;
 use governor::clock::DefaultClock;
 use governor::state::{InMemoryState, NotKeyed};
 use governor::{Quota, RateLimiter};
-use kagzi_queue::QueueNotifier;
+use kagzi_queue::WorkSignalBus;
 use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
+use sqlx::Row;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::config::CoordinatorSettings;
+
+#[derive(Debug)]
+struct PublishDebouncer {
+    debounce: Duration,
+    ttl: Duration,
+    prune_interval: Duration,
+    last_prune_at: Instant,
+    last_published_at: HashMap<String, Instant>,
+}
+
+impl PublishDebouncer {
+    fn new(debounce: Duration) -> Self {
+        Self {
+            debounce,
+            ttl: Duration::from_secs(60),
+            prune_interval: Duration::from_secs(10),
+            last_prune_at: Instant::now(),
+            last_published_at: HashMap::new(),
+        }
+    }
+
+    fn should_publish(&mut self, namespace: &str, task_queue: &str) -> bool {
+        let now = Instant::now();
+        if now.duration_since(self.last_prune_at) >= self.prune_interval {
+            let ttl = self.ttl;
+            self.last_published_at
+                .retain(|_, t| now.duration_since(*t) <= ttl);
+            self.last_prune_at = now;
+        }
+
+        let key = format!("{namespace}:{task_queue}");
+        if let Some(last) = self.last_published_at.get(&key)
+            && now.duration_since(*last) < self.debounce
+        {
+            return false;
+        }
+
+        self.last_published_at.insert(key, now);
+        true
+    }
+}
 
 /// Run the coordinator loop.
 ///
@@ -25,7 +69,7 @@ use crate::config::CoordinatorSettings;
 /// It runs on a configurable interval and handles:
 /// 1. Firing due cron schedules (creates workflow runs for schedules that are ready)
 /// 2. Marking stale workers offline (workers that haven't sent heartbeat)
-pub async fn run<Q: QueueNotifier>(
+pub async fn run<Q: WorkSignalBus>(
     store: PgStore,
     queue: Q,
     settings: CoordinatorSettings,
@@ -38,6 +82,10 @@ pub async fn run<Q: QueueNotifier>(
     let max_per_second = settings.max_backfill_per_second.max(1) as u32;
     let quota = NonZeroU32::new(max_per_second).expect("max_backfill_per_second >= 1");
     let rate_limiter = RateLimiter::direct(Quota::per_second(quota));
+
+    // Best-effort per-queue debounce for WorkAvailable publishes to avoid signal storms.
+    // Signals are lossy by design; correctness does not depend on every publish succeeding.
+    let mut publish_debouncer = PublishDebouncer::new(Duration::from_millis(500));
 
     info!(
         interval_secs = settings.interval_secs,
@@ -55,23 +103,70 @@ pub async fn run<Q: QueueNotifier>(
                 break;
             }
             _ = ticker.tick() => {
-                if let Err(e) = fire_due_schedules(&store, &queue, &settings, &rate_limiter).await {
+                if let Err(e) = fire_due_schedules(&store, &queue, &settings, &rate_limiter, &mut publish_debouncer).await {
                     error!("Failed to fire schedules: {:?}", e);
                 }
 
                 if let Err(e) = mark_stale_workers(&store, settings.worker_stale_threshold_secs).await {
                     error!("Failed to mark stale workers: {:?}", e);
                 }
+
+                if let Err(e) = notify_due_work(&store, &queue, settings.batch_size as i64, &mut publish_debouncer).await {
+                    error!("Failed to notify due work: {:?}", e);
+                }
             }
         }
     }
 }
 
-async fn fire_due_schedules<Q: QueueNotifier>(
+async fn notify_due_work<Q: WorkSignalBus>(
+    store: &PgStore,
+    queue: &Q,
+    limit: i64,
+    publish_debouncer: &mut PublishDebouncer,
+) -> Result<(), kagzi_store::StoreError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT namespace, task_queue, MIN(available_at) AS due_at
+        FROM kagzi.workflow_runs
+        WHERE status IN ('PENDING', 'SLEEPING', 'RUNNING')
+          AND available_at <= NOW()
+        GROUP BY namespace, task_queue
+        ORDER BY due_at ASC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(store.pool())
+    .await?;
+
+    for row in rows {
+        let namespace: String = row.try_get("namespace")?;
+        let task_queue: String = row.try_get("task_queue")?;
+
+        if !publish_debouncer.should_publish(&namespace, &task_queue) {
+            continue;
+        }
+
+        if let Err(e) = queue.publish(&namespace, &task_queue).await {
+            error!(
+                namespace = %namespace,
+                task_queue = %task_queue,
+                error = ?e,
+                "Failed to notify queue for due work"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn fire_due_schedules<Q: WorkSignalBus>(
     store: &PgStore,
     queue: &Q,
     settings: &CoordinatorSettings,
     rate_limiter: &RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
+    publish_debouncer: &mut PublishDebouncer,
 ) -> Result<(), kagzi_store::StoreError> {
     let now = Utc::now();
     let templates = store
@@ -187,18 +282,20 @@ async fn fire_due_schedules<Q: QueueNotifier>(
                     missed_count = missed_count,
                     "Fired schedule"
                 );
-                if let Err(e) = queue
-                    .notify(&template.namespace, &template.task_queue)
-                    .await
-                {
-                    error!(
-                        schedule_id = %template.run_id,
-                        run_id = %run_id,
-                        namespace = %template.namespace,
-                        task_queue = %template.task_queue,
-                        error = ?e,
-                        "Failed to notify queue after firing schedule"
-                    );
+                if publish_debouncer.should_publish(&template.namespace, &template.task_queue) {
+                    if let Err(e) = queue
+                        .publish(&template.namespace, &template.task_queue)
+                        .await
+                    {
+                        error!(
+                            schedule_id = %template.run_id,
+                            run_id = %run_id,
+                            namespace = %template.namespace,
+                            task_queue = %template.task_queue,
+                            error = ?e,
+                            "Failed to notify queue after firing schedule"
+                        );
+                    }
                 }
                 fired += 1;
             }
