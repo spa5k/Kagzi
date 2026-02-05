@@ -2,16 +2,21 @@ use std::time::Duration;
 
 use kagzi_proto::kagzi::admin_service_server::AdminServiceServer;
 use kagzi_proto::kagzi::namespace_service_server::NamespaceServiceServer;
+use kagzi_proto::kagzi::queue_service_server::QueueServiceServer;
+use kagzi_proto::kagzi::telemetry_service_server::TelemetryServiceServer;
 use kagzi_proto::kagzi::worker_service_server::WorkerServiceServer;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleServiceServer;
 use kagzi_proto::kagzi::workflow_service_server::WorkflowServiceServer;
 use kagzi_queue::WorkSignalBus;
 use kagzi_server::config::Settings;
+use kagzi_server::telemetry_store;
 use kagzi_server::{
-    AdminServiceImpl, NamespaceServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl,
-    WorkflowServiceImpl, coordinator, embedded_assets,
+    AdminServiceImpl, NamespaceServiceImpl, QueueServiceImpl, TelemetryServiceImpl,
+    WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl, coordinator,
+    embedded_assets,
 };
 use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
+use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -55,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let coordinator_settings = settings.coordinator.clone();
     let worker_settings = settings.worker.clone();
     let queue_settings = settings.queue.clone();
+    let worker_telemetry_settings = settings.worker_telemetry.clone();
 
     let subscribe_work_enabled = matches!(
         queue_settings.backend,
@@ -100,12 +106,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start background listener (needed for Postgres LISTEN/NOTIFY; other backends are no-op here).
     let queue_listener = queue.clone();
     let queue_listener_token = shutdown_token.child_token();
+    let queue_listener_store = store.clone();
+    let queue_listener_enabled = settings.worker_telemetry.enabled;
     let queue_listener_handle = tokio::spawn(async move {
         if let Err(e) = queue_listener.start(queue_listener_token).await {
             tracing::error!(error = ?e, "Queue listener failed");
             tracing::warn!(
                 "Server is running in degraded mode - queue notifications will not work"
             );
+            telemetry_store::record_server_event(
+                &queue_listener_store,
+                queue_listener_enabled,
+                "error",
+                "queue_listener_failed",
+                "Queue listener failed; server running in degraded mode",
+                None,
+                json!({ "error": format!("{e:?}") }),
+            )
+            .await;
         }
     });
 
@@ -118,6 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             coordinator_store,
             coordinator_queue,
             coordinator_settings,
+            worker_telemetry_settings,
             coordinator_token,
         )
         .await;
@@ -132,11 +151,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr: std::net::SocketAddr =
         format!("{}:{}", settings.server.host, settings.server.port).parse()?;
-    let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
+    let workflow_service = WorkflowServiceImpl::new(
+        store.clone(),
+        queue.clone(),
+        settings.worker_telemetry.enabled,
+    );
     let workflow_schedule_service =
         WorkflowScheduleServiceImpl::new(store.clone(), settings.coordinator.default_max_catchup);
     let admin_service = AdminServiceImpl::new(store.clone());
     let namespace_service = NamespaceServiceImpl::new(store.clone());
+    let queue_service = QueueServiceImpl::new(store.clone());
+    let telemetry_service = TelemetryServiceImpl::new(
+        store.clone(),
+        settings.worker_telemetry.enabled,
+        settings.worker_telemetry.max_events_per_report,
+    );
     let worker_service = WorkerServiceImpl::new(
         store,
         worker_settings,
@@ -156,6 +185,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .add_service(AdminServiceServer::new(admin_service))
         .add_service(NamespaceServiceServer::new(namespace_service))
+        .add_service(QueueServiceServer::new(queue_service))
+        .add_service(TelemetryServiceServer::new(telemetry_service))
         .add_service(WorkerServiceServer::new(worker_service))
         .add_service(reflection_service);
 

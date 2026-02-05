@@ -4,6 +4,8 @@ use kagzi_proto::kagzi::{ErrorCode, ErrorDetail, Payload, RetryPolicy};
 use prost::Message;
 use tonic::{Code, Status};
 
+use crate::constants::DEFAULT_TASK_QUEUE;
+
 pub fn err_detail(
     code: ErrorCode,
     message: impl Into<String>,
@@ -169,6 +171,15 @@ pub fn require_non_empty(value: String, field: &str) -> Result<String, Status> {
     }
 }
 
+pub fn resolve_task_queue(task_queue: Option<String>) -> String {
+    task_queue
+        .and_then(|s| {
+            let trimmed = s.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+        .unwrap_or_else(|| DEFAULT_TASK_QUEUE.to_string())
+}
+
 pub fn normalize_page_size(requested: i32, default: i32, max: i32) -> i32 {
     if requested <= 0 {
         default
@@ -211,6 +222,41 @@ pub fn decode_cursor(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, uuid
         uuid::Uuid::parse_str(id_str).map_err(|_| invalid_argument_error("Invalid page_token"))?;
 
     Ok((created_at, id))
+}
+
+pub fn encode_cursor_str(timestamp_ms: i64, key: &str) -> String {
+    use base64::Engine;
+    let cursor_str = format!("{}:{}", timestamp_ms, key);
+    base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
+}
+
+pub fn decode_cursor_str(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), Status> {
+    use base64::Engine;
+    use chrono::TimeZone;
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(token)
+        .map_err(|_| invalid_argument_error("Invalid page_token"))?;
+
+    let token_str =
+        std::str::from_utf8(&decoded).map_err(|_| invalid_argument_error("Invalid page_token"))?;
+
+    let mut parts = token_str.splitn(2, ':');
+    let created_at_ms = parts
+        .next()
+        .and_then(|p| p.parse::<i64>().ok())
+        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
+    let key = parts
+        .next()
+        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?
+        .to_string();
+
+    let created_at = chrono::Utc
+        .timestamp_millis_opt(created_at_ms)
+        .single()
+        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
+
+    Ok((created_at, key))
 }
 
 pub fn parse_uuid(s: &str) -> Result<uuid::Uuid, Status> {

@@ -11,7 +11,7 @@ async fn claim_task_rejects_when_draining() -> anyhow::Result<()> {
     let register = client
         .register(RegisterRequest {
             namespace: "default".to_string(),
-            task_queue: "process-order".to_string(),
+            task_queue: Some("process-order".to_string()),
             workflow_types: vec!["process-order".to_string()],
             hostname: "test-worker".to_string(),
             pid: 1,
@@ -59,7 +59,7 @@ async fn claim_task_rejects_unregistered_workflow_type() -> anyhow::Result<()> {
     let register = client
         .register(RegisterRequest {
             namespace: "default".to_string(),
-            task_queue: "type-a".to_string(),
+            task_queue: Some("type-a".to_string()),
             workflow_types: vec!["type-a".to_string()],
             hostname: "test-worker".to_string(),
             pid: 1,
@@ -95,7 +95,7 @@ async fn claim_task_rejects_wrong_task_queue() -> anyhow::Result<()> {
     let register = client
         .register(RegisterRequest {
             namespace: "default".to_string(),
-            task_queue: "queue-a".to_string(),
+            task_queue: Some("queue-a".to_string()),
             workflow_types: vec!["queue-a".to_string()],
             hostname: "test-worker".to_string(),
             pid: 1,

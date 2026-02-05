@@ -12,17 +12,35 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
-const routeLabels: Record<string, string> = {
-  "/": "Overview",
-  "/workflows": "Workflows",
-  "/schedules": "Schedules",
-  "/workers": "Workers",
+const sectionLabels: Record<string, string> = {
+  workflows: "Workflows",
+  schedules: "Schedules",
+  workers: "Workers",
+  queues: "Queues",
+  events: "Events",
+  server: "Server",
+  namespaces: "Namespaces",
 };
+
+function getCurrentLabel(pathname: string): string {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length === 0) return "Overview";
+
+  // Top-level routes: /namespaces, /workers (legacy), etc.
+  const knownTopLevel = new Set(["namespaces", "workers"]);
+  const isTopLevel = parts.length >= 1 && knownTopLevel.has(parts[0] ?? "");
+
+  // Namespace root like /default or /default/
+  if (!isTopLevel && parts.length === 1) return "Overview";
+
+  const section = isTopLevel ? parts[0] : parts[1] || parts[0];
+  return sectionLabels[section] || section || "Dashboard";
+}
 
 function RootLayout() {
   const routerState = useRouterState();
   const pathname = routerState.location.pathname;
-  const currentLabel = routeLabels[pathname] || pathname.split("/").pop() || "Dashboard";
+  const currentLabel = getCurrentLabel(pathname);
   const isHome = pathname === "/";
 
   return (

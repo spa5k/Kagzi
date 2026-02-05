@@ -11,6 +11,7 @@ use kagzi_proto::kagzi::{
     SubscribeWorkRequest, WorkAvailable as ProtoWorkAvailable,
 };
 use kagzi_queue::WorkSignalBus;
+use kagzi_store::repository::NamespaceRepository;
 use kagzi_store::{
     BeginStepParams, FailStepParams, PgStore, RegisterWorkerParams, StepRepository,
     WorkerHeartbeatParams, WorkerRepository, WorkerStatus as StoreWorkerStatus, WorkflowRepository,
@@ -26,9 +27,10 @@ use uuid::Uuid;
 use crate::config::WorkerSettings;
 use crate::helpers::{
     bytes_to_payload, invalid_argument_error, map_store_error, merge_proto_policy, not_found_error,
-    payload_to_optional_bytes, precondition_failed_error, require_non_empty,
+    payload_to_optional_bytes, precondition_failed_error, require_non_empty, resolve_task_queue,
 };
 use crate::proto_convert::{map_proto_step_kind, step_to_proto};
+use crate::queue_store::ensure_task_queue_exists;
 use crate::telemetry::extract_context;
 
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
@@ -115,7 +117,7 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
     type SubscribeWorkStream =
         Pin<Box<dyn tokio_stream::Stream<Item = Result<ProtoWorkAvailable, Status>> + Send>>;
 
-    #[instrument(skip(self, request), fields(task_queue = %request.get_ref().task_queue))]
+    #[instrument(skip(self, request), fields(task_queue = ?request.get_ref().task_queue))]
     async fn register(
         &self,
         request: Request<RegisterRequest>,
@@ -127,18 +129,28 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         }
 
         let namespace = require_non_empty(req.namespace, "namespace")?;
+        let task_queue = resolve_task_queue(req.task_queue);
         let workflow_types = req.workflow_types;
 
         // Clone for logging after worker_id is assigned
         let namespace_for_log = namespace.clone();
         let workflows_for_log = workflow_types.clone();
 
+        // Ensure namespace exists (auto-create if it doesn't)
+        self.store
+            .namespaces()
+            .get_or_create(&namespace)
+            .await
+            .map_err(map_store_error)?;
+
+        let _ = ensure_task_queue_exists(&self.store, &namespace, &task_queue).await;
+
         let worker_id = self
             .store
             .workers()
             .register(RegisterWorkerParams {
                 namespace,
-                task_queue: req.task_queue,
+                task_queue,
                 workflow_types,
                 hostname: Some(req.hostname).filter(|s| !s.is_empty()),
                 pid: (req.pid != 0).then_some(req.pid),
@@ -445,12 +457,58 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
             .map_err(map_store_error)?;
 
         let Some(work_item) = work_item else {
+            // Best-effort: record server-derived claim outcome for UI.
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO kagzi.worker_telemetry_state (
+                    worker_id, namespace, task_queue, updated_at,
+                    last_claim_at, last_claim_result, last_claim_error
+                )
+                VALUES ($1, $2, $3, NOW(), NOW(), 'no_task', '')
+                ON CONFLICT (worker_id) DO UPDATE SET
+                    namespace = EXCLUDED.namespace,
+                    task_queue = EXCLUDED.task_queue,
+                    updated_at = NOW(),
+                    last_claim_at = NOW(),
+                    last_claim_result = 'no_task',
+                    last_claim_error = ''
+                "#,
+            )
+            .bind(worker_id)
+            .bind(&namespace)
+            .bind(&task_queue)
+            .execute(self.store.pool())
+            .await;
+
             return Ok(Response::new(ClaimTaskResponse {
                 result: Some(kagzi_proto::kagzi::claim_task_response::Result::NoTask(
                     NoTask {},
                 )),
             }));
         };
+
+        // Best-effort: record server-derived claim outcome for UI.
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO kagzi.worker_telemetry_state (
+                worker_id, namespace, task_queue, updated_at,
+                last_claim_at, last_claim_result, last_claim_error
+            )
+            VALUES ($1, $2, $3, NOW(), NOW(), 'task', '')
+            ON CONFLICT (worker_id) DO UPDATE SET
+                namespace = EXCLUDED.namespace,
+                task_queue = EXCLUDED.task_queue,
+                updated_at = NOW(),
+                last_claim_at = NOW(),
+                last_claim_result = 'task',
+                last_claim_error = ''
+            "#,
+        )
+        .bind(worker_id)
+        .bind(&namespace)
+        .bind(&task_queue)
+        .execute(self.store.pool())
+        .await;
 
         let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 

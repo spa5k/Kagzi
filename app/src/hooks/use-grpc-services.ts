@@ -1,47 +1,15 @@
 import {
   AdminService,
-  type DrainWorkerRequest,
-  type GetQueueDepthRequest,
-  type GetServerInfoRequest,
   GetServerInfoRequestSchema,
-  type GetStatsRequest,
   GetStatsRequestSchema,
-  type GetStepRequest,
-  type GetWorkerRequest,
-  type HealthCheckRequest,
   HealthCheckRequestSchema,
-  type ListStepsRequest,
-  type ListWorkersRequest,
-  type ListWorkflowTypesRequest,
 } from "@/gen/admin_pb";
-import {
-  NamespaceService,
-  type CreateNamespaceRequest,
-  type DisableNamespaceRequest,
-  type EnableNamespaceRequest,
-  type GetNamespaceRequest,
-  type ListNamespacesRequest,
-  ListNamespacesRequestSchema,
-  type UpdateNamespaceRequest,
-} from "@/gen/namespace_pb";
+import { NamespaceService, ListNamespacesRequestSchema } from "@/gen/namespace_pb";
 import { WorkerService } from "@/gen/worker_pb";
-import {
-  WorkflowService,
-  type GetWorkflowByExternalIdRequest,
-  type GetWorkflowRequest,
-  type ListWorkflowsRequest,
-  type RetryWorkflowRequest,
-  type TerminateWorkflowRequest,
-} from "@/gen/workflow_pb";
-import {
-  WorkflowScheduleService,
-  type GetWorkflowScheduleRequest,
-  type ListScheduleRunsRequest,
-  type ListWorkflowSchedulesRequest,
-  type PauseWorkflowScheduleRequest,
-  type ResumeWorkflowScheduleRequest,
-  type TriggerWorkflowScheduleRequest,
-} from "@/gen/workflow_schedule_pb";
+import { WorkflowService } from "@/gen/workflow_pb";
+import { WorkflowScheduleService } from "@/gen/workflow_schedule_pb";
+import { TelemetryService } from "@/gen/telemetry_pb";
+import { QueueService } from "@/gen/queue_pb";
 import { getGrpcTransport } from "@/lib/grpc-client";
 import { createClient } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
@@ -57,6 +25,8 @@ const workflowClient = createClient(WorkflowService, transport);
 const adminClient = createClient(AdminService, transport);
 const scheduleClient = createClient(WorkflowScheduleService, transport);
 const namespaceClient = createClient(NamespaceService, transport);
+const telemetryClient = createClient(TelemetryService, transport);
+const queueClient = createClient(QueueService, transport);
 
 // ============================================
 // WORKFLOW SERVICE HOOKS
@@ -80,7 +50,7 @@ export function useStartWorkflow() {
 /**
  * Hook to get a workflow by run_id
  */
-export function useGetWorkflow(request: GetWorkflowRequest) {
+export function useGetWorkflow(request: Parameters<typeof workflowClient.getWorkflow>[0]) {
   return useTanstackQuery({
     queryKey: ["workflow", request.runId, request.namespace],
     queryFn: () => workflowClient.getWorkflow(request),
@@ -91,7 +61,7 @@ export function useGetWorkflow(request: GetWorkflowRequest) {
 /**
  * Hook to list workflows
  */
-export function useListWorkflows(request: ListWorkflowsRequest) {
+export function useListWorkflows(request: Parameters<typeof workflowClient.listWorkflows>[0]) {
   return useTanstackQuery({
     queryKey: ["workflows", request.namespace, request.statusFilter],
     queryFn: () => workflowClient.listWorkflows(request),
@@ -118,7 +88,9 @@ export function useCancelWorkflow() {
 /**
  * Hook to get a workflow by external_id (idempotency key)
  */
-export function useGetWorkflowByExternalId(request: GetWorkflowByExternalIdRequest) {
+export function useGetWorkflowByExternalId(
+  request: Parameters<typeof workflowClient.getWorkflowByExternalId>[0],
+) {
   return useTanstackQuery({
     queryKey: ["workflow", "externalId", request.externalId, request.namespace],
     queryFn: () => workflowClient.getWorkflowByExternalId(request),
@@ -133,7 +105,8 @@ export function useRetryWorkflow() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: RetryWorkflowRequest) => workflowClient.retryWorkflow(request),
+    mutationFn: (request: Parameters<typeof workflowClient.retryWorkflow>[0]) =>
+      workflowClient.retryWorkflow(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["workflow", variables.runId] });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
@@ -148,7 +121,8 @@ export function useTerminateWorkflow() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: TerminateWorkflowRequest) => workflowClient.terminateWorkflow(request),
+    mutationFn: (request: Parameters<typeof workflowClient.terminateWorkflow>[0]) =>
+      workflowClient.terminateWorkflow(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["workflow", variables.runId] });
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
@@ -163,7 +137,7 @@ export function useTerminateWorkflow() {
 /**
  * Hook to check server health
  */
-export function useHealthCheck(request?: HealthCheckRequest) {
+export function useHealthCheck(request?: Parameters<typeof adminClient.healthCheck>[0]) {
   return useTanstackQuery({
     queryKey: ["health"],
     queryFn: () => adminClient.healthCheck(request || create(HealthCheckRequestSchema)),
@@ -173,7 +147,7 @@ export function useHealthCheck(request?: HealthCheckRequest) {
 /**
  * Hook to get server info
  */
-export function useGetServerInfo(request?: GetServerInfoRequest) {
+export function useGetServerInfo(request?: Parameters<typeof adminClient.getServerInfo>[0]) {
   return useTanstackQuery({
     queryKey: ["serverInfo"],
     queryFn: () => adminClient.getServerInfo(request || create(GetServerInfoRequestSchema)),
@@ -183,7 +157,7 @@ export function useGetServerInfo(request?: GetServerInfoRequest) {
 /**
  * Hook to list workers
  */
-export function useListWorkers(request: ListWorkersRequest) {
+export function useListWorkers(request: Parameters<typeof adminClient.listWorkers>[0]) {
   return useTanstackQuery({
     queryKey: ["workers", request.namespace, request.taskQueue],
     queryFn: () => adminClient.listWorkers(request),
@@ -194,7 +168,7 @@ export function useListWorkers(request: ListWorkersRequest) {
 /**
  * Hook to get a specific worker
  */
-export function useGetWorker(request: GetWorkerRequest) {
+export function useGetWorker(request: Parameters<typeof adminClient.getWorker>[0]) {
   return useTanstackQuery({
     queryKey: ["worker", request.workerId],
     queryFn: () => adminClient.getWorker(request),
@@ -205,7 +179,7 @@ export function useGetWorker(request: GetWorkerRequest) {
 /**
  * Hook to get a specific step
  */
-export function useGetStep(request: GetStepRequest) {
+export function useGetStep(request: Parameters<typeof adminClient.getStep>[0]) {
   return useTanstackQuery({
     queryKey: ["step", request.stepId, request.namespace],
     queryFn: () => adminClient.getStep(request),
@@ -216,7 +190,7 @@ export function useGetStep(request: GetStepRequest) {
 /**
  * Hook to list steps for a workflow run
  */
-export function useListSteps(request: ListStepsRequest) {
+export function useListSteps(request: Parameters<typeof adminClient.listSteps>[0]) {
   return useTanstackQuery({
     queryKey: ["steps", request.runId],
     queryFn: () => adminClient.listSteps(request),
@@ -227,7 +201,7 @@ export function useListSteps(request: ListStepsRequest) {
 /**
  * Hook to get aggregate statistics about workflows and workers
  */
-export function useGetStats(request?: GetStatsRequest) {
+export function useGetStats(request?: Parameters<typeof adminClient.getStats>[0]) {
   return useTanstackQuery({
     queryKey: ["stats", request?.namespace],
     queryFn: () => adminClient.getStats(request || create(GetStatsRequestSchema)),
@@ -238,7 +212,7 @@ export function useGetStats(request?: GetStatsRequest) {
 /**
  * Hook to get queue depth (pending/running task counts)
  */
-export function useGetQueueDepth(request: GetQueueDepthRequest) {
+export function useGetQueueDepth(request: Parameters<typeof adminClient.getQueueDepth>[0]) {
   return useTanstackQuery({
     queryKey: ["queueDepth", request.namespace, request.taskQueue],
     queryFn: () => adminClient.getQueueDepth(request),
@@ -250,10 +224,124 @@ export function useGetQueueDepth(request: GetQueueDepthRequest) {
 /**
  * Hook to list workflow types with statistics
  */
-export function useListWorkflowTypes(request: ListWorkflowTypesRequest) {
+export function useListWorkflowTypes(request: Parameters<typeof adminClient.listWorkflowTypes>[0]) {
   return useTanstackQuery({
     queryKey: ["workflowTypes", request.namespace],
     queryFn: () => adminClient.listWorkflowTypes(request),
+    enabled: !!request.namespace,
+  });
+}
+
+// ============================================
+// TELEMETRY SERVICE HOOKS
+// ============================================
+
+export function useListWorkerTelemetryStates(
+  request: Parameters<typeof telemetryClient.listWorkerTelemetryStates>[0],
+) {
+  return useTanstackQuery({
+    queryKey: ["telemetry", "workerStates", request.namespace, request.taskQueue],
+    queryFn: () => telemetryClient.listWorkerTelemetryStates(request),
+    enabled: !!request.namespace,
+    refetchInterval: 10000,
+  });
+}
+
+export function useGetWorkerTelemetryState(
+  request: Parameters<typeof telemetryClient.getWorkerTelemetryState>[0],
+) {
+  return useTanstackQuery({
+    queryKey: ["telemetry", "workerState", request.workerId],
+    queryFn: () => telemetryClient.getWorkerTelemetryState(request),
+    enabled: !!request.workerId,
+    refetchInterval: 10000,
+  });
+}
+
+export function useListWorkerTelemetryEvents(
+  request: Parameters<typeof telemetryClient.listWorkerTelemetryEvents>[0],
+) {
+  return useTanstackQuery({
+    queryKey: ["telemetry", "workerEvents", request.namespace, request.workerId],
+    queryFn: () => telemetryClient.listWorkerTelemetryEvents(request),
+    enabled: !!request.namespace && !!request.workerId,
+    refetchInterval: 10000,
+  });
+}
+
+export function useListQueueTelemetryStates(
+  request: Parameters<typeof telemetryClient.listQueueTelemetryStates>[0],
+) {
+  return useTanstackQuery({
+    queryKey: ["telemetry", "queueStates", request.namespace],
+    queryFn: () => telemetryClient.listQueueTelemetryStates(request),
+    enabled: !!request.namespace,
+    refetchInterval: 10000,
+  });
+}
+
+export function useGetQueueTelemetryState(
+  request: Parameters<typeof telemetryClient.getQueueTelemetryState>[0],
+) {
+  return useTanstackQuery({
+    queryKey: ["telemetry", "queueState", request.namespace, request.taskQueue],
+    queryFn: () => telemetryClient.getQueueTelemetryState(request),
+    enabled: !!request.namespace && !!request.taskQueue,
+    refetchInterval: 10000,
+  });
+}
+
+export function useListServerTelemetryEvents(
+  request: Parameters<typeof telemetryClient.listServerTelemetryEvents>[0],
+) {
+  return useTanstackQuery({
+    queryKey: ["telemetry", "serverEvents", request.namespace],
+    queryFn: () => telemetryClient.listServerTelemetryEvents(request),
+    refetchInterval: 10000,
+  });
+}
+
+// ============================================
+// QUEUE SERVICE HOOKS
+// ============================================
+
+export function useCreateQueue() {
+  const queryClient = useQueryClient();
+  return useTanstackMutation({
+    mutationFn: (request: Parameters<typeof queueClient.createQueue>[0]) =>
+      queueClient.createQueue(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["queues", variables.namespace] });
+      queryClient.invalidateQueries({
+        queryKey: ["telemetry", "queueStates", variables.namespace],
+      });
+    },
+  });
+}
+
+export function useUpdateQueue() {
+  const queryClient = useQueryClient();
+  return useTanstackMutation({
+    mutationFn: (request: Parameters<typeof queueClient.updateQueue>[0]) =>
+      queueClient.updateQueue(request),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["queues", variables.namespace] });
+    },
+  });
+}
+
+export function useGetQueue(request: Parameters<typeof queueClient.getQueue>[0]) {
+  return useTanstackQuery({
+    queryKey: ["queues", "get", request.namespace, request.taskQueue],
+    queryFn: () => queueClient.getQueue(request),
+    enabled: !!request.namespace && !!request.taskQueue,
+  });
+}
+
+export function useListQueues(request: Parameters<typeof queueClient.listQueues>[0]) {
+  return useTanstackQuery({
+    queryKey: ["queues", request.namespace],
+    queryFn: () => queueClient.listQueues(request),
     enabled: !!request.namespace,
   });
 }
@@ -265,7 +353,8 @@ export function useDrainWorker() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: DrainWorkerRequest) => adminClient.drainWorker(request),
+    mutationFn: (request: Parameters<typeof adminClient.drainWorker>[0]) =>
+      adminClient.drainWorker(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["worker", variables.workerId] });
       queryClient.invalidateQueries({ queryKey: ["workers"] });
@@ -326,7 +415,7 @@ export function useDeleteSchedule() {
 /**
  * Hook to get a schedule by ID
  */
-export function useGetSchedule(request: GetWorkflowScheduleRequest) {
+export function useGetSchedule(request: Parameters<typeof scheduleClient.getWorkflowSchedule>[0]) {
   return useTanstackQuery({
     queryKey: ["schedule", request.scheduleId, request.namespace],
     queryFn: () => scheduleClient.getWorkflowSchedule(request),
@@ -337,7 +426,9 @@ export function useGetSchedule(request: GetWorkflowScheduleRequest) {
 /**
  * Hook to list schedules
  */
-export function useListSchedules(request: ListWorkflowSchedulesRequest) {
+export function useListSchedules(
+  request: Parameters<typeof scheduleClient.listWorkflowSchedules>[0],
+) {
   return useTanstackQuery({
     queryKey: ["schedules", request.namespace, request.taskQueue],
     queryFn: () => scheduleClient.listWorkflowSchedules(request),
@@ -352,7 +443,7 @@ export function useTriggerSchedule() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: TriggerWorkflowScheduleRequest) =>
+    mutationFn: (request: Parameters<typeof scheduleClient.triggerWorkflowSchedule>[0]) =>
       scheduleClient.triggerWorkflowSchedule(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["schedule", variables.scheduleId] });
@@ -369,7 +460,7 @@ export function usePauseSchedule() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: PauseWorkflowScheduleRequest) =>
+    mutationFn: (request: Parameters<typeof scheduleClient.pauseWorkflowSchedule>[0]) =>
       scheduleClient.pauseWorkflowSchedule(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["schedule", variables.scheduleId] });
@@ -385,7 +476,7 @@ export function useResumeSchedule() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: ResumeWorkflowScheduleRequest) =>
+    mutationFn: (request: Parameters<typeof scheduleClient.resumeWorkflowSchedule>[0]) =>
       scheduleClient.resumeWorkflowSchedule(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["schedule", variables.scheduleId] });
@@ -397,7 +488,9 @@ export function useResumeSchedule() {
 /**
  * Hook to list workflow runs triggered by a schedule
  */
-export function useListScheduleRuns(request: ListScheduleRunsRequest) {
+export function useListScheduleRuns(
+  request: Parameters<typeof scheduleClient.listScheduleRuns>[0],
+) {
   return useTanstackQuery({
     queryKey: ["scheduleRuns", request.scheduleId, request.namespace],
     queryFn: () => scheduleClient.listScheduleRuns(request),
@@ -418,7 +511,7 @@ export function useListScheduleRuns(request: ListScheduleRunsRequest) {
 /**
  * Hook to list all namespaces
  */
-export function useListNamespaces(request?: ListNamespacesRequest) {
+export function useListNamespaces(request?: Parameters<typeof namespaceClient.listNamespaces>[0]) {
   return useTanstackQuery({
     queryKey: ["namespaces"],
     queryFn: () => namespaceClient.listNamespaces(request || create(ListNamespacesRequestSchema)),
@@ -428,7 +521,7 @@ export function useListNamespaces(request?: ListNamespacesRequest) {
 /**
  * Hook to get a namespace by identifier
  */
-export function useGetNamespace(request: GetNamespaceRequest) {
+export function useGetNamespace(request: Parameters<typeof namespaceClient.getNamespace>[0]) {
   return useTanstackQuery({
     queryKey: ["namespace", request.namespace],
     queryFn: () => namespaceClient.getNamespace(request),
@@ -443,7 +536,8 @@ export function useCreateNamespace() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: CreateNamespaceRequest) => namespaceClient.createNamespace(request),
+    mutationFn: (request: Parameters<typeof namespaceClient.createNamespace>[0]) =>
+      namespaceClient.createNamespace(request),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["namespaces"] });
     },
@@ -457,7 +551,8 @@ export function useUpdateNamespace() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: UpdateNamespaceRequest) => namespaceClient.updateNamespace(request),
+    mutationFn: (request: Parameters<typeof namespaceClient.updateNamespace>[0]) =>
+      namespaceClient.updateNamespace(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespace] });
       queryClient.invalidateQueries({ queryKey: ["namespaces"] });
@@ -472,7 +567,8 @@ export function useEnableNamespace() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: EnableNamespaceRequest) => namespaceClient.enableNamespace(request),
+    mutationFn: (request: Parameters<typeof namespaceClient.enableNamespace>[0]) =>
+      namespaceClient.enableNamespace(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespace] });
       queryClient.invalidateQueries({ queryKey: ["namespaces"] });
@@ -487,7 +583,8 @@ export function useDisableNamespace() {
   const queryClient = useQueryClient();
 
   return useTanstackMutation({
-    mutationFn: (request: DisableNamespaceRequest) => namespaceClient.disableNamespace(request),
+    mutationFn: (request: Parameters<typeof namespaceClient.disableNamespace>[0]) =>
+      namespaceClient.disableNamespace(request),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["namespace", variables.namespace] });
       queryClient.invalidateQueries({ queryKey: ["namespaces"] });

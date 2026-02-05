@@ -1,14 +1,15 @@
-import type { ListWorkersRequest } from "@/gen/admin_pb";
-import type { PageRequest } from "@/gen/common_pb";
-import {
-  type ListWorkflowsRequest,
-  WorkflowStatus as ProtoWorkflowStatus,
-} from "@/gen/workflow_pb";
-import type { ListWorkflowSchedulesRequest } from "@/gen/workflow_schedule_pb";
+import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
 import {
   useListSchedules as useGrpcListSchedules,
   useListWorkers as useGrpcListWorkers,
   useListWorkflows as useGrpcListWorkflows,
+  useGetWorkerTelemetryState as useGrpcGetWorkerTelemetryState,
+  useGetQueueTelemetryState as useGrpcGetQueueTelemetryState,
+  useListQueues as useGrpcListQueues,
+  useListQueueTelemetryStates as useGrpcListQueueTelemetryStates,
+  useListServerTelemetryEvents as useGrpcListServerTelemetryEvents,
+  useListWorkerTelemetryEvents as useGrpcListWorkerTelemetryEvents,
+  useListWorkerTelemetryStates as useGrpcListWorkerTelemetryStates,
 } from "@/hooks/use-grpc-services";
 
 /**
@@ -31,7 +32,7 @@ export function useListWorkflows(namespace: string, statusFilter?: string) {
     protoStatusFilter = statusMap[statusFilter.toLowerCase()];
   }
 
-  const request: ListWorkflowsRequest = {
+  const request = {
     namespace,
     statusFilter: protoStatusFilter,
     page: {
@@ -53,7 +54,7 @@ export function useListWorkflows(namespace: string, statusFilter?: string) {
  * Hook to list schedules
  */
 export function useListSchedules(namespace: string) {
-  const request: ListWorkflowSchedulesRequest = {
+  const request = {
     namespace,
     page: {
       pageSize: 100,
@@ -76,7 +77,7 @@ export function useListSchedules(namespace: string) {
  * Hook to list workers
  */
 export function useListWorkers(namespace: string) {
-  const request: ListWorkersRequest = {
+  const request = {
     namespace,
     page: {
       pageSize: 100,
@@ -93,4 +94,79 @@ export function useListWorkers(namespace: string) {
       workersList: result.data?.workers || [],
     },
   };
+}
+
+export function useListWorkerTelemetryStates(namespace: string, taskQueue?: string) {
+  const request = {
+    namespace,
+    taskQueue,
+    page: {
+      pageSize: 200,
+      pageToken: "",
+      includeTotalCount: false,
+    },
+  };
+  return useGrpcListWorkerTelemetryStates(request);
+}
+
+export function useGetWorkerTelemetryState(workerId: string) {
+  const request = { workerId };
+  return useGrpcGetWorkerTelemetryState(request);
+}
+
+export function useListWorkerTelemetryEvents(namespace: string, workerId: string) {
+  const request = {
+    namespace,
+    workerId,
+    page: {
+      pageSize: 200,
+      pageToken: "",
+      includeTotalCount: false,
+    },
+  };
+  return useGrpcListWorkerTelemetryEvents(request);
+}
+
+export function useListQueueTelemetryStates(namespace: string) {
+  const request = {
+    namespace,
+    page: {
+      pageSize: 200,
+      pageToken: "",
+      includeTotalCount: false,
+    },
+  };
+  return useGrpcListQueueTelemetryStates(request);
+}
+
+export function useListQueues(namespace: string) {
+  const request = {
+    namespace,
+    page: {
+      pageSize: 200,
+      pageToken: "",
+      includeTotalCount: false,
+    },
+  };
+  return useGrpcListQueues(request);
+}
+
+export function useGetQueueTelemetryState(namespace: string, taskQueue: string) {
+  const request = {
+    namespace,
+    taskQueue,
+  };
+  return useGrpcGetQueueTelemetryState(request);
+}
+
+export function useListServerTelemetryEvents(namespace?: string) {
+  const request = {
+    namespace,
+    page: {
+      pageSize: 200,
+      pageToken: "",
+      includeTotalCount: false,
+    },
+  };
+  return useGrpcListServerTelemetryEvents(request);
 }

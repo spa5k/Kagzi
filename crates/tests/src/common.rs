@@ -13,8 +13,8 @@ use kagzi_proto::kagzi::{GetWorkflowRequest, WorkflowStatus};
 use kagzi_queue::WorkSignalBus;
 use kagzi_server::config::{CoordinatorSettings, WorkerSettings};
 use kagzi_server::{
-    AdminServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl,
-    coordinator,
+    AdminServiceImpl, QueueServiceImpl, WorkerServiceImpl, WorkflowScheduleServiceImpl,
+    WorkflowServiceImpl, coordinator,
 };
 use kagzi_store::{PgStore, StoreConfig};
 use sqlx::PgPool;
@@ -134,12 +134,14 @@ impl TestHarness {
         // Start coordinator (replaces scheduler + watchdog)
         let coordinator_store = store.clone();
         let coordinator_queue = queue.clone();
+        let worker_telemetry_settings = kagzi_server::config::WorkerTelemetrySettings::default();
         let coordinator_token = shutdown.child_token();
         tokio::spawn(async move {
             coordinator::run(
                 coordinator_store,
                 coordinator_queue,
                 coordinator_settings,
+                worker_telemetry_settings,
                 coordinator_token,
             )
             .await;
@@ -161,10 +163,12 @@ impl TestHarness {
             ..Default::default()
         };
 
-        let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone());
+        let workflow_service = WorkflowServiceImpl::new(store.clone(), queue.clone(), true);
         let workflow_schedule_service =
             WorkflowScheduleServiceImpl::new(store.clone(), default_max_catchup);
         let admin_service = AdminServiceImpl::new(store.clone());
+        let queue_service = QueueServiceImpl::new(store.clone());
+        let telemetry_service = kagzi_server::TelemetryServiceImpl::new(store.clone(), true, 500);
         let worker_service = WorkerServiceImpl::new(
             store.clone(),
             worker_settings,
@@ -187,6 +191,14 @@ impl TestHarness {
                 .add_service(kagzi_proto::kagzi::admin_service_server::AdminServiceServer::new(
                     admin_service,
                 ))
+                .add_service(kagzi_proto::kagzi::queue_service_server::QueueServiceServer::new(
+                    queue_service,
+                ))
+                .add_service(
+                    kagzi_proto::kagzi::telemetry_service_server::TelemetryServiceServer::new(
+                        telemetry_service,
+                    ),
+                )
                 .add_service(kagzi_proto::kagzi::worker_service_server::WorkerServiceServer::new(
                     worker_service,
                 ))

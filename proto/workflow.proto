@@ -65,7 +65,7 @@ message Workflow {
 message StartWorkflowRequest {
   string namespace = 1;
   string external_id = 2;
-  string task_queue = 3;
+  optional string task_queue = 3;
   string workflow_type = 4;
   Payload input = 5;
   string version = 7;

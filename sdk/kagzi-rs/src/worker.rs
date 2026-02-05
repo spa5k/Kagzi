@@ -37,15 +37,21 @@ use std::time::Duration;
 
 use backon::{BackoffBuilder, ExponentialBuilder};
 use futures::StreamExt;
+use kagzi_proto::kagzi::telemetry_service_client::TelemetryServiceClient;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
     ClaimTaskRequest, CompleteWorkflowRequest, DeregisterRequest, ErrorCode, FailWorkflowRequest,
     HeartbeatRequest, Payload as ProtoPayload, RegisterRequest, SubscribeWorkRequest,
 };
+use kagzi_proto::kagzi::{
+    ReportWorkerEventsRequest, ReportWorkerSnapshotRequest, TelemetryLevel, WorkerTelemetryEvent,
+    WorkerTelemetrySnapshot,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tonic::Request;
 use tonic::transport::Channel;
@@ -64,6 +70,27 @@ use crate::errors::{KagziError, WorkflowPaused};
 use crate::propagation::inject_context;
 use crate::retry::Retry;
 
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+fn timestamp_from_ms(ms: i64) -> Option<prost_types::Timestamp> {
+    if ms <= 0 {
+        return None;
+    }
+    let seconds = ms / 1000;
+    let nanos = ((ms % 1000) * 1_000_000) as i32;
+    Some(prost_types::Timestamp { seconds, nanos })
+}
+
+fn timestamp_now() -> prost_types::Timestamp {
+    let now = chrono::Utc::now();
+    prost_types::Timestamp {
+        seconds: now.timestamp(),
+        nanos: now.timestamp_subsec_nanos() as i32,
+    }
+}
+
 /// Default maximum number of concurrent workflow executions
 const DEFAULT_MAX_CONCURRENT_WORKFLOWS: usize = 100;
 
@@ -72,6 +99,9 @@ const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 10;
 
 /// Long poll timeout for task polling (slightly longer than server hold time)
 const POLL_TIMEOUT_SECS: u64 = 65;
+
+/// Default worker telemetry snapshot interval
+const DEFAULT_TELEMETRY_INTERVAL_SECS: u64 = 10;
 
 /// Fallback claim tick in seconds (belt-and-suspenders for lost wakeups)
 const FALLBACK_CLAIM_TICK_SECS: u64 = 10;
@@ -127,6 +157,8 @@ pub struct WorkerBuilder {
     labels: HashMap<String, String>,
     workflows: Vec<(String, Arc<WorkflowFn>)>,
     signal_backend: SignalBackend,
+    telemetry_enabled: bool,
+    telemetry_interval: Duration,
 }
 
 impl WorkerBuilder {
@@ -141,6 +173,8 @@ impl WorkerBuilder {
             labels: HashMap::new(),
             workflows: Vec::new(),
             signal_backend: SignalBackend::Server,
+            telemetry_enabled: true,
+            telemetry_interval: Duration::from_secs(DEFAULT_TELEMETRY_INTERVAL_SECS),
         }
     }
 
@@ -183,6 +217,18 @@ impl WorkerBuilder {
 
     pub fn signal_backend(mut self, backend: SignalBackend) -> Self {
         self.signal_backend = backend;
+        self
+    }
+
+    /// Enable/disable worker telemetry reporting to the server.
+    pub fn telemetry_enabled(mut self, enabled: bool) -> Self {
+        self.telemetry_enabled = enabled;
+        self
+    }
+
+    /// Set the telemetry snapshot interval (default: 10s).
+    pub fn telemetry_interval(mut self, interval: Duration) -> Self {
+        self.telemetry_interval = interval;
         self
     }
 
@@ -272,7 +318,8 @@ impl WorkerBuilder {
             .timeout(Duration::from_secs(POLL_TIMEOUT_SECS))
             .service(channel);
 
-        let client = WorkerServiceClient::new(channel);
+        let client = WorkerServiceClient::new(channel.clone());
+        let telemetry_client = TelemetryServiceClient::new(channel);
 
         // Build workflow map and collect types
         let mut workflow_map = HashMap::new();
@@ -284,6 +331,7 @@ impl WorkerBuilder {
 
         Ok(Worker {
             client,
+            telemetry_client,
             namespace: self.namespace,
             max_concurrent: self.max_concurrent,
             hostname: self.hostname,
@@ -293,18 +341,39 @@ impl WorkerBuilder {
             workflows: workflow_map,
             workflow_types,
             signal_backend: self.signal_backend,
+            telemetry_enabled: self.telemetry_enabled,
+            telemetry_interval: self.telemetry_interval,
             worker_id: None,
             heartbeat_interval: Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS),
             semaphore: Arc::new(Semaphore::new(self.max_concurrent)),
             wakeup_tx: None,
             shutdown: CancellationToken::new(),
             consecutive_poll_failures: Arc::new(AtomicU32::new(0)),
+            telemetry_state: Arc::new(WorkerTelemetryState::default()),
+            telemetry_event_tx: None,
         })
     }
 }
 
+#[derive(Default)]
+struct WorkerTelemetryState {
+    subscribed: std::sync::atomic::AtomicBool,
+    subscription_state: RwLock<String>,
+    last_subscribe_ok_at_ms: std::sync::atomic::AtomicI64,
+    last_wakeup_at_ms: std::sync::atomic::AtomicI64,
+    last_error: Mutex<String>,
+    last_error_at_ms: std::sync::atomic::AtomicI64,
+
+    claim_attempts_delta: std::sync::atomic::AtomicU64,
+    claim_success_delta: std::sync::atomic::AtomicU64,
+    claim_no_task_delta: std::sync::atomic::AtomicU64,
+    claim_error_delta: std::sync::atomic::AtomicU64,
+    claim_latency_ms: Mutex<Vec<u32>>,
+}
+
 pub struct Worker {
     pub(crate) client: WorkerServiceClient<tower::timeout::Timeout<Channel>>,
+    pub(crate) telemetry_client: TelemetryServiceClient<tower::timeout::Timeout<Channel>>,
     namespace: String,
     max_concurrent: usize,
     hostname: Option<String>,
@@ -316,6 +385,8 @@ pub struct Worker {
     workflows: HashMap<String, Arc<WorkflowFn>>,
     workflow_types: Vec<String>,
     signal_backend: SignalBackend,
+    telemetry_enabled: bool,
+    telemetry_interval: Duration,
     worker_id: Option<Uuid>,
     heartbeat_interval: Duration,
     /// Semaphore limits concurrent workflow executions.
@@ -326,6 +397,8 @@ pub struct Worker {
     /// Counter for exponential backoff on poll failures.
     /// Arc allows atomic updates from both main loop and spawned tasks.
     consecutive_poll_failures: Arc<AtomicU32>,
+    telemetry_state: Arc<WorkerTelemetryState>,
+    telemetry_event_tx: Option<mpsc::Sender<WorkerTelemetryEvent>>,
 }
 
 impl Worker {
@@ -354,6 +427,216 @@ impl Worker {
         self.shutdown.clone()
     }
 
+    fn signal_backend_name(&self) -> String {
+        match &self.signal_backend {
+            SignalBackend::Server => "server".to_string(),
+            #[cfg(feature = "nats")]
+            SignalBackend::Nats { .. } => "nats".to_string(),
+            #[cfg(feature = "kafka")]
+            SignalBackend::Kafka { .. } => "kafka".to_string(),
+        }
+    }
+
+    fn make_event(
+        worker_id: &str,
+        namespace: &str,
+        task_queue: &str,
+        level: TelemetryLevel,
+        event_type: &str,
+        message: &str,
+        extra: serde_json::Value,
+    ) -> WorkerTelemetryEvent {
+        WorkerTelemetryEvent {
+            worker_id: worker_id.to_string(),
+            namespace: namespace.to_string(),
+            task_queue: task_queue.to_string(),
+            occurred_at: Some(timestamp_now()),
+            level: level as i32,
+            event_type: event_type.to_string(),
+            message: message.to_string(),
+            extra_json: serde_json::to_vec(&extra).unwrap_or_default(),
+        }
+    }
+
+    fn emit_event(
+        &self,
+        worker_id: &str,
+        task_queue: &str,
+        level: TelemetryLevel,
+        event_type: &str,
+        message: &str,
+        extra: serde_json::Value,
+    ) {
+        let Some(tx) = &self.telemetry_event_tx else {
+            return;
+        };
+        let evt = Self::make_event(
+            worker_id,
+            &self.namespace,
+            task_queue,
+            level,
+            event_type,
+            message,
+            extra,
+        );
+        let _ = tx.try_send(evt);
+    }
+
+    fn spawn_telemetry_tasks(
+        &mut self,
+        worker_id: String,
+        task_queue: String,
+    ) -> Vec<tokio::task::JoinHandle<()>> {
+        if !self.telemetry_enabled {
+            return Vec::new();
+        }
+
+        let (event_tx, mut event_rx) = mpsc::channel::<WorkerTelemetryEvent>(1024);
+        self.telemetry_event_tx = Some(event_tx);
+
+        let mut client_events = self.telemetry_client.clone();
+        let shutdown_events = self.shutdown.clone();
+
+        let events_handle = tokio::spawn(async move {
+            let mut buffer: Vec<WorkerTelemetryEvent> = Vec::with_capacity(256);
+            let mut flush_ticker = tokio::time::interval(Duration::from_secs(2));
+            flush_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                tokio::select! {
+                    _ = shutdown_events.cancelled() => break,
+                    _ = flush_ticker.tick() => {
+                        if buffer.is_empty() {
+                            continue;
+                        }
+                        let batch = std::mem::take(&mut buffer);
+                        let _ = client_events.report_worker_events(Request::new(ReportWorkerEventsRequest {
+                            events: batch,
+                        })).await;
+                    }
+                    evt = event_rx.recv() => {
+                        let Some(evt) = evt else { break };
+                        buffer.push(evt);
+                        if buffer.len() >= 250 {
+                            let batch = std::mem::take(&mut buffer);
+                            let _ = client_events.report_worker_events(Request::new(ReportWorkerEventsRequest {
+                                events: batch,
+                            })).await;
+                        }
+                    }
+                }
+            }
+
+            if !buffer.is_empty() {
+                let _ = client_events
+                    .report_worker_events(Request::new(ReportWorkerEventsRequest {
+                        events: buffer,
+                    }))
+                    .await;
+            }
+        });
+
+        let state = self.telemetry_state.clone();
+        let mut client_snapshots = self.telemetry_client.clone();
+        let shutdown_snapshots = self.shutdown.clone();
+        let interval = self.telemetry_interval;
+        let namespace = self.namespace.clone();
+        let backend = self.signal_backend_name();
+        let max_concurrent = self.max_concurrent as u32;
+        let semaphore = self.semaphore.clone();
+        let worker_id_for_snapshot = worker_id.clone();
+        let task_queue_for_snapshot = task_queue.clone();
+
+        let hostname = self.hostname.clone();
+        let version = self.version.clone();
+        let labels = self.labels.clone();
+        let workflow_types = self.workflow_types.clone();
+        let extra_json_bytes = serde_json::to_vec(&serde_json::json!({
+            "hostname": hostname,
+            "pid": std::process::id(),
+            "version": version,
+            "labels": labels,
+            "workflow_types": workflow_types,
+        }))
+        .unwrap_or_default();
+
+        let snapshots_handle = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                tokio::select! {
+                    _ = shutdown_snapshots.cancelled() => break,
+                    _ = ticker.tick() => {
+                        let subscribed = state.subscribed.load(Ordering::Relaxed);
+                        let subscription_state = state.subscription_state.read().await.clone();
+                        let last_subscribe_ok_at = timestamp_from_ms(state.last_subscribe_ok_at_ms.load(Ordering::Relaxed));
+                        let last_wakeup_at = timestamp_from_ms(state.last_wakeup_at_ms.load(Ordering::Relaxed));
+                        let last_error_at = timestamp_from_ms(state.last_error_at_ms.load(Ordering::Relaxed));
+                        let last_error = state.last_error.lock().await.clone();
+
+                        let claim_attempts_delta = state.claim_attempts_delta.swap(0, Ordering::Relaxed);
+                        let claim_success_delta = state.claim_success_delta.swap(0, Ordering::Relaxed);
+                        let claim_no_task_delta = state.claim_no_task_delta.swap(0, Ordering::Relaxed);
+                        let claim_error_delta = state.claim_error_delta.swap(0, Ordering::Relaxed);
+
+                        let mut lat = state.claim_latency_ms.lock().await;
+                        let (avg, p95, max) = if lat.is_empty() {
+                            (0.0, 0.0, 0.0)
+                        } else {
+                            let mut vals = lat.clone();
+                            vals.sort_unstable();
+                            let sum: u64 = vals.iter().map(|v| *v as u64).sum();
+                            let avg = sum as f64 / vals.len() as f64;
+                            let idx = ((vals.len() as f64) * 0.95).ceil().max(1.0) as usize - 1;
+                            let p95 = vals.get(idx).copied().unwrap_or(0) as f64;
+                            let max = *vals.last().unwrap_or(&0) as f64;
+                            (avg, p95, max)
+                        };
+                        lat.clear();
+
+                        let in_flight = (max_concurrent as usize)
+                            .saturating_sub(semaphore.available_permits()) as u32;
+
+                            let snapshot = WorkerTelemetrySnapshot {
+                                worker_id: worker_id_for_snapshot.clone(),
+                                namespace: namespace.clone(),
+                                task_queue: task_queue_for_snapshot.clone(),
+                                observed_at: Some(timestamp_now()),
+                                signal_backend: backend.clone(),
+                                subscribed,
+                                subscription_state,
+                                last_subscribe_ok_at,
+                                last_wakeup_at,
+                                last_error,
+                                last_error_at,
+                                max_concurrent,
+                                in_flight,
+                                active_workflows_authoritative: 0,
+                                last_claim_at: None,
+                                last_claim_result: String::new(),
+                                last_claim_error: String::new(),
+                                claim_attempts_delta,
+                                claim_success_delta,
+                                claim_no_task_delta,
+                                claim_error_delta,
+                                claim_rtt_ms_avg: avg,
+                            claim_rtt_ms_p95: p95,
+                            claim_rtt_ms_max: max,
+                            extra_json: extra_json_bytes.clone(),
+                        };
+
+                        let _ = client_snapshots.report_worker_snapshot(Request::new(ReportWorkerSnapshotRequest {
+                            snapshot: Some(snapshot),
+                        })).await;
+                    }
+                }
+            }
+        });
+
+        vec![events_handle, snapshots_handle]
+    }
+
     /// Run the worker main loop
     ///
     /// This method will:
@@ -367,18 +650,14 @@ impl Worker {
             anyhow::bail!("No workflows registered. Call workflows() before run()");
         }
 
-        // Use first workflow type as primary queue for registration
-        let primary_queue = self
-            .workflow_types
-            .first()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No workflows registered"))?;
+        // Default queue. (Server will also default if omitted in RegisterRequest.)
+        let primary_queue = "default".to_string();
 
         let resp = self
             .client
             .register(RegisterRequest {
                 namespace: self.namespace.clone(),
-                task_queue: primary_queue.clone(),
+                task_queue: None,
                 workflow_types: self.workflow_types.clone(),
                 hostname: self.hostname.clone().unwrap_or_else(|| {
                     hostname::get()
@@ -422,6 +701,17 @@ impl Worker {
             }
         };
 
+        let telemetry_handles =
+            self.spawn_telemetry_tasks(worker_id.clone(), primary_queue.clone());
+        self.emit_event(
+            &worker_id,
+            &primary_queue,
+            TelemetryLevel::Info,
+            "worker_registered",
+            "Worker registered",
+            serde_json::json!({ "backend": self.signal_backend_name() }),
+        );
+
         let (wakeup_tx, mut wakeups) = mpsc::channel::<()>(256);
         self.wakeup_tx = Some(wakeup_tx.clone());
 
@@ -462,6 +752,9 @@ impl Worker {
         }
 
         heartbeat_handle.abort();
+        for h in telemetry_handles {
+            h.abort();
+        }
         if let Some(id) = self.worker_id {
             let _ = self
                 .client
@@ -477,10 +770,14 @@ impl Worker {
     }
 
     fn spawn_wakeup_task(&self, worker_id: String, task_queue: String, tx: mpsc::Sender<()>) {
+        let telemetry_state = self.telemetry_state.clone();
+        let telemetry_event_tx = self.telemetry_event_tx.clone();
+        let telemetry_enabled = self.telemetry_enabled;
+        let namespace = self.namespace.clone();
+
         match self.signal_backend.clone() {
             SignalBackend::Server => {
                 let mut client = self.client.clone();
-                let namespace = self.namespace.clone();
                 let workflow_types = self.workflow_types.clone();
 
                 tokio::spawn(async move {
@@ -491,6 +788,12 @@ impl Worker {
                         .build();
 
                     loop {
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "connecting".to_string();
+                        }
+
                         let res = client
                             .subscribe_work(Request::new(SubscribeWorkRequest {
                                 namespace: namespace.clone(),
@@ -504,11 +807,50 @@ impl Worker {
                             Ok(r) => r.into_inner(),
                             Err(e) => {
                                 error!(error = %e, "Failed to SubscribeWork, retrying");
+                                if telemetry_enabled {
+                                    *telemetry_state.last_error.lock().await = e.to_string();
+                                    telemetry_state
+                                        .last_error_at_ms
+                                        .store(now_ms(), Ordering::Relaxed);
+                                    *telemetry_state.subscription_state.write().await =
+                                        "error".to_string();
+                                    if let Some(tx_evt) = &telemetry_event_tx {
+                                        let _ = tx_evt.try_send(Worker::make_event(
+                                            &worker_id,
+                                            &namespace,
+                                            &task_queue,
+                                            TelemetryLevel::Error,
+                                            "subscribe_error",
+                                            "SubscribeWork error",
+                                            serde_json::json!({ "error": e.to_string() }),
+                                        ));
+                                    }
+                                }
                                 let d = backoff.next().unwrap_or(Duration::from_secs(10));
                                 tokio::time::sleep(d).await;
                                 continue;
                             }
                         };
+
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(true, Ordering::Relaxed);
+                            telemetry_state
+                                .last_subscribe_ok_at_ms
+                                .store(now_ms(), Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "subscribed".to_string();
+                            if let Some(tx_evt) = &telemetry_event_tx {
+                                let _ = tx_evt.try_send(Worker::make_event(
+                                    &worker_id,
+                                    &namespace,
+                                    &task_queue,
+                                    TelemetryLevel::Info,
+                                    "subscribe_ok",
+                                    "SubscribeWork established",
+                                    serde_json::json!({}),
+                                ));
+                            }
+                        }
 
                         backoff = ExponentialBuilder::default()
                             .with_min_delay(Duration::from_millis(100))
@@ -519,16 +861,57 @@ impl Worker {
                         loop {
                             match stream.message().await {
                                 Ok(Some(_)) => {
+                                    if telemetry_enabled {
+                                        telemetry_state
+                                            .last_wakeup_at_ms
+                                            .store(now_ms(), Ordering::Relaxed);
+                                    }
                                     if tx.send(()).await.is_err() {
                                         return;
                                     }
                                 }
                                 Ok(None) => {
                                     warn!("SubscribeWork closed by server, resubscribing");
+                                    if telemetry_enabled {
+                                        telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                                        *telemetry_state.subscription_state.write().await =
+                                            "reconnecting".to_string();
+                                        if let Some(tx_evt) = &telemetry_event_tx {
+                                            let _ = tx_evt.try_send(Worker::make_event(
+                                                &worker_id,
+                                                &namespace,
+                                                &task_queue,
+                                                TelemetryLevel::Warn,
+                                                "subscribe_closed",
+                                                "SubscribeWork stream closed; resubscribing",
+                                                serde_json::json!({}),
+                                            ));
+                                        }
+                                    }
                                     break;
                                 }
                                 Err(e) => {
                                     warn!(error = %e, "SubscribeWork error, resubscribing");
+                                    if telemetry_enabled {
+                                        *telemetry_state.last_error.lock().await = e.to_string();
+                                        telemetry_state
+                                            .last_error_at_ms
+                                            .store(now_ms(), Ordering::Relaxed);
+                                        telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                                        *telemetry_state.subscription_state.write().await =
+                                            "reconnecting".to_string();
+                                        if let Some(tx_evt) = &telemetry_event_tx {
+                                            let _ = tx_evt.try_send(Worker::make_event(
+                                                &worker_id,
+                                                &namespace,
+                                                &task_queue,
+                                                TelemetryLevel::Warn,
+                                                "subscribe_error",
+                                                "SubscribeWork stream error; resubscribing",
+                                                serde_json::json!({ "error": e.to_string() }),
+                                            ));
+                                        }
+                                    }
                                     break;
                                 }
                             }
@@ -557,10 +940,35 @@ impl Worker {
                         .build();
 
                     loop {
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "connecting".to_string();
+                        }
+
                         let client = match async_nats::connect(&url).await {
                             Ok(c) => c,
                             Err(e) => {
                                 warn!(error = %e, "Failed to connect to NATS, retrying");
+                                if telemetry_enabled {
+                                    *telemetry_state.last_error.lock().await = e.to_string();
+                                    telemetry_state
+                                        .last_error_at_ms
+                                        .store(now_ms(), Ordering::Relaxed);
+                                    *telemetry_state.subscription_state.write().await =
+                                        "error".to_string();
+                                    if let Some(tx_evt) = &telemetry_event_tx {
+                                        let _ = tx_evt.try_send(Worker::make_event(
+                                            &worker_id,
+                                            &namespace,
+                                            &task_queue,
+                                            TelemetryLevel::Warn,
+                                            "subscribe_error",
+                                            "NATS connect error",
+                                            serde_json::json!({ "error": e.to_string() }),
+                                        ));
+                                    }
+                                }
                                 let d = backoff.next().unwrap_or(Duration::from_secs(10));
                                 tokio::time::sleep(d).await;
                                 continue;
@@ -574,11 +982,50 @@ impl Worker {
                             Ok(s) => s,
                             Err(e) => {
                                 warn!(error = %e, "Failed to subscribe to NATS, retrying");
+                                if telemetry_enabled {
+                                    *telemetry_state.last_error.lock().await = e.to_string();
+                                    telemetry_state
+                                        .last_error_at_ms
+                                        .store(now_ms(), Ordering::Relaxed);
+                                    *telemetry_state.subscription_state.write().await =
+                                        "error".to_string();
+                                    if let Some(tx_evt) = &telemetry_event_tx {
+                                        let _ = tx_evt.try_send(Worker::make_event(
+                                            &worker_id,
+                                            &namespace,
+                                            &task_queue,
+                                            TelemetryLevel::Warn,
+                                            "subscribe_error",
+                                            "NATS subscribe error",
+                                            serde_json::json!({ "error": e.to_string() }),
+                                        ));
+                                    }
+                                }
                                 let d = backoff.next().unwrap_or(Duration::from_secs(10));
                                 tokio::time::sleep(d).await;
                                 continue;
                             }
                         };
+
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(true, Ordering::Relaxed);
+                            telemetry_state
+                                .last_subscribe_ok_at_ms
+                                .store(now_ms(), Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "subscribed".to_string();
+                            if let Some(tx_evt) = &telemetry_event_tx {
+                                let _ = tx_evt.try_send(Worker::make_event(
+                                    &worker_id,
+                                    &namespace,
+                                    &task_queue,
+                                    TelemetryLevel::Info,
+                                    "subscribe_ok",
+                                    "NATS subscription established",
+                                    serde_json::json!({}),
+                                ));
+                            }
+                        }
 
                         backoff = ExponentialBuilder::default()
                             .with_min_delay(Duration::from_millis(100))
@@ -587,12 +1034,33 @@ impl Worker {
                             .build();
 
                         while let Some(_msg) = sub.next().await {
+                            if telemetry_enabled {
+                                telemetry_state
+                                    .last_wakeup_at_ms
+                                    .store(now_ms(), Ordering::Relaxed);
+                            }
                             if tx.send(()).await.is_err() {
                                 return;
                             }
                         }
 
                         warn!("NATS subscription ended, reconnecting");
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "reconnecting".to_string();
+                            if let Some(tx_evt) = &telemetry_event_tx {
+                                let _ = tx_evt.try_send(Worker::make_event(
+                                    &worker_id,
+                                    &namespace,
+                                    &task_queue,
+                                    TelemetryLevel::Warn,
+                                    "subscribe_closed",
+                                    "NATS subscription ended; reconnecting",
+                                    serde_json::json!({}),
+                                ));
+                            }
+                        }
                     }
                 });
             }
@@ -613,6 +1081,12 @@ impl Worker {
                         .build();
 
                     loop {
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "connecting".to_string();
+                        }
+
                         let consumer: rdkafka::consumer::StreamConsumer =
                             match rdkafka::ClientConfig::new()
                                 .set("bootstrap.servers", &brokers)
@@ -627,6 +1101,25 @@ impl Worker {
                                 Ok(c) => c,
                                 Err(e) => {
                                     warn!(error = %e, "Failed to create Kafka consumer, retrying");
+                                    if telemetry_enabled {
+                                        *telemetry_state.last_error.lock().await = e.to_string();
+                                        telemetry_state
+                                            .last_error_at_ms
+                                            .store(now_ms(), Ordering::Relaxed);
+                                        *telemetry_state.subscription_state.write().await =
+                                            "error".to_string();
+                                        if let Some(tx_evt) = &telemetry_event_tx {
+                                            let _ = tx_evt.try_send(Worker::make_event(
+                                                &worker_id,
+                                                &namespace,
+                                                &task_queue,
+                                                TelemetryLevel::Warn,
+                                                "subscribe_error",
+                                                "Kafka consumer create error",
+                                                serde_json::json!({ "error": e.to_string() }),
+                                            ));
+                                        }
+                                    }
                                     let d = backoff.next().unwrap_or(Duration::from_secs(10));
                                     tokio::time::sleep(d).await;
                                     continue;
@@ -635,6 +1128,25 @@ impl Worker {
 
                         if let Err(e) = consumer.subscribe(&[&topic]) {
                             warn!(error = %e, "Failed to subscribe to Kafka topic, retrying");
+                            if telemetry_enabled {
+                                *telemetry_state.last_error.lock().await = e.to_string();
+                                telemetry_state
+                                    .last_error_at_ms
+                                    .store(now_ms(), Ordering::Relaxed);
+                                *telemetry_state.subscription_state.write().await =
+                                    "error".to_string();
+                                if let Some(tx_evt) = &telemetry_event_tx {
+                                    let _ = tx_evt.try_send(Worker::make_event(
+                                        &worker_id,
+                                        &namespace,
+                                        &task_queue,
+                                        TelemetryLevel::Warn,
+                                        "subscribe_error",
+                                        "Kafka subscribe error",
+                                        serde_json::json!({ "error": e.to_string() }),
+                                    ));
+                                }
+                            }
                             let d = backoff.next().unwrap_or(Duration::from_secs(10));
                             tokio::time::sleep(d).await;
                             continue;
@@ -649,6 +1161,29 @@ impl Worker {
                             key = %key,
                             "Kafka wakeup subscription started"
                         );
+
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(true, Ordering::Relaxed);
+                            telemetry_state
+                                .last_subscribe_ok_at_ms
+                                .store(now_ms(), Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "subscribed".to_string();
+                            if let Some(tx_evt) = &telemetry_event_tx {
+                                let _ = tx_evt.try_send(Worker::make_event(
+                                    &worker_id,
+                                    &namespace,
+                                    &task_queue,
+                                    TelemetryLevel::Info,
+                                    "subscribe_ok",
+                                    "Kafka subscription established",
+                                    serde_json::json!({
+                                        "topic": topic.clone(),
+                                        "group_id": group_id.clone()
+                                    }),
+                                ));
+                            }
+                        }
 
                         backoff = ExponentialBuilder::default()
                             .with_min_delay(Duration::from_millis(200))
@@ -668,6 +1203,11 @@ impl Worker {
 
                             if msg.key() == Some(key.as_bytes()) {
                                 tracing::debug!("Kafka wakeup received");
+                                if telemetry_enabled {
+                                    telemetry_state
+                                        .last_wakeup_at_ms
+                                        .store(now_ms(), Ordering::Relaxed);
+                                }
                                 if tx.send(()).await.is_err() {
                                     return;
                                 }
@@ -678,6 +1218,22 @@ impl Worker {
                         }
 
                         warn!("Kafka stream ended, reconnecting");
+                        if telemetry_enabled {
+                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                            *telemetry_state.subscription_state.write().await =
+                                "reconnecting".to_string();
+                            if let Some(tx_evt) = &telemetry_event_tx {
+                                let _ = tx_evt.try_send(Worker::make_event(
+                                    &worker_id,
+                                    &namespace,
+                                    &task_queue,
+                                    TelemetryLevel::Warn,
+                                    "subscribe_closed",
+                                    "Kafka stream ended; reconnecting",
+                                    serde_json::json!({}),
+                                ));
+                            }
+                        }
                     }
                 });
             }
@@ -753,6 +1309,11 @@ impl Worker {
                 Err(_) => break, // no permits left
             };
 
+            self.telemetry_state
+                .claim_attempts_delta
+                .fetch_add(1, Ordering::Relaxed);
+
+            let claim_start = std::time::Instant::now();
             let resp = self
                 .client
                 .claim_task(Request::new(ClaimTaskRequest {
@@ -762,6 +1323,12 @@ impl Worker {
                     workflow_types: self.workflow_types.clone(),
                 }))
                 .await;
+            let claim_latency_ms = claim_start.elapsed().as_millis().min(u128::from(u32::MAX));
+            self.telemetry_state
+                .claim_latency_ms
+                .lock()
+                .await
+                .push(claim_latency_ms as u32);
 
             match resp {
                 Ok(r) => {
@@ -775,6 +1342,9 @@ impl Worker {
 
                     match result {
                         kagzi_proto::kagzi::claim_task_response::Result::NoTask(_) => {
+                            self.telemetry_state
+                                .claim_no_task_delta
+                                .fetch_add(1, Ordering::Relaxed);
                             if claimed == 0 && budget > 1 {
                                 // Avoid hammering ClaimTask when signals are racing across workers.
                                 tokio::time::sleep(Duration::from_millis(25)).await;
@@ -783,6 +1353,9 @@ impl Worker {
                             break;
                         }
                         kagzi_proto::kagzi::claim_task_response::Result::Task(task) => {
+                            self.telemetry_state
+                                .claim_success_delta
+                                .fetch_add(1, Ordering::Relaxed);
                             claimed += 1;
 
                             if let Some(handler) = self.workflows.get(&task.workflow_type) {
@@ -838,6 +1411,13 @@ impl Worker {
                 }
                 Err(e) => {
                     drop(permit);
+                    self.telemetry_state
+                        .claim_error_delta
+                        .fetch_add(1, Ordering::Relaxed);
+                    *self.telemetry_state.last_error.lock().await = e.to_string();
+                    self.telemetry_state
+                        .last_error_at_ms
+                        .store(now_ms(), Ordering::Relaxed);
 
                     // If NotFound or FailedPrecondition, the server thinks we're offline/draining
                     // or otherwise unauthorized for this queue. Trigger shutdown to prevent

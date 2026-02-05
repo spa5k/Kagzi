@@ -1,5 +1,4 @@
-import type { PageRequest } from "@/gen/common_pb";
-import { type ListWorkflowsRequest, WorkflowStatus } from "@/gen/workflow_pb";
+import { WorkflowStatus } from "@/gen/workflow_pb";
 import {
   useCancelWorkflow,
   useGetServerInfo,
@@ -48,7 +47,7 @@ export function WorkflowExample() {
     try {
       const result = await startWorkflow.mutateAsync({
         externalId: `example-${Date.now()}`,
-        namespaceId: namespace,
+        namespace,
         taskQueue: "default",
         workflowType: "example_workflow",
         input: {
@@ -69,7 +68,7 @@ export function WorkflowExample() {
     try {
       await cancelWorkflow.mutateAsync({
         runId,
-        namespaceId: namespace,
+        namespace,
       });
       alert("Workflow cancelled!");
     } catch (error) {

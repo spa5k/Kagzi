@@ -12,13 +12,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type {
-  GetWorkflowScheduleRequest,
-  ListScheduleRunsRequest,
-  PauseWorkflowScheduleRequest,
-  ResumeWorkflowScheduleRequest,
-  TriggerWorkflowScheduleRequest,
-} from "@/gen/workflow_schedule_pb";
 import {
   useDeleteSchedule,
   useGetSchedule,

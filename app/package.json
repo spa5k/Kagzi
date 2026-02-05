@@ -10,7 +10,7 @@
     "generate": "rm -rf src/gen && mkdir -p src/gen && npx @bufbuild/buf generate",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -b"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",

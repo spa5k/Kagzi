@@ -151,7 +151,6 @@ Workers are long-running processes that poll for workflows and execute them. Reg
 ```rust
 let worker = Worker::new("http://localhost:50051")
     .namespace("production")
-    .task_queue("orders")
     .workflows([
         ("order_workflow", order_workflow),
         ("refund_workflow", refund_workflow),
@@ -161,6 +160,8 @@ let worker = Worker::new("http://localhost:50051")
 
 worker.run().await?;
 ```
+
+By default, workflows run on the per-namespace `default` task queue. You can create additional queues in the UI (Queues → Create queue) or via `QueueService`, but the SDK defaults keep things simple.
 
 ### Scheduling
 
@@ -172,7 +173,7 @@ use kagzi::Kagzi;
 let client = Kagzi::connect("http://localhost:50051").await?;
 
 client
-    .create_schedule("daily-report")
+    .schedule("daily-report")
     .namespace("analytics")
     .workflow("generate_report")
     .cron("0 9 * * *") // Every day at 9 AM

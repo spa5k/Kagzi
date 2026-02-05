@@ -1,0 +1,206 @@
+syntax = "proto3";
+package kagzi.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+// TelemetryService ingests worker telemetry for analytics and UI observability.
+//
+// Workers send periodic snapshots (gauges + deltas) and lossy event batches.
+// The server persists a "latest state" per worker plus a bounded event history.
+service TelemetryService {
+  // ReportWorkerSnapshot ingests a periodic worker snapshot (recommended cadence: 5-15s).
+  rpc ReportWorkerSnapshot(ReportWorkerSnapshotRequest) returns (ReportWorkerSnapshotResponse);
+
+  // ReportWorkerEvents ingests a lossy batch of worker events.
+  rpc ReportWorkerEvents(ReportWorkerEventsRequest) returns (ReportWorkerEventsResponse);
+
+  // GetWorkerTelemetryState returns the latest telemetry state for a worker.
+  rpc GetWorkerTelemetryState(GetWorkerTelemetryStateRequest) returns (GetWorkerTelemetryStateResponse);
+
+  // ListWorkerTelemetryStates returns latest worker telemetry states for a namespace.
+  rpc ListWorkerTelemetryStates(ListWorkerTelemetryStatesRequest) returns (ListWorkerTelemetryStatesResponse);
+
+  // ListWorkerTelemetryEvents returns recent events for a worker.
+  rpc ListWorkerTelemetryEvents(ListWorkerTelemetryEventsRequest) returns (ListWorkerTelemetryEventsResponse);
+
+  // GetQueueTelemetryState returns the latest telemetry state for a queue.
+  rpc GetQueueTelemetryState(GetQueueTelemetryStateRequest) returns (GetQueueTelemetryStateResponse);
+
+  // ListQueueTelemetryStates returns latest queue telemetry states for a namespace.
+  rpc ListQueueTelemetryStates(ListQueueTelemetryStatesRequest) returns (ListQueueTelemetryStatesResponse);
+
+  // ListServerTelemetryEvents returns recent server telemetry events (global / optional namespace).
+  rpc ListServerTelemetryEvents(ListServerTelemetryEventsRequest) returns (ListServerTelemetryEventsResponse);
+}
+
+enum TelemetryLevel {
+  TELEMETRY_LEVEL_UNSPECIFIED = 0;
+  TELEMETRY_LEVEL_DEBUG = 1;
+  TELEMETRY_LEVEL_INFO = 2;
+  TELEMETRY_LEVEL_WARN = 3;
+  TELEMETRY_LEVEL_ERROR = 4;
+}
+
+// A periodic, best-effort snapshot of worker state.
+message WorkerTelemetrySnapshot {
+  // Identity
+  string worker_id = 1;
+  string namespace = 2;
+  string task_queue = 3;
+  google.protobuf.Timestamp observed_at = 4;
+
+  // Signal backend / subscription health
+  string signal_backend = 10; // e.g. "server", "nats", "kafka"
+  bool subscribed = 11;
+  string subscription_state = 12; // e.g. "subscribed", "reconnecting"
+  google.protobuf.Timestamp last_subscribe_ok_at = 13;
+  google.protobuf.Timestamp last_wakeup_at = 14;
+  string last_error = 15;
+  google.protobuf.Timestamp last_error_at = 16;
+
+  // Execution saturation (worker-local)
+  uint32 max_concurrent = 20;
+  uint32 in_flight = 21;
+
+  // Server-derived fields (authoritative)
+  uint32 active_workflows_authoritative = 25;
+  google.protobuf.Timestamp last_claim_at = 26;
+  string last_claim_result = 27; // "task", "no_task", "error"
+  string last_claim_error = 28;
+
+  // Claim loop (deltas since last snapshot on the worker)
+  uint64 claim_attempts_delta = 30;
+  uint64 claim_success_delta = 31;
+  uint64 claim_no_task_delta = 32;
+  uint64 claim_error_delta = 33;
+  double claim_rtt_ms_avg = 34;
+  double claim_rtt_ms_p95 = 35;
+  double claim_rtt_ms_max = 36;
+
+  // Optional extra JSON payload (UTF-8) for forward-compatible fields.
+  // Stored as JSONB in Postgres and returned via read APIs for UI.
+  bytes extra_json = 50;
+}
+
+message WorkerTelemetryEvent {
+  string worker_id = 1;
+  string namespace = 2;
+  string task_queue = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+
+  TelemetryLevel level = 10;
+  string event_type = 11; // e.g. "subscribe_ok", "claim_error"
+  string message = 12;
+
+  // Optional extra JSON payload (UTF-8) for forward-compatible fields.
+  bytes extra_json = 20;
+}
+
+message ReportWorkerSnapshotRequest {
+  WorkerTelemetrySnapshot snapshot = 1;
+}
+
+message ReportWorkerSnapshotResponse {
+  bool accepted = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+message ReportWorkerEventsRequest {
+  repeated WorkerTelemetryEvent events = 1;
+}
+
+message ReportWorkerEventsResponse {
+  uint32 accepted = 1;
+  uint32 dropped = 2;
+  google.protobuf.Timestamp server_time = 3;
+}
+
+message GetWorkerTelemetryStateRequest {
+  string worker_id = 1;
+}
+
+message GetWorkerTelemetryStateResponse {
+  WorkerTelemetrySnapshot snapshot = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message ListWorkerTelemetryStatesRequest {
+  string namespace = 1;
+  optional string task_queue = 2;
+  PageRequest page = 3;
+}
+
+message ListWorkerTelemetryStatesResponse {
+  repeated WorkerTelemetrySnapshot snapshots = 1;
+  PageInfo page = 2;
+}
+
+message ListWorkerTelemetryEventsRequest {
+  string namespace = 1;
+  string worker_id = 2;
+  PageRequest page = 3;
+}
+
+message ListWorkerTelemetryEventsResponse {
+  repeated WorkerTelemetryEvent events = 1;
+  PageInfo page = 2;
+}
+
+message QueueTelemetryState {
+  string namespace = 1;
+  string task_queue = 2;
+  google.protobuf.Timestamp updated_at = 3;
+
+  int64 pending_count = 10;
+  int64 sleeping_count = 11;
+  int64 running_count = 12;
+  int64 due_count = 13;
+
+  int64 publish_attempts = 20;
+  int64 publish_errors = 21;
+  google.protobuf.Timestamp last_publish_ok_at = 22;
+  google.protobuf.Timestamp last_publish_error_at = 23;
+  string last_publish_error = 24;
+
+  google.protobuf.Timestamp last_due_work_notified_at = 30;
+  bytes extra_json = 50;
+}
+
+message GetQueueTelemetryStateRequest {
+  string namespace = 1;
+  string task_queue = 2;
+}
+
+message GetQueueTelemetryStateResponse {
+  QueueTelemetryState state = 1;
+}
+
+message ListQueueTelemetryStatesRequest {
+  string namespace = 1;
+  PageRequest page = 2;
+}
+
+message ListQueueTelemetryStatesResponse {
+  repeated QueueTelemetryState states = 1;
+  PageInfo page = 2;
+}
+
+message ServerTelemetryEvent {
+  string namespace = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+  TelemetryLevel level = 3;
+  string event_type = 4;
+  string message = 5;
+  bytes extra_json = 6;
+}
+
+message ListServerTelemetryEventsRequest {
+  optional string namespace = 1;
+  PageRequest page = 2;
+}
+
+message ListServerTelemetryEventsResponse {
+  repeated ServerTelemetryEvent events = 1;
+  PageInfo page = 2;
+}

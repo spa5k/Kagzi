@@ -39,7 +39,7 @@ export function NavMain({ items, label = "Monitor" }: NavMainProps) {
 
           if (itemParts.length === 1) {
             // Root level route like /workers - exact match
-            isActive = currentPath === item.url;
+            isActive = currentPath === item.url || currentPath === `${item.url}/`;
           } else if (itemParts.length === 2 && pathParts.length >= 2) {
             // Namespace-scoped route like /scheduling/workflows
             // Check if the second part matches (the actual route)

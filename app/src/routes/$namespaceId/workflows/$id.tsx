@@ -12,14 +12,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ListStepsRequest } from "@/gen/admin_pb";
 import { StepStatus } from "@/gen/worker_pb";
-import type {
-  Workflow,
-  CancelWorkflowRequest,
-  RetryWorkflowRequest,
-  TerminateWorkflowRequest,
-} from "@/gen/workflow_pb";
+import type { Workflow } from "@/gen/workflow_pb";
 import { useWorkflows } from "@/hooks/use-dashboard";
 import {
   useCancelWorkflow,

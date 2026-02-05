@@ -19,8 +19,10 @@ use uuid::Uuid;
 use crate::helpers::{
     bytes_to_payload, decode_cursor, encode_cursor, invalid_argument_error, map_store_error,
     normalize_page_size, not_found_error, payload_to_optional_bytes, require_non_empty,
+    resolve_task_queue,
 };
 use crate::proto_convert::timestamp_from;
+use crate::queue_store::ensure_task_queue_exists;
 
 fn parse_cron_expr(expr: &str) -> Result<cron::Schedule, Status> {
     if expr.trim().is_empty() {
@@ -117,7 +119,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
         let req = request.into_inner();
 
         let schedule_id = require_non_empty(req.schedule_id, "schedule_id")?;
-        let task_queue = require_non_empty(req.task_queue, "task_queue")?;
+        let task_queue = resolve_task_queue(req.task_queue);
         let workflow_type = require_non_empty(req.workflow_type, "workflow_type")?;
         let cron_expr = require_non_empty(req.cron_expr, "cron_expr")?;
         let namespace = require_non_empty(req.namespace, "namespace")?;
@@ -128,6 +130,8 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .get_or_create(&namespace)
             .await
             .map_err(map_store_error)?;
+
+        let _ = ensure_task_queue_exists(&self.store, &namespace, &task_queue).await;
 
         let input = payload_to_optional_bytes(req.input).unwrap_or_default();
         let first_fire = next_fire_from_now(&cron_expr, Utc::now())?;

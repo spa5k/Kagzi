@@ -21,19 +21,26 @@ use crate::constants::DEFAULT_VERSION;
 use crate::helpers::{
     decode_cursor, encode_cursor, invalid_argument_error, map_store_error, merge_proto_policy,
     normalize_page_size, not_found_error, payload_to_bytes, precondition_failed_error,
-    require_non_empty,
+    require_non_empty, resolve_task_queue,
 };
 use crate::proto_convert::{workflow_status_to_string, workflow_to_proto};
+use crate::queue_store::ensure_task_queue_exists;
 use crate::telemetry::extract_context;
+use crate::telemetry_store;
 
 pub struct WorkflowServiceImpl<Q: WorkSignalBus = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
     pub queue: Q,
+    pub telemetry_enabled: bool,
 }
 
 impl<Q: WorkSignalBus> WorkflowServiceImpl<Q> {
-    pub fn new(store: PgStore, queue: Q) -> Self {
-        Self { store, queue }
+    pub fn new(store: PgStore, queue: Q, telemetry_enabled: bool) -> Self {
+        Self {
+            store,
+            queue,
+            telemetry_enabled,
+        }
     }
 }
 
@@ -60,7 +67,7 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         tracing::Span::current().record("external_id", &req.external_id);
 
         let external_id = require_non_empty(req.external_id, "external_id")?;
-        let task_queue = require_non_empty(req.task_queue, "task_queue")?;
+        let task_queue = resolve_task_queue(req.task_queue);
         let workflow_type = require_non_empty(req.workflow_type, "workflow_type")?;
 
         let input_bytes = payload_to_bytes(req.input);
@@ -74,6 +81,9 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             .get_or_create(&namespace)
             .await
             .map_err(map_store_error)?;
+
+        // Best-effort: ensure queue is registered for UI/governance.
+        let _ = ensure_task_queue_exists(&self.store, &namespace, &task_queue).await;
 
         let version = if req.version.is_empty() {
             DEFAULT_VERSION.to_string()
@@ -113,13 +123,37 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             Err(e) => return Err(map_store_error(e)),
         };
 
-        if !already_exists && let Err(e) = self.queue.publish(&namespace, &task_queue).await {
-            tracing::warn!(
-                error = ?e,
-                namespace = %namespace,
-                task_queue = %task_queue,
-                "Failed to publish work wakeup"
-            );
+        if !already_exists {
+            match self.queue.publish(&namespace, &task_queue).await {
+                Ok(_) => {
+                    telemetry_store::record_queue_publish_result(
+                        &self.store,
+                        self.telemetry_enabled,
+                        &namespace,
+                        &task_queue,
+                        true,
+                        None,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    telemetry_store::record_queue_publish_result(
+                        &self.store,
+                        self.telemetry_enabled,
+                        &namespace,
+                        &task_queue,
+                        false,
+                        Some(&format!("{e:?}")),
+                    )
+                    .await;
+                    tracing::warn!(
+                        error = ?e,
+                        namespace = %namespace,
+                        task_queue = %task_queue,
+                        "Failed to publish work wakeup"
+                    );
+                }
+            }
         }
 
         Ok(Response::new(StartWorkflowResponse {

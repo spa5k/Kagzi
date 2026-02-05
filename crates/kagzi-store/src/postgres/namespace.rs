@@ -50,6 +50,19 @@ impl NamespaceRepository for PgNamespaceRepository {
             StoreError::from(e)
         })?;
 
+        // Best-effort: ensure per-namespace default task queue exists for UX/governance.
+        // Uses runtime query to avoid sqlx compile-time schema coupling.
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO kagzi.task_queues (namespace, task_queue, display_name, description, labels, extra, enabled)
+            VALUES ($1, 'default', 'Default', 'Default task queue', '{}'::jsonb, '{}'::jsonb, TRUE)
+            ON CONFLICT (namespace, task_queue) DO NOTHING
+            "#,
+        )
+        .bind(&namespace.namespace)
+        .execute(&self.pool)
+        .await;
+
         Ok(namespace)
     }
 

@@ -50,7 +50,7 @@ message WorkflowSchedule {
 message CreateWorkflowScheduleRequest {
   string namespace = 1;
   string schedule_id = 2;
-  string task_queue = 3;
+  optional string task_queue = 3;
   string workflow_type = 4;
   string cron_expr = 5;
   Payload input = 6;

@@ -25,6 +25,8 @@ pub struct Settings {
     pub queue: QueueSettings,
     #[serde(default)]
     pub telemetry: TelemetrySettings,
+    #[serde(default)]
+    pub worker_telemetry: WorkerTelemetrySettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -188,6 +190,30 @@ impl Default for TelemetrySettings {
             service_name: "kagzi-server".to_string(),
             log_level: "info".to_string(),
             log_format: "pretty".to_string(),
+        }
+    }
+}
+
+/// Settings for worker telemetry ingestion and retention (UI/analytics).
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkerTelemetrySettings {
+    /// Whether ingestion APIs are enabled.
+    pub enabled: bool,
+    /// How many days of telemetry events to retain (pruned on an interval).
+    pub events_retention_days: i64,
+    /// How often to prune telemetry events (seconds).
+    pub prune_interval_secs: u64,
+    /// Max events accepted per ReportWorkerEvents call.
+    pub max_events_per_report: usize,
+}
+
+impl Default for WorkerTelemetrySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            events_retention_days: 14,
+            prune_interval_secs: 60,
+            max_events_per_report: 500,
         }
     }
 }

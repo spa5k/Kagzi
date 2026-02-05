@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use cron::Schedule;
+use kagzi_proto::kagzi::queue_service_client::QueueServiceClient;
 use kagzi_proto::kagzi::workflow_schedule_service_client::WorkflowScheduleServiceClient;
 use kagzi_proto::kagzi::workflow_service_client::WorkflowServiceClient;
 use kagzi_proto::kagzi::{
-    CreateWorkflowScheduleRequest, DeleteWorkflowScheduleRequest, GetWorkflowScheduleRequest,
-    ListWorkflowSchedulesRequest, PageRequest, Payload as ProtoPayload, StartWorkflowRequest,
+    CreateQueueRequest, CreateWorkflowScheduleRequest, DeleteWorkflowScheduleRequest,
+    GetQueueRequest, GetWorkflowScheduleRequest, ListQueuesRequest, ListWorkflowSchedulesRequest,
+    PageRequest, Payload as ProtoPayload, StartWorkflowRequest, TaskQueue, UpdateQueueRequest,
     WorkflowSchedule,
 };
 use serde::Serialize;
@@ -15,6 +17,13 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 use crate::errors::KagziError;
+
+fn json_to_bytes(value: Option<&serde_json::Value>) -> anyhow::Result<Vec<u8>> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(v) => Ok(serde_json::to_vec(v)?),
+    }
+}
 
 /// Main client for interacting with Kagzi workflow engine
 ///
@@ -46,6 +55,7 @@ use crate::errors::KagziError;
 pub struct Kagzi {
     workflow_client: WorkflowServiceClient<Channel>,
     schedule_client: WorkflowScheduleServiceClient<Channel>,
+    queue_client: QueueServiceClient<Channel>,
 }
 
 impl Kagzi {
@@ -68,7 +78,8 @@ impl Kagzi {
 
         Ok(Self {
             workflow_client: WorkflowServiceClient::new(channel.clone()),
-            schedule_client: WorkflowScheduleServiceClient::new(channel),
+            schedule_client: WorkflowScheduleServiceClient::new(channel.clone()),
+            queue_client: QueueServiceClient::new(channel),
         })
     }
 
@@ -151,6 +162,78 @@ impl Kagzi {
             max_catchup: 100,
             enabled: true,
         }
+    }
+
+    /// Start building a task queue registration request.
+    ///
+    /// Queues are metadata-only and can still be implicitly created by execution.
+    pub fn queue(&self, task_queue: impl Into<String>) -> QueueBuilder {
+        QueueBuilder {
+            client: self.queue_client.clone(),
+            task_queue: task_queue.into(),
+            namespace: "default".to_string(),
+            display_name: None,
+            description: None,
+            labels: HashMap::new(),
+            extra_json: None,
+            enabled: true,
+        }
+    }
+
+    /// Get queue metadata.
+    pub async fn get_queue(&self, namespace: &str, task_queue: &str) -> anyhow::Result<TaskQueue> {
+        let mut client = self.queue_client.clone();
+        let resp = client
+            .get_queue(Request::new(GetQueueRequest {
+                namespace: namespace.to_string(),
+                task_queue: task_queue.to_string(),
+            }))
+            .await
+            .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?
+            .into_inner()
+            .queue
+            .ok_or_else(|| anyhow::anyhow!("Queue not returned by server"))?;
+
+        Ok(resp)
+    }
+
+    /// List queues in a namespace.
+    #[must_use = "Returns the list of queues"]
+    pub async fn list_queues(
+        &self,
+        namespace: &str,
+        page: Option<PageRequest>,
+    ) -> anyhow::Result<Vec<TaskQueue>> {
+        let mut client = self.queue_client.clone();
+        let page_request = page.unwrap_or_else(|| PageRequest {
+            page_size: 100,
+            page_token: "".to_string(),
+            include_total_count: false,
+        });
+
+        let resp = client
+            .list_queues(Request::new(ListQueuesRequest {
+                namespace: namespace.to_string(),
+                page: Some(page_request),
+            }))
+            .await
+            .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?
+            .into_inner();
+
+        Ok(resp.queues)
+    }
+
+    /// Update queue metadata.
+    pub async fn update_queue(&self, req: UpdateQueueRequest) -> anyhow::Result<TaskQueue> {
+        let mut client = self.queue_client.clone();
+        let resp = client
+            .update_queue(Request::new(req))
+            .await
+            .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?
+            .into_inner()
+            .queue
+            .ok_or_else(|| anyhow::anyhow!("Queue not returned by server"))?;
+        Ok(resp)
     }
 
     // Schedule query methods
@@ -402,7 +485,8 @@ impl StartWorkflowBuilder {
                 external_id: self
                     .idempotency_key
                     .unwrap_or_else(|| Uuid::now_v7().to_string()),
-                task_queue: self.workflow_type.clone(), // Queue = workflow type
+                // Default queue (server will also default if omitted).
+                task_queue: None,
                 workflow_type: self.workflow_type,
                 input: self.input.map(|data| ProtoPayload {
                     data,
@@ -662,7 +746,8 @@ impl ScheduleBuilder {
         let request = CreateWorkflowScheduleRequest {
             namespace: self.namespace,
             schedule_id: self._schedule_id,
-            task_queue: workflow_type.clone(),
+            // Default queue (server will also default if omitted).
+            task_queue: None,
             workflow_type,
             cron_expr: cron,
             input: self.input.map(|data| ProtoPayload {
@@ -684,5 +769,95 @@ impl ScheduleBuilder {
             .ok_or_else(|| anyhow::anyhow!("Workflow schedule not returned by server"))?;
 
         Ok(resp)
+    }
+}
+
+/// Handle returned when creating a queue.
+#[derive(Debug, Clone)]
+pub struct TaskQueueHandle {
+    pub namespace: String,
+    pub task_queue: String,
+}
+
+/// Builder for creating a task queue registration.
+#[derive(Debug, Clone)]
+pub struct QueueBuilder {
+    client: QueueServiceClient<Channel>,
+    task_queue: String,
+    namespace: String,
+    display_name: Option<String>,
+    description: Option<String>,
+    labels: HashMap<String, String>,
+    extra_json: Option<serde_json::Value>,
+    enabled: bool,
+}
+
+impl QueueBuilder {
+    pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = namespace.into();
+        self
+    }
+
+    pub fn display_name(mut self, name: impl Into<String>) -> Self {
+        self.display_name = Some(name.into());
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.labels.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn labels(mut self, labels: HashMap<String, String>) -> Self {
+        self.labels = labels;
+        self
+    }
+
+    pub fn extra_json(mut self, value: serde_json::Value) -> Self {
+        self.extra_json = Some(value);
+        self
+    }
+
+    pub async fn send(mut self) -> anyhow::Result<TaskQueueHandle> {
+        if self.namespace.trim().is_empty() {
+            anyhow::bail!("namespace cannot be empty");
+        }
+        if self.task_queue.trim().is_empty() {
+            anyhow::bail!("task_queue cannot be empty");
+        }
+
+        let extra_json = json_to_bytes(self.extra_json.as_ref())?;
+
+        let resp = self
+            .client
+            .create_queue(Request::new(CreateQueueRequest {
+                namespace: self.namespace.clone(),
+                task_queue: self.task_queue.clone(),
+                display_name: self.display_name.take(),
+                description: self.description.take(),
+                labels: self.labels.clone(),
+                extra_json,
+                enabled: Some(self.enabled),
+            }))
+            .await
+            .map_err(|e| anyhow::anyhow!(KagziError::from(e)))?
+            .into_inner()
+            .queue
+            .ok_or_else(|| anyhow::anyhow!("Queue not returned by server"))?;
+
+        Ok(TaskQueueHandle {
+            namespace: resp.namespace,
+            task_queue: resp.task_queue,
+        })
     }
 }

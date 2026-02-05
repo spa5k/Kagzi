@@ -7,6 +7,13 @@ export type {
   StepKind as StepKindEnum,
   StepStatus as StepStatusEnum,
 } from "@/gen/worker_pb";
+export type {
+  QueueTelemetryState,
+  ServerTelemetryEvent,
+  TelemetryLevel as TelemetryLevelEnum,
+  WorkerTelemetryEvent,
+  WorkerTelemetrySnapshot,
+} from "@/gen/telemetry_pb";
 export type { WorkflowSchedule } from "@/gen/workflow_schedule_pb";
 export type {
   ServingStatus as ServingStatusEnum,
@@ -20,11 +27,13 @@ export type {
 import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
 import { WorkerStatus as ProtoWorkerStatus, StepStatus, StepKind } from "@/gen/worker_pb";
 import { ServingStatus } from "@/gen/admin_pb";
+import { TelemetryLevel } from "@/gen/telemetry_pb";
 
 // Export the proto enums
 export const WorkflowStatus = ProtoWorkflowStatus;
 export const WorkerStatus = ProtoWorkerStatus;
 export { StepStatus, StepKind, ServingStatus };
+export { TelemetryLevel };
 
 // Label mapping for workflow statuses (includes all enum values)
 export const WorkflowStatusLabel: Record<number, string> = {
@@ -69,6 +78,14 @@ export const ServingStatusLabel: Record<number, string> = {
   [ServingStatus.UNSPECIFIED]: "Unspecified",
   [ServingStatus.SERVING]: "Serving",
   [ServingStatus.NOT_SERVING]: "Not Serving",
+};
+
+export const TelemetryLevelLabel: Record<number, string> = {
+  [TelemetryLevel.UNSPECIFIED]: "Unspecified",
+  [TelemetryLevel.DEBUG]: "Debug",
+  [TelemetryLevel.INFO]: "Info",
+  [TelemetryLevel.WARN]: "Warn",
+  [TelemetryLevel.ERROR]: "Error",
 };
 
 // Namespace type (not in protobufs, used for mock data)

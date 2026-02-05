@@ -107,7 +107,7 @@ message Step {
 // RegisterRequest declares worker capabilities and concurrency limits.
 message RegisterRequest {
   string namespace = 1;
-  string task_queue = 2;
+  optional string task_queue = 2;
   repeated string workflow_types = 3;
   string hostname = 4;
   int32 pid = 5;

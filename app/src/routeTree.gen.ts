@@ -8,290 +8,424 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from "./routes/__root";
-import { Route as WorkersRouteImport } from "./routes/workers";
-import { Route as NamespacesRouteImport } from "./routes/namespaces";
-import { Route as NamespaceIdRouteRouteImport } from "./routes/$namespaceId/route";
-import { Route as IndexRouteImport } from "./routes/index";
-import { Route as NamespaceIdIndexRouteImport } from "./routes/$namespaceId/index";
-import { Route as NamespaceIdWorkflowsRouteRouteImport } from "./routes/$namespaceId/workflows/route";
-import { Route as NamespaceIdSchedulesRouteRouteImport } from "./routes/$namespaceId/schedules/route";
-import { Route as NamespaceIdWorkflowsIndexRouteImport } from "./routes/$namespaceId/workflows/index";
-import { Route as NamespaceIdSchedulesIndexRouteImport } from "./routes/$namespaceId/schedules/index";
-import { Route as NamespaceIdWorkflowsIdRouteImport } from "./routes/$namespaceId/workflows/$id";
-import { Route as NamespaceIdSchedulesIdRouteImport } from "./routes/$namespaceId/schedules/$id";
+import { Route as rootRouteImport } from './routes/__root'
+import { Route as WorkersRouteImport } from './routes/workers'
+import { Route as NamespacesRouteImport } from './routes/namespaces'
+import { Route as NamespaceIdRouteRouteImport } from './routes/$namespaceId/route'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as NamespaceIdIndexRouteImport } from './routes/$namespaceId/index'
+import { Route as NamespaceIdServerRouteImport } from './routes/$namespaceId/server'
+import { Route as NamespaceIdEventsRouteImport } from './routes/$namespaceId/events'
+import { Route as NamespaceIdWorkflowsRouteRouteImport } from './routes/$namespaceId/workflows/route'
+import { Route as NamespaceIdSchedulesRouteRouteImport } from './routes/$namespaceId/schedules/route'
+import { Route as NamespaceIdWorkflowsIndexRouteImport } from './routes/$namespaceId/workflows/index'
+import { Route as NamespaceIdWorkersIndexRouteImport } from './routes/$namespaceId/workers/index'
+import { Route as NamespaceIdSchedulesIndexRouteImport } from './routes/$namespaceId/schedules/index'
+import { Route as NamespaceIdQueuesIndexRouteImport } from './routes/$namespaceId/queues/index'
+import { Route as NamespaceIdWorkflowsIdRouteImport } from './routes/$namespaceId/workflows/$id'
+import { Route as NamespaceIdWorkersIdRouteImport } from './routes/$namespaceId/workers/$id'
+import { Route as NamespaceIdSchedulesIdRouteImport } from './routes/$namespaceId/schedules/$id'
+import { Route as NamespaceIdQueuesTaskQueueRouteImport } from './routes/$namespaceId/queues/$taskQueue'
 
 const WorkersRoute = WorkersRouteImport.update({
-  id: "/workers",
-  path: "/workers",
+  id: '/workers',
+  path: '/workers',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const NamespacesRoute = NamespacesRouteImport.update({
-  id: "/namespaces",
-  path: "/namespaces",
+  id: '/namespaces',
+  path: '/namespaces',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const NamespaceIdRouteRoute = NamespaceIdRouteRouteImport.update({
-  id: "/$namespaceId",
-  path: "/$namespaceId",
+  id: '/$namespaceId',
+  path: '/$namespaceId',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const NamespaceIdIndexRoute = NamespaceIdIndexRouteImport.update({
-  id: "/",
-  path: "/",
+  id: '/',
+  path: '/',
   getParentRoute: () => NamespaceIdRouteRoute,
-} as any);
-const NamespaceIdWorkflowsRouteRoute = NamespaceIdWorkflowsRouteRouteImport.update({
-  id: "/workflows",
-  path: "/workflows",
+} as any)
+const NamespaceIdServerRoute = NamespaceIdServerRouteImport.update({
+  id: '/server',
+  path: '/server',
   getParentRoute: () => NamespaceIdRouteRoute,
-} as any);
-const NamespaceIdSchedulesRouteRoute = NamespaceIdSchedulesRouteRouteImport.update({
-  id: "/schedules",
-  path: "/schedules",
+} as any)
+const NamespaceIdEventsRoute = NamespaceIdEventsRouteImport.update({
+  id: '/events',
+  path: '/events',
   getParentRoute: () => NamespaceIdRouteRoute,
-} as any);
-const NamespaceIdWorkflowsIndexRoute = NamespaceIdWorkflowsIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => NamespaceIdWorkflowsRouteRoute,
-} as any);
-const NamespaceIdSchedulesIndexRoute = NamespaceIdSchedulesIndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => NamespaceIdSchedulesRouteRoute,
-} as any);
+} as any)
+const NamespaceIdWorkflowsRouteRoute =
+  NamespaceIdWorkflowsRouteRouteImport.update({
+    id: '/workflows',
+    path: '/workflows',
+    getParentRoute: () => NamespaceIdRouteRoute,
+  } as any)
+const NamespaceIdSchedulesRouteRoute =
+  NamespaceIdSchedulesRouteRouteImport.update({
+    id: '/schedules',
+    path: '/schedules',
+    getParentRoute: () => NamespaceIdRouteRoute,
+  } as any)
+const NamespaceIdWorkflowsIndexRoute =
+  NamespaceIdWorkflowsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => NamespaceIdWorkflowsRouteRoute,
+  } as any)
+const NamespaceIdWorkersIndexRoute = NamespaceIdWorkersIndexRouteImport.update({
+  id: '/workers/',
+  path: '/workers/',
+  getParentRoute: () => NamespaceIdRouteRoute,
+} as any)
+const NamespaceIdSchedulesIndexRoute =
+  NamespaceIdSchedulesIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => NamespaceIdSchedulesRouteRoute,
+  } as any)
+const NamespaceIdQueuesIndexRoute = NamespaceIdQueuesIndexRouteImport.update({
+  id: '/queues/',
+  path: '/queues/',
+  getParentRoute: () => NamespaceIdRouteRoute,
+} as any)
 const NamespaceIdWorkflowsIdRoute = NamespaceIdWorkflowsIdRouteImport.update({
-  id: "/$id",
-  path: "/$id",
+  id: '/$id',
+  path: '/$id',
   getParentRoute: () => NamespaceIdWorkflowsRouteRoute,
-} as any);
+} as any)
+const NamespaceIdWorkersIdRoute = NamespaceIdWorkersIdRouteImport.update({
+  id: '/workers/$id',
+  path: '/workers/$id',
+  getParentRoute: () => NamespaceIdRouteRoute,
+} as any)
 const NamespaceIdSchedulesIdRoute = NamespaceIdSchedulesIdRouteImport.update({
-  id: "/$id",
-  path: "/$id",
+  id: '/$id',
+  path: '/$id',
   getParentRoute: () => NamespaceIdSchedulesRouteRoute,
-} as any);
+} as any)
+const NamespaceIdQueuesTaskQueueRoute =
+  NamespaceIdQueuesTaskQueueRouteImport.update({
+    id: '/queues/$taskQueue',
+    path: '/queues/$taskQueue',
+    getParentRoute: () => NamespaceIdRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
-  "/": typeof IndexRoute;
-  "/$namespaceId": typeof NamespaceIdRouteRouteWithChildren;
-  "/namespaces": typeof NamespacesRoute;
-  "/workers": typeof WorkersRoute;
-  "/$namespaceId/schedules": typeof NamespaceIdSchedulesRouteRouteWithChildren;
-  "/$namespaceId/workflows": typeof NamespaceIdWorkflowsRouteRouteWithChildren;
-  "/$namespaceId/": typeof NamespaceIdIndexRoute;
-  "/$namespaceId/schedules/$id": typeof NamespaceIdSchedulesIdRoute;
-  "/$namespaceId/workflows/$id": typeof NamespaceIdWorkflowsIdRoute;
-  "/$namespaceId/schedules/": typeof NamespaceIdSchedulesIndexRoute;
-  "/$namespaceId/workflows/": typeof NamespaceIdWorkflowsIndexRoute;
+  '/': typeof IndexRoute
+  '/$namespaceId': typeof NamespaceIdRouteRouteWithChildren
+  '/namespaces': typeof NamespacesRoute
+  '/workers': typeof WorkersRoute
+  '/$namespaceId/schedules': typeof NamespaceIdSchedulesRouteRouteWithChildren
+  '/$namespaceId/workflows': typeof NamespaceIdWorkflowsRouteRouteWithChildren
+  '/$namespaceId/events': typeof NamespaceIdEventsRoute
+  '/$namespaceId/server': typeof NamespaceIdServerRoute
+  '/$namespaceId/': typeof NamespaceIdIndexRoute
+  '/$namespaceId/queues/$taskQueue': typeof NamespaceIdQueuesTaskQueueRoute
+  '/$namespaceId/schedules/$id': typeof NamespaceIdSchedulesIdRoute
+  '/$namespaceId/workers/$id': typeof NamespaceIdWorkersIdRoute
+  '/$namespaceId/workflows/$id': typeof NamespaceIdWorkflowsIdRoute
+  '/$namespaceId/queues': typeof NamespaceIdQueuesIndexRoute
+  '/$namespaceId/schedules/': typeof NamespaceIdSchedulesIndexRoute
+  '/$namespaceId/workers': typeof NamespaceIdWorkersIndexRoute
+  '/$namespaceId/workflows/': typeof NamespaceIdWorkflowsIndexRoute
 }
 export interface FileRoutesByTo {
-  "/": typeof IndexRoute;
-  "/namespaces": typeof NamespacesRoute;
-  "/workers": typeof WorkersRoute;
-  "/$namespaceId": typeof NamespaceIdIndexRoute;
-  "/$namespaceId/schedules/$id": typeof NamespaceIdSchedulesIdRoute;
-  "/$namespaceId/workflows/$id": typeof NamespaceIdWorkflowsIdRoute;
-  "/$namespaceId/schedules": typeof NamespaceIdSchedulesIndexRoute;
-  "/$namespaceId/workflows": typeof NamespaceIdWorkflowsIndexRoute;
+  '/': typeof IndexRoute
+  '/namespaces': typeof NamespacesRoute
+  '/workers': typeof WorkersRoute
+  '/$namespaceId/events': typeof NamespaceIdEventsRoute
+  '/$namespaceId/server': typeof NamespaceIdServerRoute
+  '/$namespaceId': typeof NamespaceIdIndexRoute
+  '/$namespaceId/queues/$taskQueue': typeof NamespaceIdQueuesTaskQueueRoute
+  '/$namespaceId/schedules/$id': typeof NamespaceIdSchedulesIdRoute
+  '/$namespaceId/workers/$id': typeof NamespaceIdWorkersIdRoute
+  '/$namespaceId/workflows/$id': typeof NamespaceIdWorkflowsIdRoute
+  '/$namespaceId/queues': typeof NamespaceIdQueuesIndexRoute
+  '/$namespaceId/schedules': typeof NamespaceIdSchedulesIndexRoute
+  '/$namespaceId/workers': typeof NamespaceIdWorkersIndexRoute
+  '/$namespaceId/workflows': typeof NamespaceIdWorkflowsIndexRoute
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport;
-  "/": typeof IndexRoute;
-  "/$namespaceId": typeof NamespaceIdRouteRouteWithChildren;
-  "/namespaces": typeof NamespacesRoute;
-  "/workers": typeof WorkersRoute;
-  "/$namespaceId/schedules": typeof NamespaceIdSchedulesRouteRouteWithChildren;
-  "/$namespaceId/workflows": typeof NamespaceIdWorkflowsRouteRouteWithChildren;
-  "/$namespaceId/": typeof NamespaceIdIndexRoute;
-  "/$namespaceId/schedules/$id": typeof NamespaceIdSchedulesIdRoute;
-  "/$namespaceId/workflows/$id": typeof NamespaceIdWorkflowsIdRoute;
-  "/$namespaceId/schedules/": typeof NamespaceIdSchedulesIndexRoute;
-  "/$namespaceId/workflows/": typeof NamespaceIdWorkflowsIndexRoute;
+  __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
+  '/$namespaceId': typeof NamespaceIdRouteRouteWithChildren
+  '/namespaces': typeof NamespacesRoute
+  '/workers': typeof WorkersRoute
+  '/$namespaceId/schedules': typeof NamespaceIdSchedulesRouteRouteWithChildren
+  '/$namespaceId/workflows': typeof NamespaceIdWorkflowsRouteRouteWithChildren
+  '/$namespaceId/events': typeof NamespaceIdEventsRoute
+  '/$namespaceId/server': typeof NamespaceIdServerRoute
+  '/$namespaceId/': typeof NamespaceIdIndexRoute
+  '/$namespaceId/queues/$taskQueue': typeof NamespaceIdQueuesTaskQueueRoute
+  '/$namespaceId/schedules/$id': typeof NamespaceIdSchedulesIdRoute
+  '/$namespaceId/workers/$id': typeof NamespaceIdWorkersIdRoute
+  '/$namespaceId/workflows/$id': typeof NamespaceIdWorkflowsIdRoute
+  '/$namespaceId/queues/': typeof NamespaceIdQueuesIndexRoute
+  '/$namespaceId/schedules/': typeof NamespaceIdSchedulesIndexRoute
+  '/$namespaceId/workers/': typeof NamespaceIdWorkersIndexRoute
+  '/$namespaceId/workflows/': typeof NamespaceIdWorkflowsIndexRoute
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath;
+  fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | "/"
-    | "/$namespaceId"
-    | "/namespaces"
-    | "/workers"
-    | "/$namespaceId/schedules"
-    | "/$namespaceId/workflows"
-    | "/$namespaceId/"
-    | "/$namespaceId/schedules/$id"
-    | "/$namespaceId/workflows/$id"
-    | "/$namespaceId/schedules/"
-    | "/$namespaceId/workflows/";
-  fileRoutesByTo: FileRoutesByTo;
+    | '/'
+    | '/$namespaceId'
+    | '/namespaces'
+    | '/workers'
+    | '/$namespaceId/schedules'
+    | '/$namespaceId/workflows'
+    | '/$namespaceId/events'
+    | '/$namespaceId/server'
+    | '/$namespaceId/'
+    | '/$namespaceId/queues/$taskQueue'
+    | '/$namespaceId/schedules/$id'
+    | '/$namespaceId/workers/$id'
+    | '/$namespaceId/workflows/$id'
+    | '/$namespaceId/queues'
+    | '/$namespaceId/schedules/'
+    | '/$namespaceId/workers'
+    | '/$namespaceId/workflows/'
+  fileRoutesByTo: FileRoutesByTo
   to:
-    | "/"
-    | "/namespaces"
-    | "/workers"
-    | "/$namespaceId"
-    | "/$namespaceId/schedules/$id"
-    | "/$namespaceId/workflows/$id"
-    | "/$namespaceId/schedules"
-    | "/$namespaceId/workflows";
+    | '/'
+    | '/namespaces'
+    | '/workers'
+    | '/$namespaceId/events'
+    | '/$namespaceId/server'
+    | '/$namespaceId'
+    | '/$namespaceId/queues/$taskQueue'
+    | '/$namespaceId/schedules/$id'
+    | '/$namespaceId/workers/$id'
+    | '/$namespaceId/workflows/$id'
+    | '/$namespaceId/queues'
+    | '/$namespaceId/schedules'
+    | '/$namespaceId/workers'
+    | '/$namespaceId/workflows'
   id:
-    | "__root__"
-    | "/"
-    | "/$namespaceId"
-    | "/namespaces"
-    | "/workers"
-    | "/$namespaceId/schedules"
-    | "/$namespaceId/workflows"
-    | "/$namespaceId/"
-    | "/$namespaceId/schedules/$id"
-    | "/$namespaceId/workflows/$id"
-    | "/$namespaceId/schedules/"
-    | "/$namespaceId/workflows/";
-  fileRoutesById: FileRoutesById;
+    | '__root__'
+    | '/'
+    | '/$namespaceId'
+    | '/namespaces'
+    | '/workers'
+    | '/$namespaceId/schedules'
+    | '/$namespaceId/workflows'
+    | '/$namespaceId/events'
+    | '/$namespaceId/server'
+    | '/$namespaceId/'
+    | '/$namespaceId/queues/$taskQueue'
+    | '/$namespaceId/schedules/$id'
+    | '/$namespaceId/workers/$id'
+    | '/$namespaceId/workflows/$id'
+    | '/$namespaceId/queues/'
+    | '/$namespaceId/schedules/'
+    | '/$namespaceId/workers/'
+    | '/$namespaceId/workflows/'
+  fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute;
-  NamespaceIdRouteRoute: typeof NamespaceIdRouteRouteWithChildren;
-  NamespacesRoute: typeof NamespacesRoute;
-  WorkersRoute: typeof WorkersRoute;
+  IndexRoute: typeof IndexRoute
+  NamespaceIdRouteRoute: typeof NamespaceIdRouteRouteWithChildren
+  NamespacesRoute: typeof NamespacesRoute
+  WorkersRoute: typeof WorkersRoute
 }
 
-declare module "@tanstack/react-router" {
+declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    "/workers": {
-      id: "/workers";
-      path: "/workers";
-      fullPath: "/workers";
-      preLoaderRoute: typeof WorkersRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/namespaces": {
-      id: "/namespaces";
-      path: "/namespaces";
-      fullPath: "/namespaces";
-      preLoaderRoute: typeof NamespacesRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/$namespaceId": {
-      id: "/$namespaceId";
-      path: "/$namespaceId";
-      fullPath: "/$namespaceId";
-      preLoaderRoute: typeof NamespaceIdRouteRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/": {
-      id: "/";
-      path: "/";
-      fullPath: "/";
-      preLoaderRoute: typeof IndexRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/$namespaceId/": {
-      id: "/$namespaceId/";
-      path: "/";
-      fullPath: "/$namespaceId/";
-      preLoaderRoute: typeof NamespaceIdIndexRouteImport;
-      parentRoute: typeof NamespaceIdRouteRoute;
-    };
-    "/$namespaceId/workflows": {
-      id: "/$namespaceId/workflows";
-      path: "/workflows";
-      fullPath: "/$namespaceId/workflows";
-      preLoaderRoute: typeof NamespaceIdWorkflowsRouteRouteImport;
-      parentRoute: typeof NamespaceIdRouteRoute;
-    };
-    "/$namespaceId/schedules": {
-      id: "/$namespaceId/schedules";
-      path: "/schedules";
-      fullPath: "/$namespaceId/schedules";
-      preLoaderRoute: typeof NamespaceIdSchedulesRouteRouteImport;
-      parentRoute: typeof NamespaceIdRouteRoute;
-    };
-    "/$namespaceId/workflows/": {
-      id: "/$namespaceId/workflows/";
-      path: "/";
-      fullPath: "/$namespaceId/workflows/";
-      preLoaderRoute: typeof NamespaceIdWorkflowsIndexRouteImport;
-      parentRoute: typeof NamespaceIdWorkflowsRouteRoute;
-    };
-    "/$namespaceId/schedules/": {
-      id: "/$namespaceId/schedules/";
-      path: "/";
-      fullPath: "/$namespaceId/schedules/";
-      preLoaderRoute: typeof NamespaceIdSchedulesIndexRouteImport;
-      parentRoute: typeof NamespaceIdSchedulesRouteRoute;
-    };
-    "/$namespaceId/workflows/$id": {
-      id: "/$namespaceId/workflows/$id";
-      path: "/$id";
-      fullPath: "/$namespaceId/workflows/$id";
-      preLoaderRoute: typeof NamespaceIdWorkflowsIdRouteImport;
-      parentRoute: typeof NamespaceIdWorkflowsRouteRoute;
-    };
-    "/$namespaceId/schedules/$id": {
-      id: "/$namespaceId/schedules/$id";
-      path: "/$id";
-      fullPath: "/$namespaceId/schedules/$id";
-      preLoaderRoute: typeof NamespaceIdSchedulesIdRouteImport;
-      parentRoute: typeof NamespaceIdSchedulesRouteRoute;
-    };
+    '/workers': {
+      id: '/workers'
+      path: '/workers'
+      fullPath: '/workers'
+      preLoaderRoute: typeof WorkersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/namespaces': {
+      id: '/namespaces'
+      path: '/namespaces'
+      fullPath: '/namespaces'
+      preLoaderRoute: typeof NamespacesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$namespaceId': {
+      id: '/$namespaceId'
+      path: '/$namespaceId'
+      fullPath: '/$namespaceId'
+      preLoaderRoute: typeof NamespaceIdRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$namespaceId/': {
+      id: '/$namespaceId/'
+      path: '/'
+      fullPath: '/$namespaceId/'
+      preLoaderRoute: typeof NamespaceIdIndexRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/server': {
+      id: '/$namespaceId/server'
+      path: '/server'
+      fullPath: '/$namespaceId/server'
+      preLoaderRoute: typeof NamespaceIdServerRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/events': {
+      id: '/$namespaceId/events'
+      path: '/events'
+      fullPath: '/$namespaceId/events'
+      preLoaderRoute: typeof NamespaceIdEventsRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/workflows': {
+      id: '/$namespaceId/workflows'
+      path: '/workflows'
+      fullPath: '/$namespaceId/workflows'
+      preLoaderRoute: typeof NamespaceIdWorkflowsRouteRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/schedules': {
+      id: '/$namespaceId/schedules'
+      path: '/schedules'
+      fullPath: '/$namespaceId/schedules'
+      preLoaderRoute: typeof NamespaceIdSchedulesRouteRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/workflows/': {
+      id: '/$namespaceId/workflows/'
+      path: '/'
+      fullPath: '/$namespaceId/workflows/'
+      preLoaderRoute: typeof NamespaceIdWorkflowsIndexRouteImport
+      parentRoute: typeof NamespaceIdWorkflowsRouteRoute
+    }
+    '/$namespaceId/workers/': {
+      id: '/$namespaceId/workers/'
+      path: '/workers'
+      fullPath: '/$namespaceId/workers'
+      preLoaderRoute: typeof NamespaceIdWorkersIndexRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/schedules/': {
+      id: '/$namespaceId/schedules/'
+      path: '/'
+      fullPath: '/$namespaceId/schedules/'
+      preLoaderRoute: typeof NamespaceIdSchedulesIndexRouteImport
+      parentRoute: typeof NamespaceIdSchedulesRouteRoute
+    }
+    '/$namespaceId/queues/': {
+      id: '/$namespaceId/queues/'
+      path: '/queues'
+      fullPath: '/$namespaceId/queues'
+      preLoaderRoute: typeof NamespaceIdQueuesIndexRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/workflows/$id': {
+      id: '/$namespaceId/workflows/$id'
+      path: '/$id'
+      fullPath: '/$namespaceId/workflows/$id'
+      preLoaderRoute: typeof NamespaceIdWorkflowsIdRouteImport
+      parentRoute: typeof NamespaceIdWorkflowsRouteRoute
+    }
+    '/$namespaceId/workers/$id': {
+      id: '/$namespaceId/workers/$id'
+      path: '/workers/$id'
+      fullPath: '/$namespaceId/workers/$id'
+      preLoaderRoute: typeof NamespaceIdWorkersIdRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
+    '/$namespaceId/schedules/$id': {
+      id: '/$namespaceId/schedules/$id'
+      path: '/$id'
+      fullPath: '/$namespaceId/schedules/$id'
+      preLoaderRoute: typeof NamespaceIdSchedulesIdRouteImport
+      parentRoute: typeof NamespaceIdSchedulesRouteRoute
+    }
+    '/$namespaceId/queues/$taskQueue': {
+      id: '/$namespaceId/queues/$taskQueue'
+      path: '/queues/$taskQueue'
+      fullPath: '/$namespaceId/queues/$taskQueue'
+      preLoaderRoute: typeof NamespaceIdQueuesTaskQueueRouteImport
+      parentRoute: typeof NamespaceIdRouteRoute
+    }
   }
 }
 
 interface NamespaceIdSchedulesRouteRouteChildren {
-  NamespaceIdSchedulesIdRoute: typeof NamespaceIdSchedulesIdRoute;
-  NamespaceIdSchedulesIndexRoute: typeof NamespaceIdSchedulesIndexRoute;
+  NamespaceIdSchedulesIdRoute: typeof NamespaceIdSchedulesIdRoute
+  NamespaceIdSchedulesIndexRoute: typeof NamespaceIdSchedulesIndexRoute
 }
 
-const NamespaceIdSchedulesRouteRouteChildren: NamespaceIdSchedulesRouteRouteChildren = {
-  NamespaceIdSchedulesIdRoute: NamespaceIdSchedulesIdRoute,
-  NamespaceIdSchedulesIndexRoute: NamespaceIdSchedulesIndexRoute,
-};
+const NamespaceIdSchedulesRouteRouteChildren: NamespaceIdSchedulesRouteRouteChildren =
+  {
+    NamespaceIdSchedulesIdRoute: NamespaceIdSchedulesIdRoute,
+    NamespaceIdSchedulesIndexRoute: NamespaceIdSchedulesIndexRoute,
+  }
 
-const NamespaceIdSchedulesRouteRouteWithChildren = NamespaceIdSchedulesRouteRoute._addFileChildren(
-  NamespaceIdSchedulesRouteRouteChildren,
-);
+const NamespaceIdSchedulesRouteRouteWithChildren =
+  NamespaceIdSchedulesRouteRoute._addFileChildren(
+    NamespaceIdSchedulesRouteRouteChildren,
+  )
 
 interface NamespaceIdWorkflowsRouteRouteChildren {
-  NamespaceIdWorkflowsIdRoute: typeof NamespaceIdWorkflowsIdRoute;
-  NamespaceIdWorkflowsIndexRoute: typeof NamespaceIdWorkflowsIndexRoute;
+  NamespaceIdWorkflowsIdRoute: typeof NamespaceIdWorkflowsIdRoute
+  NamespaceIdWorkflowsIndexRoute: typeof NamespaceIdWorkflowsIndexRoute
 }
 
-const NamespaceIdWorkflowsRouteRouteChildren: NamespaceIdWorkflowsRouteRouteChildren = {
-  NamespaceIdWorkflowsIdRoute: NamespaceIdWorkflowsIdRoute,
-  NamespaceIdWorkflowsIndexRoute: NamespaceIdWorkflowsIndexRoute,
-};
+const NamespaceIdWorkflowsRouteRouteChildren: NamespaceIdWorkflowsRouteRouteChildren =
+  {
+    NamespaceIdWorkflowsIdRoute: NamespaceIdWorkflowsIdRoute,
+    NamespaceIdWorkflowsIndexRoute: NamespaceIdWorkflowsIndexRoute,
+  }
 
-const NamespaceIdWorkflowsRouteRouteWithChildren = NamespaceIdWorkflowsRouteRoute._addFileChildren(
-  NamespaceIdWorkflowsRouteRouteChildren,
-);
+const NamespaceIdWorkflowsRouteRouteWithChildren =
+  NamespaceIdWorkflowsRouteRoute._addFileChildren(
+    NamespaceIdWorkflowsRouteRouteChildren,
+  )
 
 interface NamespaceIdRouteRouteChildren {
-  NamespaceIdSchedulesRouteRoute: typeof NamespaceIdSchedulesRouteRouteWithChildren;
-  NamespaceIdWorkflowsRouteRoute: typeof NamespaceIdWorkflowsRouteRouteWithChildren;
-  NamespaceIdIndexRoute: typeof NamespaceIdIndexRoute;
+  NamespaceIdSchedulesRouteRoute: typeof NamespaceIdSchedulesRouteRouteWithChildren
+  NamespaceIdWorkflowsRouteRoute: typeof NamespaceIdWorkflowsRouteRouteWithChildren
+  NamespaceIdEventsRoute: typeof NamespaceIdEventsRoute
+  NamespaceIdServerRoute: typeof NamespaceIdServerRoute
+  NamespaceIdIndexRoute: typeof NamespaceIdIndexRoute
+  NamespaceIdQueuesTaskQueueRoute: typeof NamespaceIdQueuesTaskQueueRoute
+  NamespaceIdWorkersIdRoute: typeof NamespaceIdWorkersIdRoute
+  NamespaceIdQueuesIndexRoute: typeof NamespaceIdQueuesIndexRoute
+  NamespaceIdWorkersIndexRoute: typeof NamespaceIdWorkersIndexRoute
 }
 
 const NamespaceIdRouteRouteChildren: NamespaceIdRouteRouteChildren = {
   NamespaceIdSchedulesRouteRoute: NamespaceIdSchedulesRouteRouteWithChildren,
   NamespaceIdWorkflowsRouteRoute: NamespaceIdWorkflowsRouteRouteWithChildren,
+  NamespaceIdEventsRoute: NamespaceIdEventsRoute,
+  NamespaceIdServerRoute: NamespaceIdServerRoute,
   NamespaceIdIndexRoute: NamespaceIdIndexRoute,
-};
+  NamespaceIdQueuesTaskQueueRoute: NamespaceIdQueuesTaskQueueRoute,
+  NamespaceIdWorkersIdRoute: NamespaceIdWorkersIdRoute,
+  NamespaceIdQueuesIndexRoute: NamespaceIdQueuesIndexRoute,
+  NamespaceIdWorkersIndexRoute: NamespaceIdWorkersIndexRoute,
+}
 
-const NamespaceIdRouteRouteWithChildren = NamespaceIdRouteRoute._addFileChildren(
-  NamespaceIdRouteRouteChildren,
-);
+const NamespaceIdRouteRouteWithChildren =
+  NamespaceIdRouteRoute._addFileChildren(NamespaceIdRouteRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   NamespaceIdRouteRoute: NamespaceIdRouteRouteWithChildren,
   NamespacesRoute: NamespacesRoute,
   WorkersRoute: WorkersRoute,
-};
+}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>();
+  ._addFileTypes<FileRouteTypes>()

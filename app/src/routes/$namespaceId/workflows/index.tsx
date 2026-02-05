@@ -19,8 +19,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import type { ListWorkflowTypesRequest } from "@/gen/admin_pb";
-import type { PageRequest } from "@/gen/common_pb";
 import { useWorkflows } from "@/hooks/use-dashboard";
 import { useListWorkflowTypes, useStartWorkflow } from "@/hooks/use-grpc-services";
 import { cn } from "@/lib/utils";
@@ -141,7 +139,6 @@ function WorkflowsPage() {
   // State for the new workflow form
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [workflowType, setWorkflowType] = useState("");
-  const [taskQueue, setTaskQueue] = useState("");
   const [externalId, setExternalId] = useState("");
   const [inputJson, setInputJson] = useState("{}");
   const [searchQuery, setSearchQuery] = useState("");
@@ -154,7 +151,6 @@ function WorkflowsPage() {
       const result = await startWorkflow.mutateAsync({
         namespace: namespace,
         workflowType,
-        taskQueue,
         externalId: externalId || undefined,
         input: { data: new TextEncoder().encode(JSON.stringify(inputJson)) },
       });
@@ -165,7 +161,6 @@ function WorkflowsPage() {
 
       // Reset form
       setWorkflowType("");
-      setTaskQueue("");
       setExternalId("");
       setInputJson("{}");
     } catch (error) {
@@ -341,19 +336,16 @@ function WorkflowsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label
-                    htmlFor="task-queue"
-                    className="font-mono text-xs uppercase tracking-wider"
-                  >
-                    Task Queue <span className="text-destructive">*</span>
-                  </Label>
+                  <Label className="font-mono text-xs uppercase tracking-wider">Task Queue</Label>
                   <Input
-                    id="task-queue"
-                    placeholder="e.g., main-queue"
-                    value={taskQueue}
-                    onChange={(e) => setTaskQueue(e.target.value)}
-                    className="font-mono text-sm"
+                    value="default"
+                    readOnly
+                    className="font-mono text-sm opacity-80"
+                    aria-label="Task queue"
                   />
+                  <p className="text-[10px] text-muted-foreground font-mono">
+                    Using the default task queue. Custom queues can be added under Queues.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -411,7 +403,7 @@ function WorkflowsPage() {
                 </SheetClose>
                 <Button
                   onClick={handleStartWorkflow}
-                  disabled={startWorkflow.isPending || !workflowType || !taskQueue}
+                  disabled={startWorkflow.isPending || !workflowType}
                   className="bg-primary text-primary-foreground hover:bg-primary/90 font-mono text-xs uppercase tracking-wider"
                 >
                   {startWorkflow.isPending ? (

@@ -74,6 +74,10 @@ name = "13_broker_smoke"
 path = "13_broker_smoke/main.rs"
 
 [[example]]
+name = "14_queue_registry"
+path = "14_queue_registry/main.rs"
+
+[[example]]
 name = "worker_hub"
 path = "worker_hub.rs"
 

@@ -8,7 +8,16 @@ import {
   SidebarHeader,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import { Calendar, Clock1, Cpu, Home, Layers } from "@hugeicons/core-free-icons";
+import {
+  Activity01Icon,
+  Calendar,
+  Clock1,
+  Cpu,
+  DatabaseIcon,
+  Home,
+  Layers,
+  ServerStack01Icon,
+} from "@hugeicons/core-free-icons";
 import { useParams } from "@tanstack/react-router";
 import type * as React from "react";
 
@@ -40,8 +49,23 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     },
     {
       title: "Workers",
-      url: "/workers",
+      url: `/${namespaceId}/workers`,
       icon: Cpu,
+    },
+    {
+      title: "Queues",
+      url: `/${namespaceId}/queues`,
+      icon: DatabaseIcon,
+    },
+    {
+      title: "Events",
+      url: `/${namespaceId}/events`,
+      icon: Activity01Icon,
+    },
+    {
+      title: "Server",
+      url: `/${namespaceId}/server`,
+      icon: ServerStack01Icon,
     },
   ];
 

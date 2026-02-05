@@ -1,6 +1,10 @@
 import { QueryError } from "@/components/ui/query-error";
+import { Badge } from "@/components/ui/badge";
 import { WorkflowStatus as ProtoWorkflowStatus } from "@/gen/workflow_pb";
+import { useGetServerInfo, useHealthCheck } from "@/hooks/use-grpc-services";
 import { useSchedules, useWorkers, useWorkflows } from "@/hooks/use-dashboard";
+import { useListQueueTelemetryStates, useListServerTelemetryEvents } from "@/lib/api-queries";
+import { ServingStatus, ServingStatusLabel, TelemetryLevel } from "@/types";
 import { WorkerStatus, WorkflowStatusLabel } from "@/types";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
@@ -13,6 +17,10 @@ function NamespaceDashboard() {
   const { data: workflows, isLoading: workflowsLoading, error: workflowsError } = useWorkflows();
   const { data: schedules, isLoading: schedulesLoading, error: schedulesError } = useSchedules();
   const { data: workers, isLoading: workersLoading, error: workersError } = useWorkers();
+  const queuesQuery = useListQueueTelemetryStates(namespaceId);
+  const serverEventsQuery = useListServerTelemetryEvents(namespaceId);
+  const serverInfoQuery = useGetServerInfo();
+  const healthQuery = useHealthCheck();
 
   const runningWorkflows =
     workflows?.filter((w) => w.status === ProtoWorkflowStatus.RUNNING).length ?? 0;
@@ -23,6 +31,32 @@ function NamespaceDashboard() {
   const activeSchedules = schedules?.filter((s) => s.enabled).length ?? 0;
   const onlineWorkers = workers?.filter((w) => w.status === WorkerStatus.ONLINE).length ?? 0;
   const totalWorkers = workers?.length ?? 0;
+
+  const queueStates = queuesQuery.data?.states ?? [];
+  const trackedQueues = queueStates.length;
+  const dueTotal = queueStates.reduce((acc, s) => acc + Number(s.dueCount), 0);
+  const publishErrorsTotal = queueStates.reduce((acc, s) => acc + Number(s.publishErrors), 0);
+  const activeQueueStates = queueStates.filter((s) => {
+    const total =
+      Number(s.pendingCount) +
+      Number(s.dueCount) +
+      Number(s.runningCount) +
+      Number(s.sleepingCount);
+    return total > 0;
+  });
+  const activeQueues = activeQueueStates.length;
+  const topQueues = [...activeQueueStates]
+    .sort(
+      (a, b) =>
+        Number(b.dueCount) +
+        Number(b.pendingCount) +
+        Number(b.runningCount) -
+        (Number(a.dueCount) + Number(a.pendingCount) + Number(a.runningCount)),
+    )
+    .slice(0, 5);
+
+  const serverEvents = serverEventsQuery.data?.events ?? [];
+  const serverEventErrors = serverEvents.filter((e) => e.level === TelemetryLevel.ERROR).length;
 
   const isLoading = workflowsLoading || schedulesLoading || workersLoading;
   const error = workflowsError || schedulesError || workersError;
@@ -88,7 +122,34 @@ function NamespaceDashboard() {
           value={onlineWorkers}
           subValue={`/${totalWorkers}`}
           variant="neutral"
-          href="/workers"
+          href={`/${namespaceId}/workers/`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-20">
+        <MetricCard
+          label="Tracked Queues"
+          value={trackedQueues}
+          variant="neutral"
+          href={`/${namespaceId}/queues`}
+        />
+        <MetricCard
+          label="Queues With Work"
+          value={activeQueues}
+          variant="primary"
+          href={`/${namespaceId}/queues`}
+        />
+        <MetricCard
+          label="Due Now"
+          value={dueTotal}
+          variant="success"
+          href={`/${namespaceId}/queues`}
+        />
+        <MetricCard
+          label="Publish Errors"
+          value={publishErrorsTotal}
+          variant="destructive"
+          href={`/${namespaceId}/queues`}
         />
       </div>
 
@@ -177,6 +238,124 @@ function NamespaceDashboard() {
                 )}
               </div>
             )}
+          </div>
+        </section>
+
+        <section>
+          <SectionHeader
+            title="Queue Activity"
+            link={`/${namespaceId}/queues`}
+            linkText="View Queues"
+          />
+          <div className="space-y-2">
+            {queuesQuery.isLoading ? (
+              <LoadingSkeleton />
+            ) : queuesQuery.error ? (
+              <div className="border-t border-border py-8 text-center">
+                <p className="font-mono text-xs text-muted-foreground uppercase">
+                  Queue telemetry unavailable
+                </p>
+              </div>
+            ) : topQueues.length === 0 ? (
+              <div className="border-t border-border py-8 text-center">
+                <p className="font-mono text-xs text-muted-foreground uppercase">
+                  No active queues
+                </p>
+              </div>
+            ) : (
+              <div className="border-t border-border">
+                {topQueues.map((q) => {
+                  const hasPublishError = !!q.lastPublishError;
+                  return (
+                    <Link
+                      key={q.taskQueue}
+                      to="/$namespaceId/queues/$taskQueue"
+                      params={{ namespaceId, taskQueue: q.taskQueue }}
+                      className="group flex items-center justify-between py-4 border-b border-border hover:bg-muted/50 transition-colors px-2"
+                    >
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div
+                          className={`size-2 ${hasPublishError ? "bg-destructive" : "bg-foreground"}`}
+                        />
+                        <div className="flex flex-col min-w-0">
+                          <span className="font-bold text-sm tracking-tight uppercase group-hover:text-primary transition-colors truncate">
+                            {q.taskQueue}
+                          </span>
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            due={q.dueCount.toString()} pending={q.pendingCount.toString()} running=
+                            {q.runningCount.toString()}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="font-mono text-xs opacity-50 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+                        {hasPublishError && (
+                          <span className="text-destructive uppercase">publish error</span>
+                        )}
+                        <span>→</span>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section>
+          <SectionHeader title="Server" link={`/${namespaceId}/server`} linkText="View Details" />
+          <div className="space-y-2">
+            {(serverInfoQuery.isLoading || healthQuery.isLoading) && <LoadingSkeleton />}
+
+            {(serverInfoQuery.error || healthQuery.error) && (
+              <div className="border-t border-border py-8 text-center">
+                <p className="font-mono text-xs text-muted-foreground uppercase">
+                  Server info unavailable
+                </p>
+              </div>
+            )}
+
+            {!serverInfoQuery.isLoading &&
+              !healthQuery.isLoading &&
+              !serverInfoQuery.error &&
+              !healthQuery.error && (
+                <div className="border-t border-border border-b border-border px-2 py-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
+                      Health
+                    </div>
+                    <Badge
+                      variant={
+                        healthQuery.data?.status === ServingStatus.SERVING
+                          ? "default"
+                          : "destructive"
+                      }
+                    >
+                      {ServingStatusLabel[healthQuery.data?.status ?? ServingStatus.UNSPECIFIED]}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <dt className="text-muted-foreground font-mono uppercase">Version</dt>
+                      <dd className="font-mono">{serverInfoQuery.data?.version || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground font-mono uppercase">API</dt>
+                      <dd className="font-mono">{serverInfoQuery.data?.apiVersion || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground font-mono uppercase">Min SDK</dt>
+                      <dd className="font-mono">{serverInfoQuery.data?.minSdkVersion || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground font-mono uppercase">Events</dt>
+                      <dd className="font-mono">
+                        {serverEventsQuery.isLoading ? "…" : serverEvents.length} (
+                        {serverEventsQuery.isLoading ? "…" : serverEventErrors} errors)
+                      </dd>
+                    </div>
+                  </div>
+                </div>
+              )}
           </div>
         </section>
       </div>

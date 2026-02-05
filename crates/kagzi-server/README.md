@@ -67,7 +67,7 @@ Creates a new workflow or returns existing workflow if one with the same `extern
 **Fields:**
 
 - `external_id` (string, required): User-provided identifier for idempotency
-- `task_queue` (string, required): Queue for worker assignment
+- `task_queue` (string, optional): Queue for worker assignment (default: `"default"`)
 - `workflow_type` (string, required): Workflow type identifier
 - `namespace_id` (string): Namespace (default: "default")
 - `version` (string): Workflow version (default: "1")
@@ -129,7 +129,7 @@ Creates a new schedule that fires workflows according to a cron expression.
 
 **Fields:**
 
-- `task_queue` (string, required): Queue for spawned workflows
+- `task_queue` (string, optional): Queue for spawned workflows (default: `"default"`)
 - `workflow_type` (string, required): Workflow type to spawn
 - `cron_expr` (string, required): Cron expression (e.g., "0 0 * * * *" for daily midnight)
 - `namespace_id` (string): Namespace (default: "default")
@@ -175,7 +175,7 @@ Registers a worker to receive tasks.
 **Fields:**
 
 - `workflow_types` (repeated string): Types this worker can execute
-- `task_queue` (string): Queue to poll from
+- `task_queue` (string, optional): Queue to poll from (default: `"default"`)
 - `namespace_id` (string): Namespace (default: "default")
 - `hostname` (string): Worker hostname
 - `pid` (uint32): Worker process ID
@@ -361,6 +361,42 @@ Schedules a workflow to sleep for a duration.
 - Workflow marked SLEEPING
 - Scheduler wakes workflow after duration expires
 
+### QueueService
+
+Logical task queue registry (metadata only).
+
+Queues are scoped to namespaces and identified by `{namespace, task_queue}`. They do **not** provision broker resources (Kafka topics, NATS streams, etc.). The runtime queue backends map `{namespace, task_queue}` to native primitives internally.
+
+By default, Kagzi routes workflows and worker registrations to the per-namespace `"default"` queue when `task_queue` is omitted.
+
+#### Methods
+
+##### CreateQueue
+
+Registers a queue so it appears in the UI and can carry human-friendly metadata.
+
+**Fields:**
+
+- `namespace` (string, required)
+- `task_queue` (string, required): Queue name (recommended charset: `[A-Za-z0-9_-]`, max 64)
+- `display_name` (string, optional)
+- `description` (string, optional)
+- `labels` (map<string,string>): Optional labels for grouping
+- `extra_json` (bytes): Optional UTF-8 JSON blob for forward-compatible metadata
+- `enabled` (bool, optional, default: true)
+
+##### ListQueues
+
+Lists registered queues for a namespace (paginated).
+
+##### GetQueue
+
+Fetches a single queue’s metadata.
+
+##### UpdateQueue
+
+Updates queue metadata (display name / description / labels / enabled / extra_json).
+
 ### AdminService
 
 Administrative operations and health checks.
@@ -499,21 +535,25 @@ Configuration is loaded from environment variables with the `KAGZI_` prefix.
 
 ### Environment Variables
 
-| Variable                                     | Description                      | Default         |
-| -------------------------------------------- | -------------------------------- | --------------- |
-| `KAGZI_DB_URL`                               | PostgreSQL connection URL        | Required        |
-| `KAGZI_SERVER_HOST`                          | gRPC server bind address         | `0.0.0.0`       |
-| `KAGZI_SERVER_PORT`                          | gRPC server port                 | `50051`         |
-| `KAGZI_SERVER_DB_MAX_CONNECTIONS`            | Database max connections         | `50`            |
-| `KAGZI_SCHEDULER_INTERVAL_SECS`              | Scheduler tick interval          | `5`             |
-| `KAGZI_SCHEDULER_BATCH_SIZE`                 | Max workflows per batch          | `100`           |
-| `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK`     | Max workflows per scheduler tick | `1000`          |
-| `KAGZI_WATCHDOG_INTERVAL_SECS`               | Watchdog tick interval           | `1`             |
-| `KAGZI_WATCHDOG_WORKER_STALE_THRESHOLD_SECS` | Time before worker marked stale  | `30`            |
-| `KAGZI_WORKER_POLL_TIMEOUT_SECS`             | Legacy PollTask timeout (unused) | `60`            |
-| `KAGZI_WORKER_HEARTBEAT_INTERVAL_SECS`       | Required heartbeat interval      | `10`            |
-| `KAGZI_PAYLOAD_WARN_THRESHOLD_BYTES`         | Payload size warning threshold   | `1048576` (1MB) |
-| `KAGZI_PAYLOAD_MAX_SIZE_BYTES`               | Payload max size                 | `2097152` (2MB) |
+| Variable                                       | Description                      | Default         |
+| ---------------------------------------------- | -------------------------------- | --------------- |
+| `KAGZI_DB_URL`                                 | PostgreSQL connection URL        | Required        |
+| `KAGZI_SERVER_HOST`                            | gRPC server bind address         | `0.0.0.0`       |
+| `KAGZI_SERVER_PORT`                            | gRPC server port                 | `50051`         |
+| `KAGZI_SERVER_DB_MAX_CONNECTIONS`              | Database max connections         | `50`            |
+| `KAGZI_SCHEDULER_INTERVAL_SECS`                | Scheduler tick interval          | `5`             |
+| `KAGZI_SCHEDULER_BATCH_SIZE`                   | Max workflows per batch          | `100`           |
+| `KAGZI_SCHEDULER_MAX_WORKFLOWS_PER_TICK`       | Max workflows per scheduler tick | `1000`          |
+| `KAGZI_WATCHDOG_INTERVAL_SECS`                 | Watchdog tick interval           | `1`             |
+| `KAGZI_WATCHDOG_WORKER_STALE_THRESHOLD_SECS`   | Time before worker marked stale  | `30`            |
+| `KAGZI_WORKER_POLL_TIMEOUT_SECS`               | Legacy PollTask timeout (unused) | `60`            |
+| `KAGZI_WORKER_HEARTBEAT_INTERVAL_SECS`         | Required heartbeat interval      | `10`            |
+| `KAGZI_WORKER_TELEMETRY_ENABLED`               | Enable TelemetryService ingest   | `true`          |
+| `KAGZI_WORKER_TELEMETRY_EVENTS_RETENTION_DAYS` | Worker telemetry event retention | `14`            |
+| `KAGZI_WORKER_TELEMETRY_PRUNE_INTERVAL_SECS`   | Telemetry prune interval         | `60`            |
+| `KAGZI_WORKER_TELEMETRY_MAX_EVENTS_PER_REPORT` | Max events per report call       | `500`           |
+| `KAGZI_PAYLOAD_WARN_THRESHOLD_BYTES`           | Payload size warning threshold   | `1048576` (1MB) |
+| `KAGZI_PAYLOAD_MAX_SIZE_BYTES`                 | Payload max size                 | `2097152` (2MB) |
 
 ### Configuration File
 

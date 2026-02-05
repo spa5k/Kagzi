@@ -133,15 +133,15 @@ test-unit:
 
 # Run integration tests (requires Docker) with shorter poll timeout
 test-integration:
-    DATABASE_URL={{DATABASE_URL}} KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests -- --test-threads=1
+    DATABASE_URL={{DATABASE_URL}} KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p tests -- --test-threads=1
 
 # Run integration tests with output
 test-integration-verbose:
-    DATABASE_URL={{DATABASE_URL}} KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests -- --test-threads=1 --nocapture
+    DATABASE_URL={{DATABASE_URL}} KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p tests -- --test-threads=1 --nocapture
 
 # Run a specific integration test
 test-one name:
-    DATABASE_URL={{DATABASE_URL}} KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests {{name}} -- --test-threads=1 --nocapture
+    DATABASE_URL={{DATABASE_URL}} KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p tests {{name}} -- --test-threads=1 --nocapture
 
 # Run new end-to-end tests in tests crate (requires Docker for testcontainers)
 test-e2e:

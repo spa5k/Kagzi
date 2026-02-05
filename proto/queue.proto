@@ -1,0 +1,86 @@
+syntax = "proto3";
+package kagzi.v1;
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+// QueueService manages logical task queues within a namespace.
+//
+// Queues are metadata-only: they do not expose broker-specific configuration.
+// Runtime systems (Kafka/NATS/Postgres/...) map {namespace, task_queue} to native primitives.
+service QueueService {
+  // CreateQueue registers a queue for UX/governance. Execution can still implicitly create queues.
+  rpc CreateQueue(CreateQueueRequest) returns (CreateQueueResponse);
+  // GetQueue retrieves queue metadata.
+  rpc GetQueue(GetQueueRequest) returns (GetQueueResponse);
+  // ListQueues returns registered queues for a namespace.
+  rpc ListQueues(ListQueuesRequest) returns (ListQueuesResponse);
+  // UpdateQueue updates queue metadata.
+  rpc UpdateQueue(UpdateQueueRequest) returns (UpdateQueueResponse);
+}
+
+message TaskQueue {
+  string namespace = 1;
+  string task_queue = 2;
+
+  // Optional, user-facing metadata
+  optional string display_name = 10;
+  optional string description = 11;
+  map<string, string> labels = 12;
+
+  // Free-form JSON for forward-compatible metadata (UTF-8 JSON).
+  bytes extra_json = 20;
+
+  // Administrative flag (default true).
+  bool enabled = 30;
+
+  google.protobuf.Timestamp created_at = 40;
+  google.protobuf.Timestamp updated_at = 41;
+}
+
+message CreateQueueRequest {
+  string namespace = 1;
+  string task_queue = 2;
+  optional string display_name = 3;
+  optional string description = 4;
+  map<string, string> labels = 5;
+  bytes extra_json = 6;
+  optional bool enabled = 7;
+}
+
+message CreateQueueResponse {
+  TaskQueue queue = 1;
+}
+
+message GetQueueRequest {
+  string namespace = 1;
+  string task_queue = 2;
+}
+
+message GetQueueResponse {
+  TaskQueue queue = 1;
+}
+
+message ListQueuesRequest {
+  string namespace = 1;
+  PageRequest page = 2;
+}
+
+message ListQueuesResponse {
+  repeated TaskQueue queues = 1;
+  PageInfo page = 2;
+}
+
+message UpdateQueueRequest {
+  string namespace = 1;
+  string task_queue = 2;
+  optional string display_name = 3;
+  optional string description = 4;
+  optional bool enabled = 5;
+  map<string, string> labels = 6;
+  optional bytes extra_json = 7;
+}
+
+message UpdateQueueResponse {
+  TaskQueue queue = 1;
+}

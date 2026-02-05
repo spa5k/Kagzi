@@ -20,7 +20,8 @@ use sqlx::Row;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::config::CoordinatorSettings;
+use crate::config::{CoordinatorSettings, WorkerTelemetrySettings};
+use crate::telemetry_store;
 
 #[derive(Debug)]
 struct PublishDebouncer {
@@ -73,6 +74,7 @@ pub async fn run<Q: WorkSignalBus>(
     store: PgStore,
     queue: Q,
     settings: CoordinatorSettings,
+    worker_telemetry: WorkerTelemetrySettings,
     shutdown: CancellationToken,
 ) {
     let interval = Duration::from_secs(settings.interval_secs);
@@ -87,12 +89,17 @@ pub async fn run<Q: WorkSignalBus>(
     // Signals are lossy by design; correctness does not depend on every publish succeeding.
     let mut publish_debouncer = PublishDebouncer::new(Duration::from_millis(500));
 
+    let prune_interval = Duration::from_secs(worker_telemetry.prune_interval_secs.max(1));
+    let mut last_prune_at = Instant::now();
+
     info!(
         interval_secs = settings.interval_secs,
         batch_size = settings.batch_size,
         worker_stale_secs = settings.worker_stale_threshold_secs,
         default_max_catchup = settings.default_max_catchup,
         max_backfill_per_second = settings.max_backfill_per_second,
+        worker_telemetry_enabled = worker_telemetry.enabled,
+        worker_telemetry_retention_days = worker_telemetry.events_retention_days,
         "Coordinator started"
     );
 
@@ -103,20 +110,92 @@ pub async fn run<Q: WorkSignalBus>(
                 break;
             }
             _ = ticker.tick() => {
-                if let Err(e) = fire_due_schedules(&store, &queue, &settings, &rate_limiter, &mut publish_debouncer).await {
+                if let Err(e) = fire_due_schedules(&store, &queue, &settings, &rate_limiter, &mut publish_debouncer, worker_telemetry.enabled).await {
                     error!("Failed to fire schedules: {:?}", e);
+                    telemetry_store::record_server_event(
+                        &store,
+                        worker_telemetry.enabled,
+                        "error",
+                        "coordinator_fire_due_schedules_error",
+                        "Failed to fire due schedules",
+                        None,
+                        serde_json::json!({ "error": format!("{e:?}") }),
+                    )
+                    .await;
                 }
 
                 if let Err(e) = mark_stale_workers(&store, settings.worker_stale_threshold_secs).await {
                     error!("Failed to mark stale workers: {:?}", e);
+                    telemetry_store::record_server_event(
+                        &store,
+                        worker_telemetry.enabled,
+                        "error",
+                        "coordinator_mark_stale_workers_error",
+                        "Failed to mark stale workers",
+                        None,
+                        serde_json::json!({ "error": format!("{e:?}") }),
+                    )
+                    .await;
                 }
 
-                if let Err(e) = notify_due_work(&store, &queue, settings.batch_size as i64, &mut publish_debouncer).await {
+                if let Err(e) = notify_due_work(&store, &queue, settings.batch_size as i64, &mut publish_debouncer, worker_telemetry.enabled).await {
                     error!("Failed to notify due work: {:?}", e);
+                    telemetry_store::record_server_event(
+                        &store,
+                        worker_telemetry.enabled,
+                        "error",
+                        "coordinator_notify_due_work_error",
+                        "Failed to notify due work",
+                        None,
+                        serde_json::json!({ "error": format!("{e:?}") }),
+                    )
+                    .await;
+                }
+
+                if let Err(e) = telemetry_store::refresh_worker_active_counts(&store, worker_telemetry.enabled).await {
+                    error!("Failed to refresh worker active counts: {:?}", e);
+                }
+
+                if let Err(e) = telemetry_store::refresh_queue_depths(&store, worker_telemetry.enabled, 1000).await {
+                    error!("Failed to refresh queue depths: {:?}", e);
+                }
+
+                if worker_telemetry.enabled
+                    && Instant::now().duration_since(last_prune_at) >= prune_interval
+                {
+                    last_prune_at = Instant::now();
+                    if let Err(e) = prune_worker_telemetry_events(&store, worker_telemetry.events_retention_days).await {
+                        error!("Failed to prune worker telemetry events: {:?}", e);
+                    }
                 }
             }
         }
     }
+}
+
+async fn prune_worker_telemetry_events(
+    store: &PgStore,
+    retention_days: i64,
+) -> Result<(), kagzi_store::StoreError> {
+    let retention_days = retention_days.max(1);
+    let result = sqlx::query(
+        r#"
+        DELETE FROM kagzi.worker_telemetry_events
+        WHERE occurred_at < NOW() - ($1 * INTERVAL '1 day')
+        "#,
+    )
+    .bind(retention_days as f64)
+    .execute(store.pool())
+    .await?;
+
+    if result.rows_affected() > 0 {
+        info!(
+            deleted = result.rows_affected(),
+            retention_days, "Pruned worker telemetry events"
+        );
+    }
+
+    Ok(())
 }
 
 async fn notify_due_work<Q: WorkSignalBus>(
@@ -124,6 +203,7 @@ async fn notify_due_work<Q: WorkSignalBus>(
     queue: &Q,
     limit: i64,
     publish_debouncer: &mut PublishDebouncer,
+    telemetry_enabled: bool,
 ) -> Result<(), kagzi_store::StoreError> {
     let rows = sqlx::query(
         r#"
@@ -148,13 +228,49 @@ async fn notify_due_work<Q: WorkSignalBus>(
             continue;
         }
 
-        if let Err(e) = queue.publish(&namespace, &task_queue).await {
-            error!(
-                namespace = %namespace,
-                task_queue = %task_queue,
-                error = ?e,
-                "Failed to notify queue for due work"
-            );
+        match queue.publish(&namespace, &task_queue).await {
+            Ok(_) => {
+                telemetry_store::record_queue_publish_result(
+                    store,
+                    telemetry_enabled,
+                    &namespace,
+                    &task_queue,
+                    true,
+                    None,
+                )
+                .await;
+                telemetry_store::touch_queue_due_work_notified(
+                    store,
+                    telemetry_enabled,
+                    &namespace,
+                    &task_queue,
+                )
+                .await;
+            }
+            Err(e) => {
+                telemetry_store::record_queue_publish_result(
+                    store,
+                    telemetry_enabled,
+                    &namespace,
+                    &task_queue,
+                    false,
+                    Some(&format!("{e:?}")),
+                )
+                .await;
+                telemetry_store::touch_queue_due_work_notified(
+                    store,
+                    telemetry_enabled,
+                    &namespace,
+                    &task_queue,
+                )
+                .await;
+                error!(
+                    namespace = %namespace,
+                    task_queue = %task_queue,
+                    error = ?e,
+                    "Failed to notify queue for due work"
+                );
+            }
         }
     }
 
@@ -167,6 +283,7 @@ async fn fire_due_schedules<Q: WorkSignalBus>(
     settings: &CoordinatorSettings,
     rate_limiter: &RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
     publish_debouncer: &mut PublishDebouncer,
+    telemetry_enabled: bool,
 ) -> Result<(), kagzi_store::StoreError> {
     let now = Utc::now();
     let templates = store
@@ -282,19 +399,56 @@ async fn fire_due_schedules<Q: WorkSignalBus>(
                     missed_count = missed_count,
                     "Fired schedule"
                 );
-                if publish_debouncer.should_publish(&template.namespace, &template.task_queue)
-                    && let Err(e) = queue
+                if publish_debouncer.should_publish(&template.namespace, &template.task_queue) {
+                    match queue
                         .publish(&template.namespace, &template.task_queue)
                         .await
-                {
-                    error!(
-                        schedule_id = %template.run_id,
-                        run_id = %run_id,
-                        namespace = %template.namespace,
-                        task_queue = %template.task_queue,
-                        error = ?e,
-                        "Failed to notify queue after firing schedule"
-                    );
+                    {
+                        Ok(_) => {
+                            telemetry_store::record_queue_publish_result(
+                                store,
+                                telemetry_enabled,
+                                &template.namespace,
+                                &template.task_queue,
+                                true,
+                                None,
+                            )
+                            .await;
+                            telemetry_store::touch_queue_due_work_notified(
+                                store,
+                                telemetry_enabled,
+                                &template.namespace,
+                                &template.task_queue,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            telemetry_store::record_queue_publish_result(
+                                store,
+                                telemetry_enabled,
+                                &template.namespace,
+                                &template.task_queue,
+                                false,
+                                Some(&format!("{e:?}")),
+                            )
+                            .await;
+                            telemetry_store::touch_queue_due_work_notified(
+                                store,
+                                telemetry_enabled,
+                                &template.namespace,
+                                &template.task_queue,
+                            )
+                            .await;
+                            error!(
+                                schedule_id = %template.run_id,
+                                run_id = %run_id,
+                                namespace = %template.namespace,
+                                task_queue = %template.task_queue,
+                                error = ?e,
+                                "Failed to notify queue after firing schedule"
+                            );
+                        }
+                    }
                 }
                 fired += 1;
             }

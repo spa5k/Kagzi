@@ -1,55 +1,53 @@
-# Kagzi Client Library
+# Kagzi Rust SDK
 
-The Kagzi client library provides a Rust interface for defining workflows, managing workers, and interacting with the Kagzi workflow orchestration system via gRPC.
+The Kagzi Rust SDK provides a Rust interface for defining workflows, running workers, and interacting with the Kagzi server via gRPC.
 
 ## Overview
 
-Kagzi is a durable workflow orchestration system that guarantees at-least-once execution of workflow steps. The client library enables you to:
+Kagzi is a durable workflow orchestration system that guarantees at-least-once execution of workflow steps. The SDK enables you to:
 
 - Define workflows as async functions with typed inputs and outputs
 - Start workflows programmatically or on schedules (cron expressions)
-- Register workers to poll and execute workflows
-- Configure retry policies and concurrency limits
-- Leverage built-in error handling
+- Run workers that claim and execute workflows
+- Track workers/queues via Telemetry and a queue registry
+
+## Task queues (important)
+
+Kagzi uses a logical **task queue** identifier (scoped to a namespace). Internally, queue backends map `{namespace, task_queue}` to native primitives (Kafka, NATS JetStream, Postgres LISTEN/NOTIFY, …).
+
+- Default routing: if `task_queue` is omitted, Kagzi uses the per-namespace `"default"` queue.
+- The UI can show queues even before they’re used by allowing explicit queue creation (metadata-only).
+- The current SDK worker polls the `"default"` queue in its namespace (custom routing can be added later without changing the core model).
 
 ## Features
 
-- **Type-safe workflows**: Define workflows with typed inputs/outputs using standard Rust futures
-- **Durable execution**: Automatic step replay and idempotency guarantees
-- **Retry policies**: Configurable exponential backoff with non-retryable error types
-- **Concurrency control**: Per-queue and per-workflow-type limits
-- **Scheduled workflows**: Cron-based workflow execution with catchup support
-- **Graceful shutdown**: Draining of active workflows and clean deregistration
-- **Rich error handling**: Structured errors with retry hints and metadata
+- **Type-safe workflows**: Define workflows with typed inputs/outputs using async functions
+- **Durable execution**: Step checkpointing and deterministic replay behavior
+- **Retries**: Step failures can be retried by the server based on configured policies
+- **Scheduled workflows**: Cron-based workflow execution with catch-up support
+- **Telemetry**: Worker snapshots + events for observability (UI-friendly)
+- **Queue registry**: Optional queue metadata (display name, labels, extra JSON)
 
-## Architecture
+## Architecture (high level)
 
 ```
 ┌─────────────────┐         gRPC          ┌──────────────────┐
 │   Client App    │◄─────────────────────►│   Kagzi Server   │
 │                 │                        │                  │
-│  - Start WF     │                        │  - Schedule DB  │
-│  - List Schedules│                     │  - Queue Mgmt    │
-└─────────────────┘                        │  - State Machine │
-                                           └──────────────────┘
+│  - Start WF     │                        │  - DB state     │
+│  - Schedules    │                        │  - Telemetry    │
+│  - Queue meta   │                        │  - Queue bus    │
+└─────────────────┘                        └──────────────────┘
                                                    │
-                                                   │ poll & execute
+                                                   │ wakeups + claim
                                                    │
-┌─────────────────┐         gRPC          ┌──────────────┐
-│   Worker App    │◄─────────────────────►│   Worker     │
-│                 │                        │  - Run WF    │
-│  - Register WF  │                        │  - Heartbeat │
-│  - Poll Tasks   │                        │  - Complete  │
-└─────────────────┘                        └──────────────┘
+┌─────────────────┐         gRPC          ┌──────────────────┐
+│   Worker App    │◄─────────────────────►│  WorkerService   │
+│                 │                        │  - ClaimTask    │
+│  - Execute steps│                        │  - Step report  │
+│  - Telemetry    │                        │  - Heartbeat    │
+└─────────────────┘                        └──────────────────┘
 ```
-
-### Key Components
-
-1. **Client**: Starts workflows and manages schedules via gRPC
-2. **Worker**: Polls for tasks, executes workflows, sends heartbeats
-3. **WorkflowContext**: Passed to workflow functions, manages step execution and state
-4. **RetryPolicy**: Controls how failed steps are retried
-5. **KagziError**: Rich error type with retry semantics
 
 ## Installation
 
@@ -57,985 +55,281 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-kagzi = { version = "0.1.0" }
+kagzi = { path = "../sdk/kagzi-rs" } # or a published version
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 anyhow = "1.0"
 ```
 
-## Quick Start
+## Quick start
 
-### 1. Define a Workflow
+### 1) Define a workflow
 
 ```rust
-use kagzi::prelude::*;
+use kagzi::Context;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ProcessOrderInput {
-    order_id: String,
-    customer_id: String,
-    amount: f64,
+struct HelloInput {
+    name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ProcessOrderOutput {
-    order_id: String,
-    status: String,
-    invoice_id: String,
+struct HelloOutput {
+    message: String,
 }
 
-async fn process_order(
-    mut ctx: WorkflowContext,
-    input: ProcessOrderInput,
-) -> anyhow::Result<ProcessOrderOutput> {
-    // Step 1: Validate order
-    let validation_result = ctx
-        .run_with_input(
-            "validate-order",
-            &input,
-            async move {
-                // Validation logic
-                if input.amount <= 0.0 {
-                    return Err(KagziError::non_retryable("Invalid amount"));
-                }
-                Ok(true)
-            },
-        )
-        .await?;
-
-    // Step 2: Process payment
-    let payment_result = ctx
-        .run("process-payment", async move {
-            // Payment processing logic
-            Ok("payment-123".to_string())
-        })
-        .await?;
-
-    // Step 3: Generate invoice
-    let invoice_id = ctx
-        .run("generate-invoice", async move {
-            // Invoice generation
-            Ok("inv-456".to_string())
-        })
-        .await?;
-
-    Ok(ProcessOrderOutput {
-        order_id: input.order_id,
-        status: "completed".to_string(),
-        invoice_id,
+async fn hello_workflow(_ctx: Context, input: HelloInput) -> anyhow::Result<HelloOutput> {
+    Ok(HelloOutput {
+        message: format!("Hello, {}!", input.name),
     })
 }
 ```
 
-### 2. Start a Workflow (Client)
+### 2) Run a worker
 
 ```rust
-use kagzi::Client;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Connect to Kagzi server
-    let mut client = Client::connect("http://localhost:50051").await?;
-
-    // Start a workflow
-    let run_id = client
-        .workflow(
-            "process-order",
-            "orders",
-            ProcessOrderInput {
-                order_id: "order-123".to_string(),
-                customer_id: "customer-456".to_string(),
-                amount: 99.99,
-            },
-        )
-        .id("business-order-id-123")
-        .namespace("production")
-        .retries(5)
-        .await?;
-
-    println!("Workflow started with run_id: {}", run_id);
-    Ok(())
-}
-```
-
-### 3. Run a Worker
-
-```rust
-use kagzi::{Worker, WorkerBuilder};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Build and register worker
-    let mut worker = WorkerBuilder::new("http://localhost:50051", "orders")
-        .namespace("production")
-        .max_concurrent(50)
-        .queue_concurrency_limit(100)
-        .default_step_retry(RetryPolicy {
-            maximum_attempts: Some(3),
-            initial_interval: Some(std::time::Duration::from_secs(1)),
-            backoff_coefficient: Some(2.0),
-            maximum_interval: Some(std::time::Duration::from_secs(60)),
-            non_retryable_errors: vec![
-                "InvalidArgument".to_string(),
-                "PreconditionFailed".to_string(),
-            ],
-        })
-        .build()
-        .await?;
-
-    // Register workflows
-    worker.register("process-order", process_order);
-
-    // Run worker (blocks until shutdown)
-    worker.run().await?;
-
-    Ok(())
-}
-```
-
-## Usage Examples
-
-### Scheduled Workflows
-
-```rust
-use kagzi::Client;
-use chrono::{Utc, Duration};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let mut client = Client::connect("http://localhost:50051").await?;
-
-    // Create a scheduled workflow
-    let schedule = client
-        .workflow_schedule(
-            "daily-report",
-            "reports",
-            "0 6 * * *", // Cron: 6 AM daily
-            ReportInput { report_type: "daily".to_string() },
-        )
-        .namespace("production")
-        .enabled(true)
-        .max_catchup(7) // Catch up to 7 missed executions
-        .await?;
-
-    println!("Schedule created: {}", schedule.schedule_id);
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct ReportInput {
-    report_type: String,
-}
-```
-
-### Workflow with Sleep
-
-```rust
-use kagzi::WorkflowContext;
-use std::time::Duration;
-
-async fn delayed_workflow(
-    mut ctx: WorkflowContext,
-    input: String,
-) -> anyhow::Result<String> {
-    // Execute first step
-    let result = ctx.run("step1", async move {
-        Ok(format!("Processed: {}", input))
-    }).await?;
-
-    // Sleep for 30 seconds (workflow pauses, worker can process other tasks)
-    ctx.sleep(Duration::from_secs(30)).await?;
-
-    // Execute after sleep
-    let final_result = ctx.run("step2", async move {
-        Ok(format!("Final: {}", result))
-    }).await?;
-
-    Ok(final_result)
-}
-```
-
-## API Reference
-
-### Client
-
-#### Connection
-
-```rust
-pub async fn connect(addr: &str) -> anyhow::Result<Client>
-```
-
-Connects to the Kagzi server at the specified address.
-
-**Example:**
-
-```rust
-let mut client = Client::connect("http://localhost:50051").await?;
-```
-
-#### Starting Workflows
-
-```rust
-pub fn workflow<I: Serialize>(
-    &mut self,
-    workflow_type: &str,
-    task_queue: &str,
-    input: I,
-) -> WorkflowBuilder<'_, I>
-```
-
-Creates a builder for starting a workflow.
-
-**WorkflowBuilder Methods:**
-
-- `id(external_id: impl Into<String>)` - Set business identifier
-- `namespace(ns: impl Into<String>)` - Set namespace (default: "default")
-- `version(version: impl Into<String>)` - Set workflow version
-- `retry_policy(policy: RetryPolicy)` - Set retry policy
-- `retries(max_attempts: i32)` - Shortcut to set max retry attempts
-
-**Returns:** `anyhow::Result<String>` - The run_id of the started workflow
-
-#### Managing Schedules
-
-```rust
-pub fn workflow_schedule<I: Serialize>(
-    &mut self,
-    workflow_type: &str,
-    task_queue: &str,
-    cron_expr: &str,
-    input: I,
-) -> WorkflowScheduleBuilder<'_, I>
-```
-
-Creates a builder for scheduling a workflow.
-
-**WorkflowScheduleBuilder Methods:**
-
-- `namespace(ns: impl Into<String>)` - Set namespace
-- `enabled(enabled: bool)` - Enable/disable schedule
-- `max_catchup(max_catchup: i32)` - Maximum missed executions to catch up
-- `version(version: impl Into<String>)` - Set workflow version
-
-**Returns:** `anyhow::Result<WorkflowSchedule>`
-
-#### Querying Schedules
-
-```rust
-pub async fn get_workflow_schedule(
-    &mut self,
-    schedule_id: &str,
-    namespace_id: Option<&str>,
-) -> anyhow::Result<Option<WorkflowSchedule>>
-
-pub async fn list_workflow_schedules(
-    &mut self,
-    namespace_id: &str,
-    page: Option<PageRequest>,
-) -> anyhow::Result<Vec<WorkflowSchedule>>
-
-pub async fn delete_workflow_schedule(
-    &mut self,
-    schedule_id: &str,
-    namespace_id: Option<&str>,
-) -> anyhow::Result<()>
-```
-
-### Worker
-
-#### WorkerBuilder
-
-```rust
-pub fn builder(addr: &str, task_queue: &str) -> WorkerBuilder
-```
-
-Creates a builder for configuring a worker.
-
-**WorkerBuilder Methods:**
-
-- `namespace(ns: &str)` - Set namespace (default: "default")
-- `max_concurrent(n: usize)` - Max concurrent workflows (default: 100)
-- `hostname(h: &str)` - Set hostname (default: auto-detected)
-- `version(v: &str)` - Set worker version
-- `label(key: &str, value: &str)` - Add worker label
-- `queue_concurrency_limit(limit: i32)` - Set queue-wide concurrency limit
-- `workflow_type_concurrency(workflow_type: &str, limit: i32)` - Per-workflow-type limit
-- `default_step_retry(policy: RetryPolicy)` - Default retry policy for steps
-
-#### Registering Workflows
-
-```rust
-pub fn register<F, Fut, I, O>(&mut self, name: &str, func: F)
-where
-    F: Fn(WorkflowContext, I) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = anyhow::Result<O>> + Send + 'static,
-    I: DeserializeOwned + Send + 'static,
-    O: Serialize + Send + 'static,
-```
-
-Registers a workflow function with the worker.
-
-**Parameters:**
-
-- `name`: Workflow type identifier
-- `func`: Async function that takes `WorkflowContext` and input, returns output
-
-#### Running the Worker
-
-```rust
-pub async fn run(&mut self) -> anyhow::Result<()>
-```
-
-Starts the worker polling loop. Blocks until shutdown signal is received.
-
-**Note:** Must call `register()` before `run()` for at least one workflow.
-
-#### Worker Methods
-
-```rust
-pub fn worker_id(&self) -> Option<Uuid>
-pub fn is_registered(&self) -> bool
-pub fn active_count(&self) -> usize
-pub fn shutdown(&self)
-pub fn shutdown_token(&self) -> CancellationToken
-```
-
-### WorkflowContext
-
-Passed to workflow functions, provides methods for step execution and workflow control.
-
-#### Execute Steps
-
-```rust
-pub async fn run<R, Fut>(&mut self, step_id: &str, fut: Fut) -> anyhow::Result<R>
-where
-    R: Serialize + DeserializeOwned + Send + 'static,
-    Fut: Future<Output = anyhow::Result<R>> + Send,
-```
-
-Executes a step without input. Automatically retries on failure if step execution wasn't completed before.
-
-**Example:**
-
-```rust
-let result = ctx.run("fetch-user", async {
-    fetch_user_from_db(user_id).await
-}).await?;
-```
-
-```rust
-pub async fn run_with_input<I, R, Fut>(
-    &mut self,
-    step_id: &str,
-    input: &I,
-    fut: Fut,
-) -> anyhow::Result<R>
-where
-    I: Serialize + Send + 'static,
-    R: Serialize + DeserializeOwned + Send + 'static,
-    Fut: Future<Output = anyhow::Result<R>> + Send,
-```
-
-Executes a step with typed input. Input is serialized and cached for replay.
-
-**Example:**
-
-```rust
-let output = ctx
-    .run_with_input(
-        "transform-data",
-        &input_data,
-        async { transform(input_data).await },
-    )
-    .await?;
-```
-
-```rust
-pub async fn run_with_input_with_retry<I, R, Fut>(
-    &mut self,
-    step_id: &str,
-    input: &I,
-    retry_policy: Option<RetryPolicy>,
-    fut: Fut,
-) -> anyhow::Result<R>
-```
-
-Same as `run_with_input` but allows specifying a custom retry policy for this step.
-
-#### Sleep
-
-```rust
-pub async fn sleep(&mut self, duration: Duration) -> anyhow::Result<()>
-```
-
-Pauses workflow execution for the specified duration. Returns `WorkflowPaused` error.
-
-**Important:** The workflow is paused and the worker can process other tasks. When the sleep duration elapses, the workflow resumes from the sleep step.
-
-**Example:**
-
-```rust
-ctx.sleep(Duration::from_secs(30)).await?;
-// Execution continues after 30 seconds
-```
-
-### RetryPolicy
-
-Controls retry behavior for failed steps.
-
-```rust
-#[derive(Clone, Default)]
-pub struct RetryPolicy {
-    pub maximum_attempts: Option<i32>,
-    pub initial_interval: Option<Duration>,
-    pub backoff_coefficient: Option<f64>,
-    pub maximum_interval: Option<Duration>,
-    pub non_retryable_errors: Vec<String>,
-}
-```
-
-**Fields:**
-
-- `maximum_attempts`: Maximum number of retry attempts (0 = unlimited)
-- `initial_interval`: Initial delay before first retry
-- `backoff_coefficient`: Multiplier for exponential backoff (e.g., 2.0 doubles each time)
-- `maximum_interval`: Maximum delay between retries
-- `non_retryable_errors`: Error codes that should not be retried
-
-**Example:**
-
-```rust
-let policy = RetryPolicy {
-    maximum_attempts: Some(5),
-    initial_interval: Some(Duration::from_secs(1)),
-    backoff_coefficient: Some(2.0),
-    maximum_interval: Some(Duration::from_secs(60)),
-    non_retryable_errors: vec![
-        "InvalidArgument".to_string(),
-        "PreconditionFailed".to_string(),
-    ],
-};
-```
-
-### KagziError
-
-Rich error type that communicates retry semantics to the server.
-
-```rust
-#[derive(Debug, Clone)]
-pub struct KagziError {
-    pub code: ErrorCode,
-    pub message: String,
-    pub non_retryable: bool,
-    pub retry_after: Option<Duration>,
-    pub subject: Option<String>,
-    pub subject_id: Option<String>,
-    pub metadata: HashMap<String, String>,
-}
-```
-
-**Constructors:**
-
-```rust
-// Generic error with code
-KagziError::new(code, message)
-
-// Mark as non-retryable
-KagziError::non_retryable(message)
-
-// Retry with delay
-KagziError::retry_after(message, Duration::from_secs(60))
-```
-
-**Example:**
-
-```rust
-return Err(KagziError::non_retryable("Invalid order amount"));
-
-return Err(KagziError::retry_after(
-    "Service temporarily unavailable",
-    Duration::from_secs(30),
-));
-```
-
-### WorkflowPaused
-
-Marker error returned when a workflow is paused (sleep or scheduled retry).
-
-```rust
-pub struct WorkflowPaused;
-```
-
-You typically don't need to construct this manually. It's returned by `WorkflowContext::sleep()` and when a step is scheduled for retry.
-
-### ErrorCode
-
-Available error codes (from `kagzi_proto::kagzi::ErrorCode`):
-
-- `Internal` - Internal server error
-- `InvalidArgument` - Invalid input (non-retryable)
-- `NotFound` - Resource not found
-- `PreconditionFailed` - Precondition violated (non-retryable)
-- `Conflict` - Resource conflict (non-retryable)
-- `Unauthorized` - Authorization failed (non-retryable)
-- `Unavailable` - Service temporarily unavailable (retryable)
-
-## Configuration
-
-### Environment Variables
-
-The client library uses standard Rust environment variables for gRPC:
-
-- `KAGZI_SERVER_ADDRESS`: Default server address
-- `RUST_LOG`: Logging level (e.g., `info`, `debug`, `kagzi=trace`)
-
-## Error Handling
-
-### Best Practices
-
-1. **Use specific error codes:** Choose appropriate `ErrorCode` values to communicate retry semantics
-2. **Mark non-retryable errors:** Use `KagziError::non_retryable()` for validation failures
-3. **Provide context:** Include meaningful messages and metadata in errors
-4. **Handle `WorkflowPaused`:** This is expected for sleep operations, not an actual error
-
-### Example Error Handling
-
-```rust
-async fn process_payment(
-    ctx: WorkflowContext,
-    input: PaymentInput,
-) -> anyhow::Result<PaymentOutput> {
-    let result = ctx.run_with_input("charge-card", &input, async move {
-        match charge_card(&input).await {
-            Ok(output) => Ok(output),
-            Err(PaymentError::InvalidCard) => {
-                // Non-retryable - user error
-                Err(KagziError::non_retryable("Invalid card details"))
-            }
-            Err(PaymentError::InsufficientFunds) => {
-                // Non-retryable - user error
-                Err(KagziError::non_retryable("Insufficient funds"))
-            }
-            Err(PaymentError::GatewayTimeout) => {
-                // Retryable with delay
-                Err(KagziError::retry_after(
-                    "Payment gateway timeout",
-                    Duration::from_secs(30),
-                ))
-            }
-            Err(e) => {
-                // Unknown error - let default retry policy decide
-                Err(anyhow::anyhow!(e))
-            }
-        }
-    }).await?;
-
-    Ok(result)
-}
-```
-
-## Retry Policies
-
-### Worker-Level Defaults
-
-Set default retry policy for all steps:
-
-```rust
-let mut worker = WorkerBuilder::new("http://localhost:50051", "orders")
-    .default_step_retry(RetryPolicy {
-        maximum_attempts: Some(3),
-        initial_interval: Some(Duration::from_secs(1)),
-        backoff_coefficient: Some(2.0),
-        maximum_interval: Some(Duration::from_secs(60)),
-        non_retryable_errors: vec![
-            "InvalidArgument".to_string(),
-            "PreconditionFailed".to_string(),
-        ],
-    })
+use kagzi::Worker;
+
+let mut worker = Worker::new("http://localhost:50051")
+    .namespace("default")
+    .workflows([("hello_workflow", hello_workflow)])
     .build()
     .await?;
+
+worker.run().await?;
 ```
 
-### Step-Level Overrides
-
-Override retry policy for specific steps:
+### 3) Start a workflow
 
 ```rust
-let result = ctx
-    .run_with_input_with_retry(
-        "critical-operation",
-        &input,
-        Some(RetryPolicy {
-            maximum_attempts: Some(10),
-            initial_interval: Some(Duration::from_millis(500)),
-            backoff_coefficient: Some(1.5),
-            maximum_interval: Some(Duration::from_secs(30)),
-            non_retryable_errors: vec![],
-        }),
-        async { critical_operation(input).await },
-    )
+use kagzi::Kagzi;
+
+let client = Kagzi::connect("http://localhost:50051").await?;
+let run = client
+    .start("hello_workflow")
+    .namespace("default")
+    .input(&HelloInput { name: "Kagzi".into() })?
+    .send()
     .await?;
+
+println!("run_id={}", run.id);
 ```
 
-### Workflow-Level Retry
-
-Set retry policy when starting a workflow:
+### 4) Create a schedule
 
 ```rust
-let run_id = client
-    .workflow("my-workflow", "queue", input)
-    .retry_policy(RetryPolicy {
-        maximum_attempts: Some(5),
-        initial_interval: Some(Duration::from_secs(2)),
-        backoff_coefficient: Some(2.0),
-        maximum_interval: Some(Duration::from_secs(300)),
-        non_retryable_errors: vec![],
+use kagzi::Kagzi;
+
+let client = Kagzi::connect("http://localhost:50051").await?;
+let schedule = client
+    .schedule("daily-report")
+    .namespace("default")
+    .workflow("generate_report")
+    .cron("0 9 * * *")
+    .send()
+    .await?;
+
+println!("schedule_id={}", schedule.schedule_id);
+```
+
+## Queue registry (QueueService)
+
+Queues are **metadata-only**: they exist for UX/governance (UI, labels, descriptions). Execution can still implicitly create queues.
+
+Create a queue:
+
+```rust
+use kagzi::Kagzi;
+use serde_json::json;
+
+let client = Kagzi::connect("http://localhost:50051").await?;
+let q = client
+    .queue("high_priority")
+    .namespace("default")
+    .display_name("High Priority")
+    .description("Latency-sensitive workflows")
+    .label("lane", "realtime")
+    .extra_json(json!({ "owner": "payments" }))
+    .send()
+    .await?;
+
+println!("created: {}/{}", q.namespace, q.task_queue);
+```
+
+List queues:
+
+```rust
+let queues = client.list_queues("default", None).await?;
+for q in queues {
+    println!("queue: {} (enabled={})", q.task_queue, q.enabled);
+}
+```
+
+Update queue metadata:
+
+> Note: `update_queue` currently accepts the raw protobuf request type (`kagzi_proto::kagzi::UpdateQueueRequest`).
+
+```rust
+use kagzi_proto::kagzi::UpdateQueueRequest;
+
+let updated = client
+    .update_queue(UpdateQueueRequest {
+        namespace: "default".to_string(),
+        task_queue: "high_priority".to_string(),
+        display_name: Some("High Priority (v2)".to_string()),
+        description: None,
+        enabled: None,
+        labels: Default::default(),
+        extra_json: None,
     })
     .await?;
+
+println!("updated enabled={}", updated.enabled);
 ```
 
-## Best Practices
+## Common patterns
 
-### 1. Idempotent Steps
-
-Design steps to be idempotent since they may be executed multiple times:
+### Fan-out / fan-in
 
 ```rust
-// Bad: Non-idempotent counter increment
-ctx.run("increment", async {
-    increment_counter().await // Will double-count on retry
-}).await?;
+use futures::future::try_join_all;
 
-// Good: Use upserts or idempotent operations
-ctx.run("upsert-record", async {
-    upsert_record_with_id(id, data).await // Safe on retry
-}).await?;
-```
-
-### 2. Small, Focused Steps
-
-Keep steps small and focused:
-
-```rust
-// Good: Separate steps
-let user = ctx.run("fetch-user", async { fetch_user(id).await }).await?;
-let orders = ctx.run("fetch-orders", async { fetch_orders(id).await }).await?;
-let total = ctx.run("calculate-total", async { calculate_total(&orders).await }).await?;
-
-// Avoid: Large monolithic steps
-let result = ctx.run("do-everything", async {
-    let user = fetch_user(id).await?;
-    let orders = fetch_orders(id).await?;
-    let total = calculate_total(&orders)?;
-    Ok((user, orders, total))
-}).await?;
-```
-
-### 3. Proper Error Classification
-
-Classify errors appropriately for retry behavior:
-
-```rust
-match operation().await {
-    Ok(result) => Ok(result),
-    Err(Error::Validation(msg)) => Err(KagziError::non_retryable(msg)),
-    Err(Error::NotFound) => Err(KagziError::new(ErrorCode::NotFound, msg)),
-    Err(Error::Timeout) => Err(KagziError::retry_after(msg, Duration::from_secs(30))),
-    Err(e) => Err(anyhow::anyhow!(e)), // Let default policy handle
-}
-```
-
-### 4. Timeout Management
-
-Use async timeouts instead of blocking:
-
-```rust
-use tokio::time::{timeout, Duration};
-
-let result = ctx.run("api-call", async move {
-    timeout(Duration::from_secs(10), api_call())
-        .await
-        .map_err(|_| KagziError::new(ErrorCode::Unavailable, "API timeout"))?
-}).await?;
-```
-
-### 5. Worker Configuration
-
-Configure workers based on workload:
-
-```rust
-// I/O-bound tasks (more concurrency)
-let mut worker = WorkerBuilder::new("http://localhost:50051", "api-calls")
-    .max_concurrent(200)
-    .queue_concurrency_limit(500)
-    .build()
-    .await?;
-
-// CPU-bound tasks (less concurrency)
-let mut worker = WorkerBuilder::new("http://localhost:50051", "processing")
-    .max_concurrent(4)
-    .queue_concurrency_limit(10)
-    .build()
-    .await?;
-```
-
-### 6. Graceful Shutdown
-
-Handle shutdown signals properly:
-
-```rust
-use tokio::signal;
-
-async fn run_worker() -> anyhow::Result<()> {
-    let mut worker = Worker::new("http://localhost:50051", "queue").await?;
-    worker.register("workflow", my_workflow);
-
-    let shutdown_token = worker.shutdown_token();
-
-    tokio::select! {
-        result = worker.run() => result,
-        _ = signal::ctrl_c() => {
-            println!("Received Ctrl+C, shutting down...");
-            worker.shutdown();
-            Ok(())
-        }
+async fn process_batch(mut ctx: Context, items: Vec<String>) -> anyhow::Result<Vec<String>> {
+    let mut tasks = Vec::with_capacity(items.len());
+    for (idx, item) in items.into_iter().enumerate() {
+        let step_name = format!("process-item-{idx}");
+        tasks.push(ctx.step(step_name).run(|| async move { Ok::<_, anyhow::Error>(item) }));
     }
+    try_join_all(tasks).await
 }
 ```
 
-## Common Patterns
-
-### Fan-Out/Fan-In
-
-Process multiple items in parallel:
+### Saga / compensation
 
 ```rust
-async fn process_batch(
-    mut ctx: WorkflowContext,
-    input: BatchInput,
-) -> anyhow::Result<BatchOutput> {
-    let mut tasks = Vec::new();
+use kagzi::KagziError;
 
-    for item in input.items {
-        let item = item.clone();
-        tasks.push(ctx.run_with_input("process-item", &item, async move {
-            process_single_item(item).await
-        }));
-    }
-
-    // Execute in parallel
-    let results = futures::future::try_join_all(tasks).await?;
-
-    Ok(BatchOutput { results })
-}
-```
-
-### Compensation (Saga Pattern)
-
-Implement compensating actions:
-
-```rust
-async fn transaction_workflow(
-    mut ctx: WorkflowContext,
-    input: TransactionInput,
-) -> anyhow::Result<()> {
-    // Step 1: Reserve inventory
-    let reservation = ctx
-        .run("reserve-inventory", async {
-            reserve_inventory(&input).await
-        })
+async fn transaction(mut ctx: Context) -> anyhow::Result<()> {
+    let reservation_id: String = ctx
+        .step("reserve-inventory")
+        .run(|| async { Ok::<_, anyhow::Error>("resv-123".to_string()) })
         .await?;
 
-    // Step 2: Process payment
-    let payment_result = ctx
-        .run("process-payment", async {
-            process_payment(&input).await
-        })
+    let payment = ctx
+        .step("charge-card")
+        .run(|| async { anyhow::bail!(KagziError::retry_after("gateway timeout", std::time::Duration::from_secs(30))) })
         .await;
 
-    match payment_result {
-        Ok(_) => Ok(()),
+    match payment {
+        Ok(()) => Ok(()),
         Err(e) => {
-            // Compensate: release inventory
-            ctx.run_with_input(
-                "release-inventory",
-                &reservation,
-                async {
-                    release_inventory(&reservation).await
-                },
-            ).await?;
+            let _ = ctx
+                .step("release-inventory")
+                .run(|| async move {
+                    // release(reservation_id).await?;
+                    Ok::<_, anyhow::Error>(reservation_id)
+                })
+                .await;
             Err(e)
         }
     }
 }
 ```
 
-### Conditional Execution
-
-Skip steps based on conditions:
+### Long-running workflows
 
 ```rust
-async fn conditional_workflow(
-    mut ctx: WorkflowContext,
-    input: WorkflowInput,
-) -> anyhow::Result<Output> {
-    let validated = ctx.run("validate", async {
-        validate(&input).await
-    }).await?;
-
-    if validated.needs_approval {
-        let approval = ctx.run("await-approval", async {
-            wait_for_approval(&validated).await
-        }).await?;
-
-        if !approval.approved {
-            return Err(KagziError::non_retryable("Not approved"));
-        }
-    }
-
-    let result = ctx.run("execute", async {
-        execute(&validated).await
-    }).await?;
-
-    Ok(result)
-}
-```
-
-### Long-Running Workflows
-
-Handle workflows that take hours or days:
-
-```rust
-async fn long_running_workflow(
-    mut ctx: WorkflowContext,
-    input: Input,
-) -> anyhow::Result<Output> {
-    // Step 1: Start process
-    let process_id = ctx.run("start", async {
-        start_long_process(input).await
-    }).await?;
-
-    // Step 2: Wait for completion (check every hour)
+async fn long_running(mut ctx: Context) -> anyhow::Result<()> {
     loop {
-        ctx.sleep(Duration::from_secs(3600)).await?;
-
-        let status = ctx.run_with_input(
-            "check-status",
-            &process_id,
-            async { check_process_status(process_id).await },
-        ).await?;
-
-        if status.is_complete {
+        ctx.sleep("poll", "1h").await?;
+        let done: bool = ctx
+            .step("check-status")
+            .run(|| async { Ok::<_, anyhow::Error>(false) })
+            .await?;
+        if done {
             break;
         }
     }
-
-    // Step 3: Get final result
-    let result = ctx.run_with_input(
-        "get-result",
-        &process_id,
-        async { get_process_result(process_id).await },
-    ).await?;
-
-    Ok(result)
+    Ok(())
 }
-```
-
-## Testing
-
-### Unit Testing Workflows
-
-Test workflow logic without a server:
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_process_order_validation() {
-        // Test validation logic directly
-        let result = validate_amount(-10.0);
-        assert!(result.is_err());
-    }
-}
-```
-
-### Integration Testing
-
-Use `just test-integration` to test with a running server:
-
-```bash
-# Start server
-just dev
-
-# Run integration tests
-KAGZI_POLL_TIMEOUT_SECS=2 cargo test -p kagzi-server --test integration_tests -- --test-threads=1
 ```
 
 ## Troubleshooting
 
-### Workflow Not Picked Up
+### Workflow not picked up
 
 Check:
 
-1. Worker registered the workflow type
-2. Task queue matches
-3. Namespace matches
-4. Worker is running and not maxed out on concurrency
+1. Worker is running and registered in the same namespace
+2. The workflow type matches what the worker registered
+3. Your queue backend is healthy (Kafka/NATS/Postgres listener)
 
-### Steps Repeated Unexpectedly
+### Steps repeated unexpectedly
 
-This is normal for idempotency. Ensure steps are idempotent:
+This is normal at-least-once behavior. Steps must be idempotent:
 
 - Use upserts instead of inserts
-- Check existence before creating
+- Check existence before creating external resources
 - Use idempotency keys for external APIs
 
-### Workflow Paused Unexpectedly
+## Retries
 
-Check:
+### Worker default retry policy
 
-1. Did you call `ctx.sleep()`?
-2. Did a step return a retryable error?
-3. Check logs for `WorkflowPaused` messages
+```rust
+use kagzi::{Retry, Worker};
 
-### Worker Not Responding
+let mut worker = Worker::new("http://localhost:50051")
+    .namespace("default")
+    .retry(Retry::exponential(5))
+    .workflows([("hello_workflow", hello_workflow)])
+    .build()
+    .await?;
+```
 
-Check:
+### Per-step override
 
-1. Server is reachable
-2. Heartbeats are being sent (check logs)
-3. Network connectivity
-4. Server logs for errors
+```rust
+use kagzi::Retry;
 
-## Performance Considerations
+let value: String = ctx
+    .step("call-external")
+    .retry(Retry::linear(3, std::time::Duration::from_secs(2)))
+    .run(|| async { Ok::<_, anyhow::Error>("ok".to_string()) })
+    .await?;
+```
 
-### Concurrency Tuning
+## Error handling
 
-- **I/O-bound workflows**: Higher concurrency (100-500)
-- **CPU-bound workflows**: Lower concurrency (2-8)
-- **Queue limits**: Prevent overwhelming downstream services
+Kagzi uses `KagziError` to encode retry semantics and metadata.
 
-### Step Size
+```rust
+use kagzi::KagziError;
+use kagzi_proto::kagzi::ErrorCode;
 
-- **Small steps**: Better visibility, easier retries, more network round trips
-- **Large steps**: Fewer round trips, harder to reason about failures
-- **Guideline**: Aim for 1-10 seconds per step
+// Non-retryable validation failure:
+return Err(KagziError::new(ErrorCode::InvalidArgument, "bad input").into());
 
-### Payload Size
+// Retryable failure with delay:
+return Err(KagziError::retry_after(
+    "temporary outage",
+    std::time::Duration::from_secs(15),
+).into());
+```
 
-- Keep payloads under 1MB for optimal performance
-- Large payloads can be stored externally with references
+## Performance considerations
 
-### Worker Scaling
+- Prefer steps that take ~1–10 seconds for good observability and bounded retries.
+- Keep payloads under ~1MB; store large blobs externally and pass references.
+- Scale horizontally by running more workers in the same namespace.
 
-- Multiple workers can share the same task queue
-- Use queue_concurrency_limit to distribute load
-- Different queues for different priority levels
+## Notes
+
+- The SDK worker currently polls the per-namespace `"default"` queue.
+- Worker telemetry is enabled by default; disable it with `WorkerBuilder::telemetry_enabled(false)`.
 
 ## License
 
-Licensed under the same terms as the Kagzi project. See LICENSE file for details.
+Licensed under the same terms as the Kagzi project. See the repository `LICENSE`.

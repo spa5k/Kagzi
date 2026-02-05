@@ -40,6 +40,7 @@ export const Route = createFileRoute("/$namespaceId/schedules/")({
 });
 
 function SchedulesPage() {
+  const { namespaceId } = Route.useParams();
   const { data: schedules, isLoading, error, refetch } = useSchedules();
 
   if (error) {
@@ -91,8 +92,8 @@ function SchedulesPage() {
               >
                 <td className="p-3">
                   <Link
-                    to="/schedules/$id"
-                    params={{ id: schedule.scheduleId }}
+                    to="/$namespaceId/schedules/$id"
+                    params={{ namespaceId, id: schedule.scheduleId }}
                     className="font-medium text-sm hover:text-primary transition-colors"
                   >
                     {schedule.workflowType}

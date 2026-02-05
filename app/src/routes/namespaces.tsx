@@ -148,11 +148,9 @@ function NamespacesPage() {
           </div>
 
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <HugeiconsIcon icon={Plus} className="size-4" />
-                Create Namespace
-              </Button>
+            <DialogTrigger render={<Button className="gap-2" />}>
+              <HugeiconsIcon icon={Plus} className="size-4" />
+              Create Namespace
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>

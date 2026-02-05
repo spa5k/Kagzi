@@ -7,8 +7,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
-import type { ListNamespacesRequest } from "@/gen/namespace_pb";
-import type { PageRequest } from "@/gen/common_pb";
 import { useListNamespaces } from "@/hooks/use-grpc-services";
 import { cn } from "@/lib/utils";
 import { Check, Layers, LoaderCircle } from "@hugeicons/core-free-icons";

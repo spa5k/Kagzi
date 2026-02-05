@@ -19,7 +19,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file worker.proto.
  */
 export const file_worker: GenFile /*@__PURE__*/ = fileDesc(
-  "Cgx3b3JrZXIucHJvdG8SCGthZ3ppLnYxIvwECgZXb3JrZXISEQoJd29ya2VyX2lkGAEgASgJEhIKCnRhc2tfcXVldWUYAiABKAkSJgoGc3RhdHVzGAMgASgOMhYua2FnemkudjEuV29ya2VyU3RhdHVzEg8KB3ZlcnNpb24YBCABKAkSFgoOd29ya2Zsb3dfdHlwZXMYBSADKAkSEAoIaG9zdG5hbWUYBiABKAkSCwoDcGlkGAcgASgFEiQKF3F1ZXVlX2NvbmN1cnJlbmN5X2xpbWl0GAggASgFSACIAQESRAoZd29ya2Zsb3dfdHlwZV9jb25jdXJyZW5jeRgJIAMoCzIhLmthZ3ppLnYxLldvcmtmbG93VHlwZUNvbmN1cnJlbmN5Eh0KFWFjdGl2ZV93b3JrZmxvd19jb3VudBgKIAEoBRIxCg1yZWdpc3RlcmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI1ChFsYXN0X2hlYXJ0YmVhdF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLAoGbGFiZWxzGA0gAygLMhwua2FnemkudjEuV29ya2VyLkxhYmVsc0VudHJ5EjgKDGNhcGFiaWxpdGllcxgOIAMoCzIiLmthZ3ppLnYxLldvcmtlci5DYXBhYmlsaXRpZXNFbnRyeRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBGjMKEUNhcGFiaWxpdGllc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCGgoYX3F1ZXVlX2NvbmN1cnJlbmN5X2xpbWl0IkgKF1dvcmtmbG93VHlwZUNvbmN1cnJlbmN5EhUKDXdvcmtmbG93X3R5cGUYASABKAkSFgoObWF4X2NvbmN1cnJlbnQYAiABKAUimAQKBFN0ZXASEQoJbmFtZXNwYWNlGAEgASgJEg8KB3N0ZXBfaWQYAiABKAkSDgoGcnVuX2lkGAMgASgJEgwKBG5hbWUYBCABKAkSIAoEa2luZBgFIAEoDjISLmthZ3ppLnYxLlN0ZXBLaW5kEiQKBnN0YXR1cxgGIAEoDjIULmthZ3ppLnYxLlN0ZXBTdGF0dXMSFgoOYXR0ZW1wdF9udW1iZXIYByABKAUSIAoFaW5wdXQYCCABKAsyES5rYWd6aS52MS5QYXlsb2FkEiYKBm91dHB1dBgJIAEoCzIRLmthZ3ppLnYxLlBheWxvYWRIAIgBARIpCgVlcnJvchgKIAEoCzIVLmthZ3ppLnYxLkVycm9yRGV0YWlsSAGIAQESLgoKY3JlYXRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKc3RhcnRlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAogBARI0CgtmaW5pc2hlZF9hdBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIA4gBARIZCgxjaGlsZF9ydW5faWQYDiABKAlIBIgBAUIJCgdfb3V0cHV0QggKBl9lcnJvckINCgtfc3RhcnRlZF9hdEIOCgxfZmluaXNoZWRfYXRCDwoNX2NoaWxkX3J1bl9pZCLuAgoPUmVnaXN0ZXJSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRISCgp0YXNrX3F1ZXVlGAIgASgJEhYKDndvcmtmbG93X3R5cGVzGAMgAygJEhAKCGhvc3RuYW1lGAQgASgJEgsKA3BpZBgFIAEoBRIPCgd2ZXJzaW9uGAYgASgJEjUKBmxhYmVscxgHIAMoCzIlLmthZ3ppLnYxLlJlZ2lzdGVyUmVxdWVzdC5MYWJlbHNFbnRyeRIkChdxdWV1ZV9jb25jdXJyZW5jeV9saW1pdBgIIAEoBUgAiAEBEkQKGXdvcmtmbG93X3R5cGVfY29uY3VycmVuY3kYCSADKAsyIS5rYWd6aS52MS5Xb3JrZmxvd1R5cGVDb25jdXJyZW5jeRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBQhoKGF9xdWV1ZV9jb25jdXJyZW5jeV9saW1pdCJGChBSZWdpc3RlclJlc3BvbnNlEhEKCXdvcmtlcl9pZBgBIAEoCRIfChdoZWFydGJlYXRfaW50ZXJ2YWxfc2VjcxgCIAEoBSIlChBIZWFydGJlYXRSZXF1ZXN0EhEKCXdvcmtlcl9pZBgBIAEoCSI7ChFIZWFydGJlYXRSZXNwb25zZRIQCghhY2NlcHRlZBgBIAEoCBIUCgxzaG91bGRfZHJhaW4YAiABKAgiNQoRRGVyZWdpc3RlclJlcXVlc3QSEQoJd29ya2VyX2lkGAEgASgJEg0KBWRyYWluGAIgASgIImMKD1BvbGxUYXNrUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSEQoJd29ya2VyX2lkGAIgASgJEhIKCnRhc2tfcXVldWUYAyABKAkSFgoOd29ya2Zsb3dfdHlwZXMYBCADKAkiWwoQUG9sbFRhc2tSZXNwb25zZRIOCgZydW5faWQYASABKAkSFQoNd29ya2Zsb3dfdHlwZRgCIAEoCRIgCgVpbnB1dBgDIAEoCzIRLmthZ3ppLnYxLlBheWxvYWQiuQEKEEJlZ2luU3RlcFJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIRCglzdGVwX25hbWUYAyABKAkSIAoEa2luZBgEIAEoDjISLmthZ3ppLnYxLlN0ZXBLaW5kEiAKBWlucHV0GAUgASgLMhEua2FnemkudjEuUGF5bG9hZBIrCgxyZXRyeV9wb2xpY3kYBiABKAsyFS5rYWd6aS52MS5SZXRyeVBvbGljeSJmChFCZWdpblN0ZXBSZXNwb25zZRIPCgdzdGVwX2lkGAEgASgJEhYKDnNob3VsZF9leGVjdXRlGAIgASgIEigKDWNhY2hlZF9vdXRwdXQYAyABKAsyES5rYWd6aS52MS5QYXlsb2FkImwKE0NvbXBsZXRlU3RlcFJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIPCgdzdGVwX2lkGAMgASgJEiEKBm91dHB1dBgEIAEoCzIRLmthZ3ppLnYxLlBheWxvYWQiNAoUQ29tcGxldGVTdGVwUmVzcG9uc2USHAoEc3RlcBgBIAEoCzIOLmthZ3ppLnYxLlN0ZXAiawoPRmFpbFN0ZXBSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHc3RlcF9pZBgDIAEoCRIkCgVlcnJvchgEIAEoCzIVLmthZ3ppLnYxLkVycm9yRGV0YWlsIlkKEEZhaWxTdGVwUmVzcG9uc2USFwoPc2NoZWR1bGVkX3JldHJ5GAEgASgIEiwKCHJldHJ5X2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJfChdDb21wbGV0ZVdvcmtmbG93UmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSDgoGcnVuX2lkGAIgASgJEiEKBm91dHB1dBgDIAEoCzIRLmthZ3ppLnYxLlBheWxvYWQiRAoYQ29tcGxldGVXb3JrZmxvd1Jlc3BvbnNlEigKBnN0YXR1cxgBIAEoDjIYLmthZ3ppLnYxLldvcmtmbG93U3RhdHVzIl4KE0ZhaWxXb3JrZmxvd1JlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIkCgVlcnJvchgDIAEoCzIVLmthZ3ppLnYxLkVycm9yRGV0YWlsIkAKFEZhaWxXb3JrZmxvd1Jlc3BvbnNlEigKBnN0YXR1cxgBIAEoDjIYLmthZ3ppLnYxLldvcmtmbG93U3RhdHVzIm8KDFNsZWVwUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB3N0ZXBfaWQYAyABKAkSKwoIZHVyYXRpb24YBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24iDwoNU2xlZXBSZXNwb25zZSIlChJEZXJlZ2lzdGVyUmVzcG9uc2USDwoHZHJhaW5lZBgBIAEoCCp+CgxXb3JrZXJTdGF0dXMSHQoZV09SS0VSX1NUQVRVU19VTlNQRUNJRklFRBAAEhgKFFdPUktFUl9TVEFUVVNfT05MSU5FEAESGgoWV09SS0VSX1NUQVRVU19EUkFJTklORxACEhkKFVdPUktFUl9TVEFUVVNfT0ZGTElORRADKnAKCFN0ZXBLaW5kEhkKFVNURVBfS0lORF9VTlNQRUNJRklFRBAAEhYKElNURVBfS0lORF9GVU5DVElPThABEhMKD1NURVBfS0lORF9TTEVFUBACEhwKGFNURVBfS0lORF9DSElMRF9XT1JLRkxPVxADKo4BCgpTdGVwU3RhdHVzEhsKF1NURVBfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTU1RFUF9TVEFUVVNfUEVORElORxABEhcKE1NURVBfU1RBVFVTX1JVTk5JTkcQAhIZChVTVEVQX1NUQVRVU19DT01QTEVURUQQAxIWChJTVEVQX1NUQVRVU19GQUlMRUQQBDLgBQoNV29ya2VyU2VydmljZRJBCghSZWdpc3RlchIZLmthZ3ppLnYxLlJlZ2lzdGVyUmVxdWVzdBoaLmthZ3ppLnYxLlJlZ2lzdGVyUmVzcG9uc2USRAoJSGVhcnRiZWF0Ehoua2FnemkudjEuSGVhcnRiZWF0UmVxdWVzdBobLmthZ3ppLnYxLkhlYXJ0YmVhdFJlc3BvbnNlEkcKCkRlcmVnaXN0ZXISGy5rYWd6aS52MS5EZXJlZ2lzdGVyUmVxdWVzdBocLmthZ3ppLnYxLkRlcmVnaXN0ZXJSZXNwb25zZRJBCghQb2xsVGFzaxIZLmthZ3ppLnYxLlBvbGxUYXNrUmVxdWVzdBoaLmthZ3ppLnYxLlBvbGxUYXNrUmVzcG9uc2USRAoJQmVnaW5TdGVwEhoua2FnemkudjEuQmVnaW5TdGVwUmVxdWVzdBobLmthZ3ppLnYxLkJlZ2luU3RlcFJlc3BvbnNlEk0KDENvbXBsZXRlU3RlcBIdLmthZ3ppLnYxLkNvbXBsZXRlU3RlcFJlcXVlc3QaHi5rYWd6aS52MS5Db21wbGV0ZVN0ZXBSZXNwb25zZRJBCghGYWlsU3RlcBIZLmthZ3ppLnYxLkZhaWxTdGVwUmVxdWVzdBoaLmthZ3ppLnYxLkZhaWxTdGVwUmVzcG9uc2USWQoQQ29tcGxldGVXb3JrZmxvdxIhLmthZ3ppLnYxLkNvbXBsZXRlV29ya2Zsb3dSZXF1ZXN0GiIua2FnemkudjEuQ29tcGxldGVXb3JrZmxvd1Jlc3BvbnNlEk0KDEZhaWxXb3JrZmxvdxIdLmthZ3ppLnYxLkZhaWxXb3JrZmxvd1JlcXVlc3QaHi5rYWd6aS52MS5GYWlsV29ya2Zsb3dSZXNwb25zZRI4CgVTbGVlcBIWLmthZ3ppLnYxLlNsZWVwUmVxdWVzdBoXLmthZ3ppLnYxLlNsZWVwUmVzcG9uc2VCXAoMY29tLmthZ3ppLnYxQgtXb3JrZXJQcm90b1ABogIDS1hYqgIIS2FnemkuVjHKAghLYWd6aVxWMeICFEthZ3ppXFYxXEdQQk1ldGFkYXRh6gIJS2Fnemk6OlYxYgZwcm90bzM",
+  "Cgx3b3JrZXIucHJvdG8SCGthZ3ppLnYxIvwECgZXb3JrZXISEQoJd29ya2VyX2lkGAEgASgJEhIKCnRhc2tfcXVldWUYAiABKAkSJgoGc3RhdHVzGAMgASgOMhYua2FnemkudjEuV29ya2VyU3RhdHVzEg8KB3ZlcnNpb24YBCABKAkSFgoOd29ya2Zsb3dfdHlwZXMYBSADKAkSEAoIaG9zdG5hbWUYBiABKAkSCwoDcGlkGAcgASgFEiQKF3F1ZXVlX2NvbmN1cnJlbmN5X2xpbWl0GAggASgFSACIAQESRAoZd29ya2Zsb3dfdHlwZV9jb25jdXJyZW5jeRgJIAMoCzIhLmthZ3ppLnYxLldvcmtmbG93VHlwZUNvbmN1cnJlbmN5Eh0KFWFjdGl2ZV93b3JrZmxvd19jb3VudBgKIAEoBRIxCg1yZWdpc3RlcmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBI1ChFsYXN0X2hlYXJ0YmVhdF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLAoGbGFiZWxzGA0gAygLMhwua2FnemkudjEuV29ya2VyLkxhYmVsc0VudHJ5EjgKDGNhcGFiaWxpdGllcxgOIAMoCzIiLmthZ3ppLnYxLldvcmtlci5DYXBhYmlsaXRpZXNFbnRyeRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBGjMKEUNhcGFiaWxpdGllc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCGgoYX3F1ZXVlX2NvbmN1cnJlbmN5X2xpbWl0IkgKF1dvcmtmbG93VHlwZUNvbmN1cnJlbmN5EhUKDXdvcmtmbG93X3R5cGUYASABKAkSFgoObWF4X2NvbmN1cnJlbnQYAiABKAUimAQKBFN0ZXASEQoJbmFtZXNwYWNlGAEgASgJEg8KB3N0ZXBfaWQYAiABKAkSDgoGcnVuX2lkGAMgASgJEgwKBG5hbWUYBCABKAkSIAoEa2luZBgFIAEoDjISLmthZ3ppLnYxLlN0ZXBLaW5kEiQKBnN0YXR1cxgGIAEoDjIULmthZ3ppLnYxLlN0ZXBTdGF0dXMSFgoOYXR0ZW1wdF9udW1iZXIYByABKAUSIAoFaW5wdXQYCCABKAsyES5rYWd6aS52MS5QYXlsb2FkEiYKBm91dHB1dBgJIAEoCzIRLmthZ3ppLnYxLlBheWxvYWRIAIgBARIpCgVlcnJvchgKIAEoCzIVLmthZ3ppLnYxLkVycm9yRGV0YWlsSAGIAQESLgoKY3JlYXRlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKc3RhcnRlZF9hdBgMIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAogBARI0CgtmaW5pc2hlZF9hdBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIA4gBARIZCgxjaGlsZF9ydW5faWQYDiABKAlIBIgBAUIJCgdfb3V0cHV0QggKBl9lcnJvckINCgtfc3RhcnRlZF9hdEIOCgxfZmluaXNoZWRfYXRCDwoNX2NoaWxkX3J1bl9pZCKCAwoPUmVnaXN0ZXJSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIXCgp0YXNrX3F1ZXVlGAIgASgJSACIAQESFgoOd29ya2Zsb3dfdHlwZXMYAyADKAkSEAoIaG9zdG5hbWUYBCABKAkSCwoDcGlkGAUgASgFEg8KB3ZlcnNpb24YBiABKAkSNQoGbGFiZWxzGAcgAygLMiUua2FnemkudjEuUmVnaXN0ZXJSZXF1ZXN0LkxhYmVsc0VudHJ5EiQKF3F1ZXVlX2NvbmN1cnJlbmN5X2xpbWl0GAggASgFSAGIAQESRAoZd29ya2Zsb3dfdHlwZV9jb25jdXJyZW5jeRgJIAMoCzIhLmthZ3ppLnYxLldvcmtmbG93VHlwZUNvbmN1cnJlbmN5Gi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCDQoLX3Rhc2tfcXVldWVCGgoYX3F1ZXVlX2NvbmN1cnJlbmN5X2xpbWl0IkYKEFJlZ2lzdGVyUmVzcG9uc2USEQoJd29ya2VyX2lkGAEgASgJEh8KF2hlYXJ0YmVhdF9pbnRlcnZhbF9zZWNzGAIgASgFIiUKEEhlYXJ0YmVhdFJlcXVlc3QSEQoJd29ya2VyX2lkGAEgASgJIjsKEUhlYXJ0YmVhdFJlc3BvbnNlEhAKCGFjY2VwdGVkGAEgASgIEhQKDHNob3VsZF9kcmFpbhgCIAEoCCI1ChFEZXJlZ2lzdGVyUmVxdWVzdBIRCgl3b3JrZXJfaWQYASABKAkSDQoFZHJhaW4YAiABKAgiaAoUU3Vic2NyaWJlV29ya1JlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEhEKCXdvcmtlcl9pZBgCIAEoCRISCgp0YXNrX3F1ZXVlGAMgASgJEhYKDndvcmtmbG93X3R5cGVzGAQgAygJIjYKDVdvcmtBdmFpbGFibGUSEQoJbmFtZXNwYWNlGAEgASgJEhIKCnRhc2tfcXVldWUYAiABKAkiZAoQQ2xhaW1UYXNrUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSEQoJd29ya2VyX2lkGAIgASgJEhIKCnRhc2tfcXVldWUYAyABKAkSFgoOd29ya2Zsb3dfdHlwZXMYBCADKAkiaQoRQ2xhaW1UYXNrUmVzcG9uc2USJQoEdGFzaxgBIAEoCzIVLmthZ3ppLnYxLkNsYWltZWRUYXNrSAASIwoHbm9fdGFzaxgCIAEoCzIQLmthZ3ppLnYxLk5vVGFza0gAQggKBnJlc3VsdCIICgZOb1Rhc2siVgoLQ2xhaW1lZFRhc2sSDgoGcnVuX2lkGAEgASgJEhUKDXdvcmtmbG93X3R5cGUYAiABKAkSIAoFaW5wdXQYAyABKAsyES5rYWd6aS52MS5QYXlsb2FkIrkBChBCZWdpblN0ZXBSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIOCgZydW5faWQYAiABKAkSEQoJc3RlcF9uYW1lGAMgASgJEiAKBGtpbmQYBCABKA4yEi5rYWd6aS52MS5TdGVwS2luZBIgCgVpbnB1dBgFIAEoCzIRLmthZ3ppLnYxLlBheWxvYWQSKwoMcmV0cnlfcG9saWN5GAYgASgLMhUua2FnemkudjEuUmV0cnlQb2xpY3kiZgoRQmVnaW5TdGVwUmVzcG9uc2USDwoHc3RlcF9pZBgBIAEoCRIWCg5zaG91bGRfZXhlY3V0ZRgCIAEoCBIoCg1jYWNoZWRfb3V0cHV0GAMgASgLMhEua2FnemkudjEuUGF5bG9hZCJsChNDb21wbGV0ZVN0ZXBSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIOCgZydW5faWQYAiABKAkSDwoHc3RlcF9pZBgDIAEoCRIhCgZvdXRwdXQYBCABKAsyES5rYWd6aS52MS5QYXlsb2FkIjQKFENvbXBsZXRlU3RlcFJlc3BvbnNlEhwKBHN0ZXAYASABKAsyDi5rYWd6aS52MS5TdGVwImsKD0ZhaWxTdGVwUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSDgoGcnVuX2lkGAIgASgJEg8KB3N0ZXBfaWQYAyABKAkSJAoFZXJyb3IYBCABKAsyFS5rYWd6aS52MS5FcnJvckRldGFpbCJZChBGYWlsU3RlcFJlc3BvbnNlEhcKD3NjaGVkdWxlZF9yZXRyeRgBIAEoCBIsCghyZXRyeV9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiXwoXQ29tcGxldGVXb3JrZmxvd1JlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIhCgZvdXRwdXQYAyABKAsyES5rYWd6aS52MS5QYXlsb2FkIkQKGENvbXBsZXRlV29ya2Zsb3dSZXNwb25zZRIoCgZzdGF0dXMYASABKA4yGC5rYWd6aS52MS5Xb3JrZmxvd1N0YXR1cyJeChNGYWlsV29ya2Zsb3dSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIOCgZydW5faWQYAiABKAkSJAoFZXJyb3IYAyABKAsyFS5rYWd6aS52MS5FcnJvckRldGFpbCJAChRGYWlsV29ya2Zsb3dSZXNwb25zZRIoCgZzdGF0dXMYASABKA4yGC5rYWd6aS52MS5Xb3JrZmxvd1N0YXR1cyJvCgxTbGVlcFJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEg4KBnJ1bl9pZBgCIAEoCRIPCgdzdGVwX2lkGAMgASgJEisKCGR1cmF0aW9uGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uIg8KDVNsZWVwUmVzcG9uc2UiJQoSRGVyZWdpc3RlclJlc3BvbnNlEg8KB2RyYWluZWQYASABKAgqfgoMV29ya2VyU3RhdHVzEh0KGVdPUktFUl9TVEFUVVNfVU5TUEVDSUZJRUQQABIYChRXT1JLRVJfU1RBVFVTX09OTElORRABEhoKFldPUktFUl9TVEFUVVNfRFJBSU5JTkcQAhIZChVXT1JLRVJfU1RBVFVTX09GRkxJTkUQAyqJAQoIU3RlcEtpbmQSGQoVU1RFUF9LSU5EX1VOU1BFQ0lGSUVEEAASFgoSU1RFUF9LSU5EX0ZVTkNUSU9OEAESEwoPU1RFUF9LSU5EX1NMRUVQEAISHAoYU1RFUF9LSU5EX0NISUxEX1dPUktGTE9XEAMSFwoTU1RFUF9LSU5EX0xJRkVDWUNMRRAEKo4BCgpTdGVwU3RhdHVzEhsKF1NURVBfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTU1RFUF9TVEFUVVNfUEVORElORxABEhcKE1NURVBfU1RBVFVTX1JVTk5JTkcQAhIZChVTVEVQX1NUQVRVU19DT01QTEVURUQQAxIWChJTVEVQX1NUQVRVU19GQUlMRUQQBDKvBgoNV29ya2VyU2VydmljZRJBCghSZWdpc3RlchIZLmthZ3ppLnYxLlJlZ2lzdGVyUmVxdWVzdBoaLmthZ3ppLnYxLlJlZ2lzdGVyUmVzcG9uc2USRAoJSGVhcnRiZWF0Ehoua2FnemkudjEuSGVhcnRiZWF0UmVxdWVzdBobLmthZ3ppLnYxLkhlYXJ0YmVhdFJlc3BvbnNlEkcKCkRlcmVnaXN0ZXISGy5rYWd6aS52MS5EZXJlZ2lzdGVyUmVxdWVzdBocLmthZ3ppLnYxLkRlcmVnaXN0ZXJSZXNwb25zZRJKCg1TdWJzY3JpYmVXb3JrEh4ua2FnemkudjEuU3Vic2NyaWJlV29ya1JlcXVlc3QaFy5rYWd6aS52MS5Xb3JrQXZhaWxhYmxlMAESRAoJQ2xhaW1UYXNrEhoua2FnemkudjEuQ2xhaW1UYXNrUmVxdWVzdBobLmthZ3ppLnYxLkNsYWltVGFza1Jlc3BvbnNlEkQKCUJlZ2luU3RlcBIaLmthZ3ppLnYxLkJlZ2luU3RlcFJlcXVlc3QaGy5rYWd6aS52MS5CZWdpblN0ZXBSZXNwb25zZRJNCgxDb21wbGV0ZVN0ZXASHS5rYWd6aS52MS5Db21wbGV0ZVN0ZXBSZXF1ZXN0Gh4ua2FnemkudjEuQ29tcGxldGVTdGVwUmVzcG9uc2USQQoIRmFpbFN0ZXASGS5rYWd6aS52MS5GYWlsU3RlcFJlcXVlc3QaGi5rYWd6aS52MS5GYWlsU3RlcFJlc3BvbnNlElkKEENvbXBsZXRlV29ya2Zsb3cSIS5rYWd6aS52MS5Db21wbGV0ZVdvcmtmbG93UmVxdWVzdBoiLmthZ3ppLnYxLkNvbXBsZXRlV29ya2Zsb3dSZXNwb25zZRJNCgxGYWlsV29ya2Zsb3cSHS5rYWd6aS52MS5GYWlsV29ya2Zsb3dSZXF1ZXN0Gh4ua2FnemkudjEuRmFpbFdvcmtmbG93UmVzcG9uc2USOAoFU2xlZXASFi5rYWd6aS52MS5TbGVlcFJlcXVlc3QaFy5rYWd6aS52MS5TbGVlcFJlc3BvbnNlQlwKDGNvbS5rYWd6aS52MUILV29ya2VyUHJvdG9QAaICA0tYWKoCCEthZ3ppLlYxygIIS2FnemlcVjHiAhRLYWd6aVxWMVxHUEJNZXRhZGF0YeoCCUthZ3ppOjpWMWIGcHJvdG8z",
   [file_common, file_google_protobuf_duration, file_google_protobuf_timestamp, file_workflow],
 );
 
@@ -225,9 +225,9 @@ export type RegisterRequest = Message<"kagzi.v1.RegisterRequest"> & {
   namespace: string;
 
   /**
-   * @generated from field: string task_queue = 2;
+   * @generated from field: optional string task_queue = 2;
    */
-  taskQueue: string;
+  taskQueue?: string;
 
   /**
    * @generated from field: repeated string workflow_types = 3;
@@ -370,9 +370,9 @@ export const DeregisterRequestSchema: GenMessage<DeregisterRequest> /*@__PURE__*
 );
 
 /**
- * @generated from message kagzi.v1.PollTaskRequest
+ * @generated from message kagzi.v1.SubscribeWorkRequest
  */
-export type PollTaskRequest = Message<"kagzi.v1.PollTaskRequest"> & {
+export type SubscribeWorkRequest = Message<"kagzi.v1.SubscribeWorkRequest"> & {
   /**
    * @generated from field: string namespace = 1;
    */
@@ -395,18 +395,121 @@ export type PollTaskRequest = Message<"kagzi.v1.PollTaskRequest"> & {
 };
 
 /**
- * Describes the message kagzi.v1.PollTaskRequest.
- * Use `create(PollTaskRequestSchema)` to create a new message.
+ * Describes the message kagzi.v1.SubscribeWorkRequest.
+ * Use `create(SubscribeWorkRequestSchema)` to create a new message.
  */
-export const PollTaskRequestSchema: GenMessage<PollTaskRequest> /*@__PURE__*/ = messageDesc(
+export const SubscribeWorkRequestSchema: GenMessage<SubscribeWorkRequest> /*@__PURE__*/ =
+  messageDesc(file_worker, 8);
+
+/**
+ * @generated from message kagzi.v1.WorkAvailable
+ */
+export type WorkAvailable = Message<"kagzi.v1.WorkAvailable"> & {
+  /**
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: string task_queue = 2;
+   */
+  taskQueue: string;
+};
+
+/**
+ * Describes the message kagzi.v1.WorkAvailable.
+ * Use `create(WorkAvailableSchema)` to create a new message.
+ */
+export const WorkAvailableSchema: GenMessage<WorkAvailable> /*@__PURE__*/ = messageDesc(
   file_worker,
-  8,
+  9,
 );
 
 /**
- * @generated from message kagzi.v1.PollTaskResponse
+ * @generated from message kagzi.v1.ClaimTaskRequest
  */
-export type PollTaskResponse = Message<"kagzi.v1.PollTaskResponse"> & {
+export type ClaimTaskRequest = Message<"kagzi.v1.ClaimTaskRequest"> & {
+  /**
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: string worker_id = 2;
+   */
+  workerId: string;
+
+  /**
+   * @generated from field: string task_queue = 3;
+   */
+  taskQueue: string;
+
+  /**
+   * Requested subset; the server intersects this with the worker's registered types.
+   *
+   * @generated from field: repeated string workflow_types = 4;
+   */
+  workflowTypes: string[];
+};
+
+/**
+ * Describes the message kagzi.v1.ClaimTaskRequest.
+ * Use `create(ClaimTaskRequestSchema)` to create a new message.
+ */
+export const ClaimTaskRequestSchema: GenMessage<ClaimTaskRequest> /*@__PURE__*/ = messageDesc(
+  file_worker,
+  10,
+);
+
+/**
+ * @generated from message kagzi.v1.ClaimTaskResponse
+ */
+export type ClaimTaskResponse = Message<"kagzi.v1.ClaimTaskResponse"> & {
+  /**
+   * @generated from oneof kagzi.v1.ClaimTaskResponse.result
+   */
+  result:
+    | {
+        /**
+         * @generated from field: kagzi.v1.ClaimedTask task = 1;
+         */
+        value: ClaimedTask;
+        case: "task";
+      }
+    | {
+        /**
+         * @generated from field: kagzi.v1.NoTask no_task = 2;
+         */
+        value: NoTask;
+        case: "noTask";
+      }
+    | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message kagzi.v1.ClaimTaskResponse.
+ * Use `create(ClaimTaskResponseSchema)` to create a new message.
+ */
+export const ClaimTaskResponseSchema: GenMessage<ClaimTaskResponse> /*@__PURE__*/ = messageDesc(
+  file_worker,
+  11,
+);
+
+/**
+ * @generated from message kagzi.v1.NoTask
+ */
+export type NoTask = Message<"kagzi.v1.NoTask"> & {};
+
+/**
+ * Describes the message kagzi.v1.NoTask.
+ * Use `create(NoTaskSchema)` to create a new message.
+ */
+export const NoTaskSchema: GenMessage<NoTask> /*@__PURE__*/ = messageDesc(file_worker, 12);
+
+/**
+ * @generated from message kagzi.v1.ClaimedTask
+ */
+export type ClaimedTask = Message<"kagzi.v1.ClaimedTask"> & {
   /**
    * @generated from field: string run_id = 1;
    */
@@ -424,12 +527,12 @@ export type PollTaskResponse = Message<"kagzi.v1.PollTaskResponse"> & {
 };
 
 /**
- * Describes the message kagzi.v1.PollTaskResponse.
- * Use `create(PollTaskResponseSchema)` to create a new message.
+ * Describes the message kagzi.v1.ClaimedTask.
+ * Use `create(ClaimedTaskSchema)` to create a new message.
  */
-export const PollTaskResponseSchema: GenMessage<PollTaskResponse> /*@__PURE__*/ = messageDesc(
+export const ClaimedTaskSchema: GenMessage<ClaimedTask> /*@__PURE__*/ = messageDesc(
   file_worker,
-  9,
+  13,
 );
 
 /**
@@ -473,7 +576,7 @@ export type BeginStepRequest = Message<"kagzi.v1.BeginStepRequest"> & {
  */
 export const BeginStepRequestSchema: GenMessage<BeginStepRequest> /*@__PURE__*/ = messageDesc(
   file_worker,
-  10,
+  14,
 );
 
 /**
@@ -504,7 +607,7 @@ export type BeginStepResponse = Message<"kagzi.v1.BeginStepResponse"> & {
  */
 export const BeginStepResponseSchema: GenMessage<BeginStepResponse> /*@__PURE__*/ = messageDesc(
   file_worker,
-  11,
+  15,
 );
 
 /**
@@ -538,7 +641,7 @@ export type CompleteStepRequest = Message<"kagzi.v1.CompleteStepRequest"> & {
  */
 export const CompleteStepRequestSchema: GenMessage<CompleteStepRequest> /*@__PURE__*/ = messageDesc(
   file_worker,
-  12,
+  16,
 );
 
 /**
@@ -556,7 +659,7 @@ export type CompleteStepResponse = Message<"kagzi.v1.CompleteStepResponse"> & {
  * Use `create(CompleteStepResponseSchema)` to create a new message.
  */
 export const CompleteStepResponseSchema: GenMessage<CompleteStepResponse> /*@__PURE__*/ =
-  messageDesc(file_worker, 13);
+  messageDesc(file_worker, 17);
 
 /**
  * @generated from message kagzi.v1.FailStepRequest
@@ -589,7 +692,7 @@ export type FailStepRequest = Message<"kagzi.v1.FailStepRequest"> & {
  */
 export const FailStepRequestSchema: GenMessage<FailStepRequest> /*@__PURE__*/ = messageDesc(
   file_worker,
-  14,
+  18,
 );
 
 /**
@@ -615,7 +718,7 @@ export type FailStepResponse = Message<"kagzi.v1.FailStepResponse"> & {
  */
 export const FailStepResponseSchema: GenMessage<FailStepResponse> /*@__PURE__*/ = messageDesc(
   file_worker,
-  15,
+  19,
 );
 
 /**
@@ -643,7 +746,7 @@ export type CompleteWorkflowRequest = Message<"kagzi.v1.CompleteWorkflowRequest"
  * Use `create(CompleteWorkflowRequestSchema)` to create a new message.
  */
 export const CompleteWorkflowRequestSchema: GenMessage<CompleteWorkflowRequest> /*@__PURE__*/ =
-  messageDesc(file_worker, 16);
+  messageDesc(file_worker, 20);
 
 /**
  * @generated from message kagzi.v1.CompleteWorkflowResponse
@@ -660,7 +763,7 @@ export type CompleteWorkflowResponse = Message<"kagzi.v1.CompleteWorkflowRespons
  * Use `create(CompleteWorkflowResponseSchema)` to create a new message.
  */
 export const CompleteWorkflowResponseSchema: GenMessage<CompleteWorkflowResponse> /*@__PURE__*/ =
-  messageDesc(file_worker, 17);
+  messageDesc(file_worker, 21);
 
 /**
  * @generated from message kagzi.v1.FailWorkflowRequest
@@ -688,7 +791,7 @@ export type FailWorkflowRequest = Message<"kagzi.v1.FailWorkflowRequest"> & {
  */
 export const FailWorkflowRequestSchema: GenMessage<FailWorkflowRequest> /*@__PURE__*/ = messageDesc(
   file_worker,
-  18,
+  22,
 );
 
 /**
@@ -706,7 +809,7 @@ export type FailWorkflowResponse = Message<"kagzi.v1.FailWorkflowResponse"> & {
  * Use `create(FailWorkflowResponseSchema)` to create a new message.
  */
 export const FailWorkflowResponseSchema: GenMessage<FailWorkflowResponse> /*@__PURE__*/ =
-  messageDesc(file_worker, 19);
+  messageDesc(file_worker, 23);
 
 /**
  * @generated from message kagzi.v1.SleepRequest
@@ -739,7 +842,7 @@ export type SleepRequest = Message<"kagzi.v1.SleepRequest"> & {
  */
 export const SleepRequestSchema: GenMessage<SleepRequest> /*@__PURE__*/ = messageDesc(
   file_worker,
-  20,
+  24,
 );
 
 /**
@@ -753,7 +856,7 @@ export type SleepResponse = Message<"kagzi.v1.SleepResponse"> & {};
  */
 export const SleepResponseSchema: GenMessage<SleepResponse> /*@__PURE__*/ = messageDesc(
   file_worker,
-  21,
+  25,
 );
 
 /**
@@ -772,7 +875,7 @@ export type DeregisterResponse = Message<"kagzi.v1.DeregisterResponse"> & {
  */
 export const DeregisterResponseSchema: GenMessage<DeregisterResponse> /*@__PURE__*/ = messageDesc(
   file_worker,
-  22,
+  26,
 );
 
 /**
@@ -828,6 +931,11 @@ export enum StepKind {
    * @generated from enum value: STEP_KIND_CHILD_WORKFLOW = 3;
    */
   CHILD_WORKFLOW = 3,
+
+  /**
+   * @generated from enum value: STEP_KIND_LIFECYCLE = 4;
+   */
+  LIFECYCLE = 4,
 }
 
 /**
@@ -908,14 +1016,25 @@ export const WorkerService: GenService<{
     output: typeof DeregisterResponseSchema;
   };
   /**
-   * PollTask blocks until a workflow task is available or timeout expires.
+   * SubscribeWork provides a stream of wakeups when a task queue may have runnable work.
+   * This is primarily used for the Postgres LISTEN/NOTIFY "easy start" mode.
    *
-   * @generated from rpc kagzi.v1.WorkerService.PollTask
+   * @generated from rpc kagzi.v1.WorkerService.SubscribeWork
    */
-  pollTask: {
+  subscribeWork: {
+    methodKind: "server_streaming";
+    input: typeof SubscribeWorkRequestSchema;
+    output: typeof WorkAvailableSchema;
+  };
+  /**
+   * ClaimTask attempts a single authoritative DB claim and returns a task if claimed.
+   *
+   * @generated from rpc kagzi.v1.WorkerService.ClaimTask
+   */
+  claimTask: {
     methodKind: "unary";
-    input: typeof PollTaskRequestSchema;
-    output: typeof PollTaskResponseSchema;
+    input: typeof ClaimTaskRequestSchema;
+    output: typeof ClaimTaskResponseSchema;
   };
   /**
    * BeginStep initiates a step execution with idempotency support via step name.
