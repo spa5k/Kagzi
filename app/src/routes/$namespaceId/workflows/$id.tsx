@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { WorkflowStepsFlow } from "@/components/workflow/workflow-steps-flow";
 import { StepStatus } from "@/gen/worker_pb";
 import type { Workflow } from "@/gen/workflow_pb";
 import { useWorkflows } from "@/hooks/use-dashboard";
@@ -402,17 +403,19 @@ function WorkflowDetailContent({ workflow, namespace }: { workflow: Workflow; na
 
       <div>
         <div className="flex items-center gap-8 border-b border-border mb-8 overflow-x-auto">
-          {["Summary", "History", "Relationships", "Workers", "Pending Activities"].map((tab) => {
-            const id = tab.toLowerCase().replace(" ", "-");
-            return (
-              <TabButton
-                key={id}
-                label={tab}
-                active={activeTab === id}
-                onClick={() => setActiveTab(id)}
-              />
-            );
-          })}
+          {["Summary", "Graph", "History", "Relationships", "Workers", "Pending Activities"].map(
+            (tab) => {
+              const id = tab.toLowerCase().replace(" ", "-");
+              return (
+                <TabButton
+                  key={id}
+                  label={tab}
+                  active={activeTab === id}
+                  onClick={() => setActiveTab(id)}
+                />
+              );
+            },
+          )}
         </div>
 
         {activeTab === "summary" && (
@@ -458,6 +461,16 @@ function WorkflowDetailContent({ workflow, namespace }: { workflow: Workflow; na
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {activeTab === "graph" && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+            {stepsLoading ? (
+              <div className="h-[700px] border border-border rounded-lg bg-muted/20 animate-pulse" />
+            ) : (
+              <WorkflowStepsFlow steps={steps} />
+            )}
           </div>
         )}
 

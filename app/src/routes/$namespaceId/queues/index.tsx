@@ -109,8 +109,14 @@ function QueuesPage() {
       setDescription("");
       setLabelsText("");
       setExtraJsonText("{}");
-    } catch (e: any) {
-      setFormError(e?.message || "Failed to create queue.");
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Failed to create queue.";
+      setFormError(message);
     }
   };
 

@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { QueryError } from "@/components/ui/query-error";
 import { Textarea } from "@/components/ui/textarea";
+import type { Namespace } from "@/gen/namespace_pb";
 import {
   useCreateNamespace,
   useDisableNamespace,
@@ -93,7 +94,7 @@ function NamespacesPage() {
     }
   };
 
-  const openEditDialog = (ns: any) => {
+  const openEditDialog = (ns: Namespace) => {
     setEditingNamespace({
       id: ns.id,
       namespace: ns.namespace,

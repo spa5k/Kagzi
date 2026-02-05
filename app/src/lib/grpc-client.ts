@@ -30,13 +30,7 @@ const loggingInterceptor: Interceptor = (next) => async (req) => {
  * Error handling interceptor
  */
 const errorInterceptor: Interceptor = (next) => async (req) => {
-  try {
-    return await next(req);
-  } catch (error) {
-    // You can add custom error handling here
-    // e.g., toast notifications, error tracking, etc.
-    throw error;
-  }
+  return await next(req);
 };
 
 /**

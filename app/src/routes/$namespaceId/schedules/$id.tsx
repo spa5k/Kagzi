@@ -619,7 +619,9 @@ function CodeBlock({ data }: { data?: string | Uint8Array }) {
   } catch {
     try {
       content = JSON.stringify(JSON.parse(dataStr), null, 2);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
 
   return <pre className="text-foreground/80">{content}</pre>;

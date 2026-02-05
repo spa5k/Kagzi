@@ -45,7 +45,7 @@ export function NamespaceSwitcher() {
       // Replace the namespace but keep the rest of the path
       // e.g., /default/workflows/abc -> /production/workflows/abc
       const newPath = "/" + [newNamespaceId, ...pathParts.slice(1)].join("/");
-      await navigate({ to: newPath as any });
+      await navigate({ to: newPath as never });
     } else {
       // If we're at root or just namespace level, go to namespace dashboard
       await navigate({

@@ -396,10 +396,6 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         let namespace = require_non_empty(req.namespace, "namespace")?;
         let task_queue = require_non_empty(req.task_queue, "task_queue")?;
 
-        if req.workflow_types.is_empty() {
-            return Err(invalid_argument_error("workflow_types cannot be empty"));
-        }
-
         let worker = self
             .store
             .workers()
@@ -430,12 +426,16 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         // Server-authoritative workflow type filtering:
         // treat request workflow_types as a requested subset, then intersect with the worker's registered types.
-        let effective_types: Vec<String> = worker
-            .workflow_types
-            .iter()
-            .filter(|t| req.workflow_types.iter().any(|r| r == *t))
-            .cloned()
-            .collect();
+        let effective_types: Vec<String> = if req.workflow_types.is_empty() {
+            worker.workflow_types.clone()
+        } else {
+            worker
+                .workflow_types
+                .iter()
+                .filter(|t| req.workflow_types.iter().any(|r| r == *t))
+                .cloned()
+                .collect()
+        };
 
         if effective_types.is_empty() {
             return Err(precondition_failed_error(
