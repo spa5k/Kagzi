@@ -22,16 +22,15 @@ pub struct TaskQueueRow {
 
 fn json_object_to_string_map(value: Value) -> Result<HashMap<String, String>, tonic::Status> {
     match value {
-        Value::Object(map) => {
-            let mut out = HashMap::with_capacity(map.len());
-            for (k, v) in map {
+        Value::Object(map) => map
+            .into_iter()
+            .map(|(k, v)| {
                 let s = v.as_str().ok_or_else(|| {
                     invalid_argument_error("labels must be a JSON object with string values")
                 })?;
-                out.insert(k, s.to_string());
-            }
-            Ok(out)
-        }
+                Ok((k, s.to_string()))
+            })
+            .collect(),
         Value::Null => Ok(HashMap::new()),
         _ => Err(invalid_argument_error(
             "labels must be a JSON object with string values",
@@ -156,7 +155,8 @@ pub async fn list_task_queues(
     page_size: i32,
     cursor: Option<String>,
 ) -> Result<(Vec<TaskQueueRow>, Option<String>, bool), tonic::Status> {
-    let limit = page_size.clamp(1, 200) as i64;
+    let page_size = page_size.clamp(1, 200) as i64;
+    let limit = page_size + 1;
 
     let rows = if let Some(cur) = cursor {
         sqlx::query(
@@ -191,10 +191,10 @@ pub async fn list_task_queues(
         .map_err(|e| internal_error(format!("Failed to list queues: {e}")))?
     };
 
-    let has_more = rows.len() == limit as usize;
-    let mut items = Vec::with_capacity(rows.len());
+    let has_more = rows.len() as i64 > page_size;
+    let mut items = Vec::with_capacity(rows.len().min(page_size as usize));
     let mut next_cursor = None;
-    for r in rows {
+    for r in rows.into_iter().take(page_size as usize) {
         let item = row_to_task_queue_row(r)?;
         next_cursor = Some(item.task_queue.clone());
         items.push(item);
@@ -219,42 +219,28 @@ pub async fn update_task_queue(
     input: UpdateTaskQueueInput,
 ) -> Result<TaskQueueRow, tonic::Status> {
     let mut builder = sqlx::QueryBuilder::new("UPDATE kagzi.task_queues SET ");
-    let mut wrote_any = false;
-
-    let mut push_comma = |builder: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>| {
-        if wrote_any {
-            builder.push(", ");
-        } else {
-            wrote_any = true;
-        }
-    };
+    let mut set = builder.separated(", ");
 
     if let Some(v) = input.display_name {
-        push_comma(&mut builder);
-        builder.push("display_name = ").push_bind(v);
+        set.push("display_name = ").push_bind(v);
     }
     if let Some(v) = input.description {
-        push_comma(&mut builder);
-        builder.push("description = ").push_bind(v);
+        set.push("description = ").push_bind(v);
     }
     if let Some(v) = input.enabled {
-        push_comma(&mut builder);
-        builder.push("enabled = ").push_bind(v);
+        set.push("enabled = ").push_bind(v);
     }
     if let Some(v) = input.labels {
         let labels_json = serde_json::to_value(&v)
             .map_err(|e| internal_error(format!("Failed to serialize labels: {e}")))?;
-        push_comma(&mut builder);
-        builder.push("labels = ").push_bind(labels_json);
+        set.push("labels = ").push_bind(labels_json);
     }
     if let Some(bytes) = input.extra_json {
         let extra = parse_extra_json_bytes(&bytes)?;
-        push_comma(&mut builder);
-        builder.push("extra = ").push_bind(extra);
+        set.push("extra = ").push_bind(extra);
     }
 
-    push_comma(&mut builder);
-    builder.push("updated_at = NOW()");
+    set.push("updated_at = NOW()");
 
     builder
         .push(" WHERE namespace = ")

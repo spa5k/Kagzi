@@ -28,6 +28,11 @@ use crate::queue_store::ensure_task_queue_exists;
 use crate::telemetry::extract_context;
 use crate::telemetry_store;
 
+fn set_parent_from_metadata(metadata: &tonic::metadata::MetadataMap) {
+    let parent_cx = extract_context(metadata);
+    let _ = tracing::Span::current().set_parent(parent_cx);
+}
+
 pub struct WorkflowServiceImpl<Q: WorkSignalBus = kagzi_queue::PostgresNotifier> {
     pub store: PgStore,
     pub queue: Q,
@@ -40,6 +45,39 @@ impl<Q: WorkSignalBus> WorkflowServiceImpl<Q> {
             store,
             queue,
             telemetry_enabled,
+        }
+    }
+
+    async fn publish_wakeup(&self, namespace: &str, task_queue: &str) {
+        match self.queue.publish(namespace, task_queue).await {
+            Ok(_) => {
+                telemetry_store::record_queue_publish_result(
+                    &self.store,
+                    self.telemetry_enabled,
+                    namespace,
+                    task_queue,
+                    true,
+                    None,
+                )
+                .await;
+            }
+            Err(e) => {
+                telemetry_store::record_queue_publish_result(
+                    &self.store,
+                    self.telemetry_enabled,
+                    namespace,
+                    task_queue,
+                    false,
+                    Some(&format!("{e:?}")),
+                )
+                .await;
+                tracing::warn!(
+                    error = ?e,
+                    namespace = %namespace,
+                    task_queue = %task_queue,
+                    "Failed to publish work wakeup"
+                );
+            }
         }
     }
 }
@@ -58,9 +96,7 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         &self,
         request: Request<StartWorkflowRequest>,
     ) -> Result<Response<StartWorkflowResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
-        let parent_cx = extract_context(request.metadata());
-        let _ = tracing::Span::current().set_parent(parent_cx);
+        set_parent_from_metadata(request.metadata());
 
         let req = request.into_inner();
         tracing::Span::current().record("workflow_type", &req.workflow_type);
@@ -93,9 +129,7 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
 
         let workflows = self.store.workflows();
 
-        // task_queue clone line removed - using task_queue.clone() in struct instead
-
-        let create_result = workflows
+        let (run_id, already_exists) = match workflows
             .create(CreateWorkflow {
                 run_id: Uuid::now_v7(),
                 external_id: external_id.clone(),
@@ -108,52 +142,22 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
                 cron_expr: None,
                 schedule_id: None,
             })
-            .await;
-
-        let (run_id, already_exists) = match create_result {
+            .await
+        {
             Ok(id) => (id, false),
-            Err(ref e) if e.is_unique_violation() => {
-                let existing_id = workflows
-                    .find_active_by_external_id(&namespace, &external_id)
-                    .await
-                    .map_err(map_store_error)?
-                    .ok_or_else(|| map_store_error(create_result.unwrap_err()))?;
-                (existing_id, true)
-            }
+            Err(e) if e.is_unique_violation() => match workflows
+                .find_active_by_external_id(&namespace, &external_id)
+                .await
+                .map_err(map_store_error)?
+            {
+                Some(existing_id) => (existing_id, true),
+                None => return Err(map_store_error(e)),
+            },
             Err(e) => return Err(map_store_error(e)),
         };
 
         if !already_exists {
-            match self.queue.publish(&namespace, &task_queue).await {
-                Ok(_) => {
-                    telemetry_store::record_queue_publish_result(
-                        &self.store,
-                        self.telemetry_enabled,
-                        &namespace,
-                        &task_queue,
-                        true,
-                        None,
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    telemetry_store::record_queue_publish_result(
-                        &self.store,
-                        self.telemetry_enabled,
-                        &namespace,
-                        &task_queue,
-                        false,
-                        Some(&format!("{e:?}")),
-                    )
-                    .await;
-                    tracing::warn!(
-                        error = ?e,
-                        namespace = %namespace,
-                        task_queue = %task_queue,
-                        "Failed to publish work wakeup"
-                    );
-                }
-            }
+            self.publish_wakeup(&namespace, &task_queue).await;
         }
 
         Ok(Response::new(StartWorkflowResponse {
@@ -226,18 +230,16 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             .map(WorkflowStatus::try_from)
             .transpose()
             .map_err(|_| invalid_argument_error("Invalid status_filter"))?
-            .map(workflow_status_to_string);
-
-        let filter_status_for_list = filter_status.clone();
-
-        let namespace_for_list = namespace.clone();
+            .and_then(|s| {
+                (s != WorkflowStatus::Unspecified).then_some(workflow_status_to_string(s))
+            });
 
         let result = self
             .store
             .workflows()
             .list(ListWorkflowsParams {
-                namespace: namespace_for_list,
-                filter_status: filter_status_for_list,
+                namespace: namespace.clone(),
+                filter_status: filter_status.clone(),
                 page_size,
                 cursor,
                 schedule_id: None,
@@ -397,12 +399,12 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         }
 
         // Create a new workflow run with the same input
-        let new_run_id = self
-            .store
+        let new_run_id = Uuid::now_v7();
+        self.store
             .workflows()
             .create(CreateWorkflow {
-                run_id: Uuid::now_v7(),
-                external_id: format!("retry-{}", workflow.external_id),
+                run_id: new_run_id,
+                external_id: format!("retry:{}:{new_run_id}", workflow.external_id),
                 task_queue: workflow.task_queue.clone(),
                 workflow_type: workflow.workflow_type.clone(),
                 input: workflow.input.clone(),
@@ -415,6 +417,8 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
             .await
             .map_err(map_store_error)?;
 
+        self.publish_wakeup(&namespace, &workflow.task_queue).await;
+
         Ok(Response::new(RetryWorkflowResponse {
             new_run_id: new_run_id.to_string(),
             already_running: false,
@@ -426,19 +430,52 @@ impl<Q: WorkSignalBus + 'static> WorkflowService for WorkflowServiceImpl<Q> {
         &self,
         request: Request<TerminateWorkflowRequest>,
     ) -> Result<Response<TerminateWorkflowResponse>, Status> {
+        set_parent_from_metadata(request.metadata());
+
         let req = request.into_inner();
         let run_id = uuid::Uuid::parse_str(&req.run_id)
             .map_err(|_| invalid_argument_error("Invalid run_id: must be a valid UUID"))?;
 
-        let _namespace = require_non_empty(req.namespace, "namespace")?;
-
+        let namespace = require_non_empty(req.namespace, "namespace")?;
         let workflows = self.store.workflows();
+
+        let exists = workflows
+            .check_exists(run_id, &namespace)
+            .await
+            .map_err(map_store_error)?;
+        if !exists.exists {
+            return Err(not_found_error(
+                format!(
+                    "Workflow not found: run_id={}, namespace={}",
+                    run_id, namespace
+                ),
+                "workflow",
+                run_id.to_string(),
+            ));
+        }
 
         // Fail the workflow with the termination reason
         workflows
             .fail(run_id, &req.reason)
             .await
             .map_err(map_store_error)?;
+
+        if let Err(err) = self
+            .store
+            .steps()
+            .record_lifecycle_event(
+                run_id,
+                kagzi_store::StepKind::WorkflowFailed,
+                Some(req.reason.clone().into_bytes()),
+            )
+            .await
+        {
+            warn!(
+                run_id = %run_id,
+                error = %err,
+                "Failed to record WorkflowFailed lifecycle event"
+            );
+        }
 
         Ok(Response::new(TerminateWorkflowResponse {
             terminated: true,

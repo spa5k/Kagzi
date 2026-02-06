@@ -389,11 +389,9 @@ impl TelemetryService for TelemetryServiceImpl {
             .await?;
 
         let max = self.max_events_per_report.max(1);
-        let (accepted_events, dropped) = if req.events.len() > max {
-            (req.events[..max].to_vec(), (req.events.len() - max) as u32)
-        } else {
-            (req.events, 0)
-        };
+        let accepted_len = req.events.len().min(max);
+        let dropped = (req.events.len() - accepted_len) as u32;
+        let accepted_events = &req.events[..accepted_len];
 
         let mut builder = QueryBuilder::new(
             "INSERT INTO kagzi.worker_telemetry_events (worker_id, namespace, task_queue, occurred_at, level, event_type, message, extra) ",
@@ -538,17 +536,6 @@ impl TelemetryService for TelemetryServiceImpl {
             .await
             .map_err(|e| map_store_error(e.into()))?;
 
-        if rows.is_empty() {
-            return Ok(Response::new(ListWorkerTelemetryStatesResponse {
-                snapshots: Vec::new(),
-                page: Some(PageInfo {
-                    next_page_token: "".to_string(),
-                    has_more: false,
-                    total_count: 0,
-                }),
-            }));
-        }
-
         let has_more = rows.len() as i64 > page_size;
         let mut snapshots = Vec::with_capacity(rows.len().min(page_size as usize));
         let mut next_cursor: Option<(chrono::DateTime<chrono::Utc>, Uuid)> = None;
@@ -654,6 +641,7 @@ impl TelemetryService for TelemetryServiceImpl {
         let has_more = rows.len() as i64 > page_size;
         let mut events = Vec::with_capacity(rows.len().min(page_size as usize));
         let mut next_cursor: Option<(chrono::DateTime<chrono::Utc>, Uuid)> = None;
+        let worker_id_str = worker_id.to_string();
         for row in rows.into_iter().take(page_size as usize) {
             let event_id: Uuid = row
                 .try_get("event_id")
@@ -677,19 +665,12 @@ impl TelemetryService for TelemetryServiceImpl {
                 .try_get("extra")
                 .map_err(|e| map_store_error(e.into()))?;
 
-            let level_i32 = match level.as_str() {
-                "debug" => TelemetryLevel::Debug as i32,
-                "warn" => TelemetryLevel::Warn as i32,
-                "error" => TelemetryLevel::Error as i32,
-                _ => TelemetryLevel::Info as i32,
-            };
-
             events.push(WorkerTelemetryEvent {
-                worker_id: worker_id.to_string(),
+                worker_id: worker_id_str.clone(),
                 namespace: namespace.clone(),
                 task_queue,
                 occurred_at: Some(timestamp_from(occurred_at)),
-                level: level_i32,
+                level: Self::level_from_str(&level),
                 event_type,
                 message,
                 extra_json: serde_json::to_vec(&extra).unwrap_or_default(),

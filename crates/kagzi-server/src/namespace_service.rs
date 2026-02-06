@@ -53,7 +53,7 @@ impl NamespaceService for NamespaceServiceImpl {
             .map_err(map_store_error)?;
 
         Ok(Response::new(CreateNamespaceResponse {
-            namespace: Some(namespace_to_proto(ns)?),
+            namespace: Some(namespace_to_proto(ns)),
         }))
     }
 
@@ -80,7 +80,7 @@ impl NamespaceService for NamespaceServiceImpl {
             })?;
 
         Ok(Response::new(GetNamespaceResponse {
-            namespace: Some(namespace_to_proto(ns)?),
+            namespace: Some(namespace_to_proto(ns)),
         }))
     }
 
@@ -108,13 +108,10 @@ impl NamespaceService for NamespaceServiceImpl {
             .await
             .map_err(map_store_error)?;
 
-        let namespaces: Result<Vec<ProtoNamespace>, Status> =
-            result.items.into_iter().map(namespace_to_proto).collect();
-
         let next_page_token = result.next_cursor.unwrap_or_default();
 
         Ok(Response::new(ListNamespacesResponse {
-            namespaces: namespaces?,
+            namespaces: result.items.into_iter().map(namespace_to_proto).collect(),
             page: Some(kagzi_proto::kagzi::PageInfo {
                 next_page_token,
                 has_more: result.has_more,
@@ -144,7 +141,7 @@ impl NamespaceService for NamespaceServiceImpl {
             .map_err(map_store_error)?;
 
         Ok(Response::new(UpdateNamespaceResponse {
-            namespace: Some(namespace_to_proto(ns)?),
+            namespace: Some(namespace_to_proto(ns)),
         }))
     }
 
@@ -171,7 +168,7 @@ impl NamespaceService for NamespaceServiceImpl {
             .ok_or_else(|| not_found_error("Namespace not found", "namespace", &namespace))?;
 
         Ok(Response::new(EnableNamespaceResponse {
-            namespace: Some(namespace_to_proto(ns)?),
+            namespace: Some(namespace_to_proto(ns)),
         }))
     }
 
@@ -198,14 +195,14 @@ impl NamespaceService for NamespaceServiceImpl {
             .ok_or_else(|| not_found_error("Namespace not found", "namespace", &namespace))?;
 
         Ok(Response::new(DisableNamespaceResponse {
-            namespace: Some(namespace_to_proto(ns)?),
+            namespace: Some(namespace_to_proto(ns)),
         }))
     }
 }
 
 /// Convert store Namespace model to proto Namespace
-fn namespace_to_proto(namespace: kagzi_store::models::Namespace) -> Result<ProtoNamespace, Status> {
-    Ok(ProtoNamespace {
+fn namespace_to_proto(namespace: kagzi_store::models::Namespace) -> ProtoNamespace {
+    ProtoNamespace {
         id: namespace.id.to_string(),
         namespace: namespace.namespace,
         display_name: namespace.display_name,
@@ -213,5 +210,5 @@ fn namespace_to_proto(namespace: kagzi_store::models::Namespace) -> Result<Proto
         enabled: namespace.enabled,
         created_at: Some(timestamp_from(namespace.created_at)),
         updated_at: Some(timestamp_from(namespace.updated_at)),
-    })
+    }
 }

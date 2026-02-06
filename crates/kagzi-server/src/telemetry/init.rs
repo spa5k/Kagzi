@@ -47,6 +47,15 @@ impl Drop for TelemetryGuard {
 /// Returns a guard that should be kept alive for the duration of the program.
 /// When dropped, it will flush and shutdown all telemetry providers.
 pub fn init_telemetry(settings: &TelemetrySettings) -> anyhow::Result<TelemetryGuard> {
+    macro_rules! init_with_fmt {
+        ($registry:expr) => {
+            match settings.log_format.as_str() {
+                "json" => $registry.with(fmt::layer().json()).init(),
+                _ => $registry.with(fmt::layer()).init(),
+            }
+        };
+    }
+
     let resource = Resource::builder()
         .with_service_name(settings.service_name.clone())
         .with_attribute(KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")))
@@ -69,22 +78,11 @@ pub fn init_telemetry(settings: &TelemetrySettings) -> anyhow::Result<TelemetryG
 
         let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-        match settings.log_format.as_str() {
-            "json" => {
-                tracing_subscriber::registry()
-                    .with(env_filter)
-                    .with(otel_layer)
-                    .with(fmt::layer().json())
-                    .init();
-            }
-            _ => {
-                tracing_subscriber::registry()
-                    .with(env_filter)
-                    .with(otel_layer)
-                    .with(fmt::layer())
-                    .init();
-            }
-        }
+        init_with_fmt!(
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(otel_layer)
+        );
 
         tracing::info!(
             service.name = %settings.service_name,
@@ -97,20 +95,7 @@ pub fn init_telemetry(settings: &TelemetrySettings) -> anyhow::Result<TelemetryG
             meter_provider: Some(meter_provider),
         })
     } else {
-        match settings.log_format.as_str() {
-            "json" => {
-                tracing_subscriber::registry()
-                    .with(env_filter)
-                    .with(fmt::layer().json())
-                    .init();
-            }
-            _ => {
-                tracing_subscriber::registry()
-                    .with(env_filter)
-                    .with(fmt::layer())
-                    .init();
-            }
-        }
+        init_with_fmt!(tracing_subscriber::registry().with(env_filter));
 
         tracing::info!(
             otel.enabled = false,

@@ -36,6 +36,11 @@ use crate::telemetry::extract_context;
 const MAX_QUEUE_CONCURRENCY: i32 = 10_000;
 const MAX_TYPE_CONCURRENCY: i32 = 10_000;
 
+fn set_parent_from_metadata(metadata: &tonic::metadata::MetadataMap) {
+    let parent_cx = extract_context(metadata);
+    let _ = tracing::Span::current().set_parent(parent_cx);
+}
+
 fn normalize_limit(raw: i32, max_allowed: i32) -> Option<i32> {
     if raw <= 0 {
         None
@@ -68,6 +73,98 @@ impl<Q: WorkSignalBus> WorkerServiceImpl<Q> {
             queue,
             subscribe_work_enabled,
         }
+    }
+
+    async fn require_active_worker(
+        &self,
+        worker_id: Uuid,
+        namespace: &str,
+        task_queue: &str,
+    ) -> Result<kagzi_store::Worker, Status> {
+        let worker = self
+            .store
+            .workers()
+            .find_by_id(worker_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| {
+                precondition_failed_error("Worker not registered or offline. Call Register first.")
+            })?;
+
+        if worker.namespace != namespace || worker.task_queue != task_queue {
+            return Err(precondition_failed_error(
+                "Worker not registered for the requested namespace/task_queue",
+            ));
+        }
+
+        match worker.status {
+            StoreWorkerStatus::Online => Ok(worker),
+            StoreWorkerStatus::Offline => Err(precondition_failed_error(
+                "Worker not registered or offline. Call Register first.",
+            )),
+            StoreWorkerStatus::Draining => Err(precondition_failed_error(
+                "Worker is draining and not accepting new work",
+            )),
+        }
+    }
+
+    fn effective_workflow_types(
+        worker: &kagzi_store::Worker,
+        requested: &[String],
+    ) -> Result<Vec<String>, Status> {
+        // Server-authoritative workflow type filtering:
+        // treat request workflow_types as a requested subset, then intersect with the worker's registered types.
+        let effective_types: Vec<String> = if requested.is_empty() {
+            worker.workflow_types.clone()
+        } else {
+            worker
+                .workflow_types
+                .iter()
+                .filter(|t| requested.iter().any(|r| r == *t))
+                .cloned()
+                .collect()
+        };
+
+        if effective_types.is_empty() {
+            Err(precondition_failed_error(
+                "Worker is not registered for the requested workflow types",
+            ))
+        } else {
+            Ok(effective_types)
+        }
+    }
+
+    async fn record_claim_outcome(
+        &self,
+        worker_id: Uuid,
+        namespace: &str,
+        task_queue: &str,
+        result: &'static str,
+        error: &str,
+    ) {
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO kagzi.worker_telemetry_state (
+                worker_id, namespace, task_queue, updated_at,
+                last_claim_at, last_claim_result, last_claim_error
+            )
+            VALUES ($1, $2, $3, NOW(), NOW(), $4, $5)
+            ON CONFLICT (worker_id) DO UPDATE SET
+                namespace = EXCLUDED.namespace,
+                task_queue = EXCLUDED.task_queue,
+                updated_at = NOW(),
+                last_claim_at = NOW(),
+                last_claim_result = EXCLUDED.last_claim_result,
+                last_claim_error = EXCLUDED.last_claim_error
+            "#,
+        )
+        .bind(worker_id)
+        .bind(namespace)
+        .bind(task_queue)
+        .bind(result)
+        .bind(error)
+        .execute(self.store.pool())
+        .await;
     }
 
     async fn validate_workflow_action(
@@ -302,45 +399,11 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         let task_queue = require_non_empty(req.task_queue, "task_queue")?;
 
         let worker = self
-            .store
-            .workers()
-            .find_by_id(worker_id)
-            .await
-            .map_err(map_store_error)?
-            .ok_or_else(|| {
-                precondition_failed_error("Worker not registered or offline. Call Register first.")
-            })?;
-
-        if worker.namespace != namespace || worker.task_queue != task_queue {
-            return Err(precondition_failed_error(
-                "Worker not registered for the requested namespace/task_queue",
-            ));
-        }
-
-        if worker.status == StoreWorkerStatus::Offline {
-            return Err(precondition_failed_error(
-                "Worker not registered or offline. Call Register first.",
-            ));
-        }
-
-        if worker.status == StoreWorkerStatus::Draining {
-            return Err(precondition_failed_error(
-                "Worker is draining and not accepting new work",
-            ));
-        }
+            .require_active_worker(worker_id, &namespace, &task_queue)
+            .await?;
 
         if !req.workflow_types.is_empty() {
-            let effective_types: Vec<String> = worker
-                .workflow_types
-                .iter()
-                .filter(|t| req.workflow_types.iter().any(|r| r == *t))
-                .cloned()
-                .collect();
-            if effective_types.is_empty() {
-                return Err(precondition_failed_error(
-                    "Worker is not registered for the requested workflow types",
-                ));
-            }
+            let _ = Self::effective_workflow_types(&worker, &req.workflow_types)?;
         }
 
         let mut rx = self.queue.subscribe(&namespace, &task_queue);
@@ -397,51 +460,9 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         let task_queue = require_non_empty(req.task_queue, "task_queue")?;
 
         let worker = self
-            .store
-            .workers()
-            .find_by_id(worker_id)
-            .await
-            .map_err(map_store_error)?
-            .ok_or_else(|| {
-                precondition_failed_error("Worker not registered or offline. Call Register first.")
-            })?;
-
-        if worker.namespace != namespace || worker.task_queue != task_queue {
-            return Err(precondition_failed_error(
-                "Worker not registered for the requested namespace/task_queue",
-            ));
-        }
-
-        if worker.status == StoreWorkerStatus::Offline {
-            return Err(precondition_failed_error(
-                "Worker not registered or offline. Call Register first.",
-            ));
-        }
-
-        if worker.status == StoreWorkerStatus::Draining {
-            return Err(precondition_failed_error(
-                "Worker is draining and not accepting new work",
-            ));
-        }
-
-        // Server-authoritative workflow type filtering:
-        // treat request workflow_types as a requested subset, then intersect with the worker's registered types.
-        let effective_types: Vec<String> = if req.workflow_types.is_empty() {
-            worker.workflow_types.clone()
-        } else {
-            worker
-                .workflow_types
-                .iter()
-                .filter(|t| req.workflow_types.iter().any(|r| r == *t))
-                .cloned()
-                .collect()
-        };
-
-        if effective_types.is_empty() {
-            return Err(precondition_failed_error(
-                "Worker is not registered for the requested workflow types",
-            ));
-        }
+            .require_active_worker(worker_id, &namespace, &task_queue)
+            .await?;
+        let effective_types = Self::effective_workflow_types(&worker, &req.workflow_types)?;
 
         let work_item = self
             .store
@@ -458,27 +479,8 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
 
         let Some(work_item) = work_item else {
             // Best-effort: record server-derived claim outcome for UI.
-            let _ = sqlx::query(
-                r#"
-                INSERT INTO kagzi.worker_telemetry_state (
-                    worker_id, namespace, task_queue, updated_at,
-                    last_claim_at, last_claim_result, last_claim_error
-                )
-                VALUES ($1, $2, $3, NOW(), NOW(), 'no_task', '')
-                ON CONFLICT (worker_id) DO UPDATE SET
-                    namespace = EXCLUDED.namespace,
-                    task_queue = EXCLUDED.task_queue,
-                    updated_at = NOW(),
-                    last_claim_at = NOW(),
-                    last_claim_result = 'no_task',
-                    last_claim_error = ''
-                "#,
-            )
-            .bind(worker_id)
-            .bind(&namespace)
-            .bind(&task_queue)
-            .execute(self.store.pool())
-            .await;
+            self.record_claim_outcome(worker_id, &namespace, &task_queue, "no_task", "")
+                .await;
 
             return Ok(Response::new(ClaimTaskResponse {
                 result: Some(kagzi_proto::kagzi::claim_task_response::Result::NoTask(
@@ -488,27 +490,8 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         };
 
         // Best-effort: record server-derived claim outcome for UI.
-        let _ = sqlx::query(
-            r#"
-            INSERT INTO kagzi.worker_telemetry_state (
-                worker_id, namespace, task_queue, updated_at,
-                last_claim_at, last_claim_result, last_claim_error
-            )
-            VALUES ($1, $2, $3, NOW(), NOW(), 'task', '')
-            ON CONFLICT (worker_id) DO UPDATE SET
-                namespace = EXCLUDED.namespace,
-                task_queue = EXCLUDED.task_queue,
-                updated_at = NOW(),
-                last_claim_at = NOW(),
-                last_claim_result = 'task',
-                last_claim_error = ''
-            "#,
-        )
-        .bind(worker_id)
-        .bind(&namespace)
-        .bind(&task_queue)
-        .execute(self.store.pool())
-        .await;
+        self.record_claim_outcome(worker_id, &namespace, &task_queue, "task", "")
+            .await;
 
         let _ = self.complete_pending_sleep_steps(work_item.run_id).await;
 
@@ -560,9 +543,7 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<BeginStepRequest>,
     ) -> Result<Response<BeginStepResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
-        let parent_cx = extract_context(request.metadata());
-        let _ = tracing::Span::current().set_parent(parent_cx);
+        set_parent_from_metadata(request.metadata());
 
         let req = request.into_inner();
 
@@ -622,8 +603,7 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteStepRequest>,
     ) -> Result<Response<CompleteStepResponse>, Status> {
-        let parent_cx = extract_context(request.metadata());
-        let _ = tracing::Span::current().set_parent(parent_cx);
+        set_parent_from_metadata(request.metadata());
 
         let req = request.into_inner();
 
@@ -676,8 +656,7 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<FailStepRequest>,
     ) -> Result<Response<FailStepResponse>, Status> {
-        let parent_cx = extract_context(request.metadata());
-        let _ = tracing::Span::current().set_parent(parent_cx);
+        set_parent_from_metadata(request.metadata());
 
         let req = request.into_inner();
 
@@ -728,8 +707,7 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<CompleteWorkflowRequest>,
     ) -> Result<Response<CompleteWorkflowResponse>, Status> {
-        let parent_cx = extract_context(request.metadata());
-        let _ = tracing::Span::current().set_parent(parent_cx);
+        set_parent_from_metadata(request.metadata());
 
         let req = request.into_inner();
 
@@ -775,9 +753,7 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<FailWorkflowRequest>,
     ) -> Result<Response<FailWorkflowResponse>, Status> {
-        // Extract parent trace context and set it as the parent of current span
-        let parent_cx = extract_context(request.metadata());
-        let _ = tracing::Span::current().set_parent(parent_cx);
+        set_parent_from_metadata(request.metadata());
 
         let req = request.into_inner();
 
@@ -830,8 +806,7 @@ impl<Q: WorkSignalBus + 'static> WorkerService for WorkerServiceImpl<Q> {
         &self,
         request: Request<SleepRequest>,
     ) -> Result<Response<SleepResponse>, Status> {
-        let parent_cx = extract_context(request.metadata());
-        let _ = tracing::Span::current().set_parent(parent_cx);
+        set_parent_from_metadata(request.metadata());
 
         let req = request.into_inner();
 

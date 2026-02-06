@@ -188,75 +188,54 @@ pub fn normalize_page_size(requested: i32, default: i32, max: i32) -> i32 {
     }
 }
 
-pub fn encode_cursor(timestamp_ms: i64, id: &uuid::Uuid) -> String {
+fn encode_cursor_inner(key: impl std::fmt::Display, timestamp_ms: i64) -> String {
     use base64::Engine;
-    let cursor_str = format!("{}:{}", timestamp_ms, id);
+    let cursor_str = format!("{timestamp_ms}:{key}");
     base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
 }
 
-pub fn decode_cursor(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, uuid::Uuid), Status> {
-    use base64::Engine;
-    use chrono::TimeZone;
-
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(token)
-        .map_err(|_| invalid_argument_error("Invalid page_token"))?;
-
-    let token_str =
-        std::str::from_utf8(&decoded).map_err(|_| invalid_argument_error("Invalid page_token"))?;
-
-    let mut parts = token_str.splitn(2, ':');
-    let created_at_ms = parts
-        .next()
-        .and_then(|p| p.parse::<i64>().ok())
-        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-    let id_str = parts
-        .next()
-        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-
-    let created_at = chrono::Utc
-        .timestamp_millis_opt(created_at_ms)
-        .single()
-        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-    let id =
-        uuid::Uuid::parse_str(id_str).map_err(|_| invalid_argument_error("Invalid page_token"))?;
-
-    Ok((created_at, id))
+pub fn encode_cursor(timestamp_ms: i64, id: &uuid::Uuid) -> String {
+    encode_cursor_inner(id, timestamp_ms)
 }
 
 pub fn encode_cursor_str(timestamp_ms: i64, key: &str) -> String {
-    use base64::Engine;
-    let cursor_str = format!("{}:{}", timestamp_ms, key);
-    base64::engine::general_purpose::STANDARD.encode(cursor_str.as_bytes())
+    encode_cursor_inner(key, timestamp_ms)
 }
 
-pub fn decode_cursor_str(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), Status> {
+fn invalid_page_token() -> Status {
+    invalid_argument_error("Invalid page_token")
+}
+
+fn decode_cursor_parts(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), Status> {
     use base64::Engine;
     use chrono::TimeZone;
 
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(token)
-        .map_err(|_| invalid_argument_error("Invalid page_token"))?;
+        .map_err(|_| invalid_page_token())?;
 
-    let token_str =
-        std::str::from_utf8(&decoded).map_err(|_| invalid_argument_error("Invalid page_token"))?;
-
-    let mut parts = token_str.splitn(2, ':');
-    let created_at_ms = parts
-        .next()
-        .and_then(|p| p.parse::<i64>().ok())
-        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
-    let key = parts
-        .next()
-        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?
-        .to_string();
+    let token_str = std::str::from_utf8(&decoded).map_err(|_| invalid_page_token())?;
+    let (created_at_ms, rest) = token_str.split_once(':').ok_or_else(invalid_page_token)?;
+    let created_at_ms = created_at_ms
+        .parse::<i64>()
+        .map_err(|_| invalid_page_token())?;
 
     let created_at = chrono::Utc
         .timestamp_millis_opt(created_at_ms)
         .single()
-        .ok_or_else(|| invalid_argument_error("Invalid page_token"))?;
+        .ok_or_else(invalid_page_token)?;
 
-    Ok((created_at, key))
+    Ok((created_at, rest.to_string()))
+}
+
+pub fn decode_cursor(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, uuid::Uuid), Status> {
+    let (created_at, id_str) = decode_cursor_parts(token)?;
+    let id = uuid::Uuid::parse_str(&id_str).map_err(|_| invalid_page_token())?;
+    Ok((created_at, id))
+}
+
+pub fn decode_cursor_str(token: &str) -> Result<(chrono::DateTime<chrono::Utc>, String), Status> {
+    decode_cursor_parts(token)
 }
 
 pub fn parse_uuid(s: &str) -> Result<uuid::Uuid, Status> {

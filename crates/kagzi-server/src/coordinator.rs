@@ -64,6 +64,27 @@ impl PublishDebouncer {
     }
 }
 
+async fn record_queue_notify(
+    store: &PgStore,
+    telemetry_enabled: bool,
+    namespace: &str,
+    task_queue: &str,
+    ok: bool,
+    error: Option<&str>,
+) {
+    telemetry_store::record_queue_publish_result(
+        store,
+        telemetry_enabled,
+        namespace,
+        task_queue,
+        ok,
+        error,
+    )
+    .await;
+    telemetry_store::touch_queue_due_work_notified(store, telemetry_enabled, namespace, task_queue)
+        .await;
+}
+
 /// Run the coordinator loop.
 ///
 /// This is a single background task that replaces the separate scheduler and watchdog tasks.
@@ -230,7 +251,7 @@ async fn notify_due_work<Q: WorkSignalBus>(
 
         match queue.publish(&namespace, &task_queue).await {
             Ok(_) => {
-                telemetry_store::record_queue_publish_result(
+                record_queue_notify(
                     store,
                     telemetry_enabled,
                     &namespace,
@@ -238,30 +259,17 @@ async fn notify_due_work<Q: WorkSignalBus>(
                     true,
                     None,
                 )
-                .await;
-                telemetry_store::touch_queue_due_work_notified(
-                    store,
-                    telemetry_enabled,
-                    &namespace,
-                    &task_queue,
-                )
-                .await;
+                .await
             }
             Err(e) => {
-                telemetry_store::record_queue_publish_result(
+                let err = format!("{e:?}");
+                record_queue_notify(
                     store,
                     telemetry_enabled,
                     &namespace,
                     &task_queue,
                     false,
-                    Some(&format!("{e:?}")),
-                )
-                .await;
-                telemetry_store::touch_queue_due_work_notified(
-                    store,
-                    telemetry_enabled,
-                    &namespace,
-                    &task_queue,
+                    Some(&err),
                 )
                 .await;
                 error!(
@@ -405,7 +413,7 @@ async fn fire_due_schedules<Q: WorkSignalBus>(
                         .await
                     {
                         Ok(_) => {
-                            telemetry_store::record_queue_publish_result(
+                            record_queue_notify(
                                 store,
                                 telemetry_enabled,
                                 &template.namespace,
@@ -414,29 +422,16 @@ async fn fire_due_schedules<Q: WorkSignalBus>(
                                 None,
                             )
                             .await;
-                            telemetry_store::touch_queue_due_work_notified(
-                                store,
-                                telemetry_enabled,
-                                &template.namespace,
-                                &template.task_queue,
-                            )
-                            .await;
                         }
                         Err(e) => {
-                            telemetry_store::record_queue_publish_result(
+                            let err = format!("{e:?}");
+                            record_queue_notify(
                                 store,
                                 telemetry_enabled,
                                 &template.namespace,
                                 &template.task_queue,
                                 false,
-                                Some(&format!("{e:?}")),
-                            )
-                            .await;
-                            telemetry_store::touch_queue_due_work_notified(
-                                store,
-                                telemetry_enabled,
-                                &template.namespace,
-                                &template.task_queue,
+                                Some(&err),
                             )
                             .await;
                             error!(

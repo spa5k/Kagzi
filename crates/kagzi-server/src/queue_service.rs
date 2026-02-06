@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use kagzi_proto::kagzi::queue_service_server::QueueService;
 use kagzi_proto::kagzi::{
     CreateQueueRequest, CreateQueueResponse, GetQueueRequest, GetQueueResponse, ListQueuesRequest,
@@ -84,8 +82,6 @@ impl QueueService for QueueServiceImpl {
         let enabled = req.enabled.unwrap_or(true);
         let display_name = req.display_name.filter(|s| !s.trim().is_empty());
         let description = req.description.filter(|s| !s.trim().is_empty());
-        let labels: HashMap<String, String> = req.labels;
-        let extra_json = req.extra_json;
 
         let row = queue_store::create_task_queue(
             &self.store,
@@ -94,8 +90,8 @@ impl QueueService for QueueServiceImpl {
             queue_store::CreateTaskQueueInput {
                 display_name,
                 description,
-                labels,
-                extra_json,
+                labels: req.labels,
+                extra_json: req.extra_json,
                 enabled,
             },
         )
@@ -170,7 +166,7 @@ impl QueueService for QueueServiceImpl {
         let enabled = req.enabled;
 
         // Proto map cannot be optional; treat empty map as "leave unchanged".
-        let labels = (!req.labels.is_empty()).then_some(req.labels as HashMap<String, String>);
+        let labels = (!req.labels.is_empty()).then_some(req.labels);
 
         let row = queue_store::update_task_queue(
             &self.store,

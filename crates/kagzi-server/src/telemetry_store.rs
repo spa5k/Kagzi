@@ -5,6 +5,10 @@ use uuid::Uuid;
 
 use crate::queue_store::ensure_task_queue_exists;
 
+async fn ensure_queue_best_effort(store: &PgStore, namespace: &str, task_queue: &str) {
+    let _ = ensure_task_queue_exists(store, namespace, task_queue).await;
+}
+
 pub async fn record_server_event(
     store: &PgStore,
     enabled: bool,
@@ -49,12 +53,13 @@ pub async fn record_queue_publish_result(
         return;
     }
 
-    let _ = ensure_task_queue_exists(store, namespace, task_queue).await;
+    ensure_queue_best_effort(store, namespace, task_queue).await;
 
     let error_message = error_message.unwrap_or("");
     let publish_errors_inc: i64 = if ok { 0 } else { 1 };
-    let last_ok_at = ok.then_some(chrono::Utc::now());
-    let last_err_at = (!ok).then_some(chrono::Utc::now());
+    let now = chrono::Utc::now();
+    let last_ok_at = ok.then_some(now);
+    let last_err_at = (!ok).then_some(now);
 
     // Best-effort; do not fail correctness path.
     let _ = sqlx::query(
@@ -94,7 +99,7 @@ pub async fn touch_queue_due_work_notified(
     if !enabled {
         return;
     }
-    let _ = ensure_task_queue_exists(store, namespace, task_queue).await;
+    ensure_queue_best_effort(store, namespace, task_queue).await;
     let _ = sqlx::query(
         r#"
         INSERT INTO kagzi.queue_telemetry_state (namespace, task_queue, updated_at, last_due_work_notified_at)
@@ -125,7 +130,7 @@ pub async fn upsert_queue_depths(
     }
 
     for r in &rows {
-        let _ = ensure_task_queue_exists(store, namespace, &r.task_queue).await;
+        ensure_queue_best_effort(store, namespace, &r.task_queue).await;
     }
 
     let notified_at = last_due_work_notified_at;
@@ -209,20 +214,31 @@ pub async fn refresh_worker_active_counts(
         return Ok(());
     }
 
+    let values: Vec<(Uuid, i64)> = rows
+        .iter()
+        .filter_map(|r| {
+            let locked_by: String = r.try_get("locked_by").ok()?;
+            let count: i64 = r.try_get::<i64, _>("count").ok().unwrap_or(0);
+            let worker_id = Uuid::parse_str(&locked_by).ok()?;
+            Some((worker_id, count))
+        })
+        .collect();
+
+    if values.is_empty() {
+        return Ok(());
+    }
+
     let mut builder = QueryBuilder::new(
         "UPDATE kagzi.worker_telemetry_state AS s SET active_workflows_authoritative = v.count FROM (VALUES ",
     );
-    builder.push_values(rows.iter(), |mut b, r| {
-        let locked_by: String = r.try_get("locked_by").unwrap_or_default();
-        let count: i64 = r.try_get::<i64, _>("count").unwrap_or(0);
-        let worker_id = Uuid::parse_str(&locked_by).unwrap_or_else(|_| Uuid::nil());
+    builder.push_values(values.iter(), |mut b, (worker_id, count)| {
         b.push_bind(worker_id).push_bind(count);
     });
-    builder.push(") AS v(worker_id, count) WHERE s.worker_id = v.worker_id AND v.worker_id <> '00000000-0000-0000-0000-000000000000'::uuid");
+    builder.push(") AS v(worker_id, count) WHERE s.worker_id = v.worker_id");
     builder.build().execute(store.pool()).await?;
 
     info!(
-        workers = rows.len(),
+        workers = values.len(),
         "Refreshed authoritative worker active counts"
     );
     Ok(())

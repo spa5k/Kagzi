@@ -765,6 +765,8 @@ pub(super) async fn update(
     run_id: Uuid,
     workflow: WorkflowRun,
 ) -> Result<(), StoreError> {
+    let mut tx = repo.pool.begin().await?;
+
     sqlx::query!(
         r#"
         UPDATE kagzi.workflow_runs
@@ -773,7 +775,10 @@ pub(super) async fn update(
             cron_expr = $4,
             schedule_id = $5,
             max_catchup = $6,
-            last_fired_at = $7
+            last_fired_at = $7,
+            task_queue = $8,
+            workflow_type = $9,
+            version = $10
         WHERE run_id = $1
         "#,
         run_id,
@@ -782,10 +787,28 @@ pub(super) async fn update(
         workflow.cron_expr,
         workflow.schedule_id,
         workflow.max_catchup,
-        workflow.last_fired_at
+        workflow.last_fired_at,
+        workflow.task_queue,
+        workflow.workflow_type,
+        workflow.version
     )
-    .execute(&repo.pool)
+    .execute(&mut *tx)
     .await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE kagzi.workflow_payloads
+        SET input = $2, output = $3
+        WHERE run_id = $1
+        "#,
+        run_id,
+        workflow.input,
+        workflow.output
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     Ok(())
 }

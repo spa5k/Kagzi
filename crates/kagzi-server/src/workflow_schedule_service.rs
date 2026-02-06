@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use chrono::TimeZone;
 use chrono::Utc;
 use kagzi_proto::kagzi::workflow_schedule_service_server::WorkflowScheduleService;
 use kagzi_proto::kagzi::{
@@ -30,11 +31,11 @@ fn parse_cron_expr(expr: &str) -> Result<cron::Schedule, Status> {
     }
 
     // Validate format: must be 6 fields (second minute hour day month weekday)
-    let fields: Vec<&str> = expr.split_whitespace().collect();
-    if fields.len() != 6 {
+    let field_count = expr.split_whitespace().count();
+    if field_count != 6 {
         return Err(invalid_argument_error(format!(
             "Invalid cron format: expected 6 fields (second minute hour day month weekday), got {}. Example: '0 */5 * * * *' (every 5 minutes)",
-            fields.len()
+            field_count
         )));
     }
 
@@ -317,6 +318,7 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
             .map_err(|_| invalid_argument_error("Invalid schedule_id"))?;
 
         let namespace = require_non_empty(req.namespace, "namespace")?;
+        let next_fire_at = req.next_fire_at;
 
         let current = self
             .store
@@ -328,50 +330,64 @@ impl WorkflowScheduleService for WorkflowScheduleServiceImpl {
                 not_found_error("Schedule not found", "schedule", req.schedule_id.clone())
             })?;
 
-        let cron_expr = req.cron_expr.clone();
-        let parsed_cron = if let Some(ref expr) = cron_expr {
-            Some(parse_cron_expr(expr)?)
-        } else {
-            None
-        };
+        let mut wf = current.clone();
 
-        // Validate cron if provided but we'll recalculate next_fire when enabling
-        if let Some(ref cron) = parsed_cron {
-            cron.after(&Utc::now()).next().ok_or_else(|| {
-                invalid_argument_error("Cron expression has no future occurrences")
-            })?;
+        if let Some(task_queue) = req.task_queue {
+            let task_queue = resolve_task_queue(Some(task_queue));
+            let _ = ensure_task_queue_exists(&self.store, &namespace, &task_queue).await;
+            wf.task_queue = task_queue;
         }
 
-        let new_status = match req.enabled {
-            Some(true) => Some(kagzi_store::WorkflowStatus::Scheduled),
-            Some(false) => Some(kagzi_store::WorkflowStatus::Paused),
-            None => None,
-        };
+        if let Some(workflow_type) = req.workflow_type {
+            wf.workflow_type = require_non_empty(workflow_type, "workflow_type")?;
+        }
 
-        let next_fire = if new_status == Some(kagzi_store::WorkflowStatus::Scheduled) {
-            let cron_expr = current.cron_expr.as_ref().ok_or_else(|| {
+        if let Some(expr) = req.cron_expr {
+            let expr = require_non_empty(expr, "cron_expr")?;
+            let _ = parse_cron_expr(&expr)?;
+            wf.cron_expr = Some(expr);
+        }
+
+        if let Some(input) = req.input {
+            wf.input = input.data;
+        }
+
+        if let Some(max_catchup) = req.max_catchup {
+            wf.max_catchup = max_catchup;
+        }
+
+        if let Some(version) = req.version {
+            wf.version = Some(version).filter(|s| !s.is_empty());
+        }
+
+        if let Some(ts) = next_fire_at {
+            let dt = chrono::Utc
+                .timestamp_opt(ts.seconds, ts.nanos as u32)
+                .single()
+                .ok_or_else(|| invalid_argument_error("next_fire_at is invalid"))?;
+            wf.available_at = Some(dt);
+        }
+
+        if let Some(enabled) = req.enabled {
+            wf.status = if enabled {
+                kagzi_store::WorkflowStatus::Scheduled
+            } else {
+                kagzi_store::WorkflowStatus::Paused
+            };
+        }
+
+        if wf.status == kagzi_store::WorkflowStatus::Scheduled && next_fire_at.is_none() {
+            let cron_expr = wf.cron_expr.as_ref().ok_or_else(|| {
                 invalid_argument_error("Cannot enable schedule without cron expression")
             })?;
-            let cron = parse_cron_expr(cron_expr)?;
-            Some(cron.after(&Utc::now()).next().ok_or_else(|| {
-                invalid_argument_error("Cron expression has no future occurrences")
-            })?)
-        } else {
-            None
-        };
-
-        if let Some(status) = new_status {
-            let mut wf = current.clone();
-            wf.status = status;
-            if let Some(fire) = next_fire {
-                wf.available_at = Some(fire);
-            }
-            self.store
-                .workflows()
-                .update(run_id, wf)
-                .await
-                .map_err(map_store_error)?;
+            wf.available_at = Some(next_fire_from_now(cron_expr, Utc::now())?);
         }
+
+        self.store
+            .workflows()
+            .update(run_id, wf)
+            .await
+            .map_err(map_store_error)?;
 
         let schedule = self
             .store

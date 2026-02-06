@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use anyhow::Context as _;
 use kagzi_proto::kagzi::admin_service_server::AdminServiceServer;
 use kagzi_proto::kagzi::namespace_service_server::NamespaceServiceServer;
 use kagzi_proto::kagzi::queue_service_server::QueueServiceServer;
@@ -15,18 +16,17 @@ use kagzi_server::{
     WorkerServiceImpl, WorkflowScheduleServiceImpl, WorkflowServiceImpl, coordinator,
     embedded_assets,
 };
-use kagzi_store::{PgStore, WorkerRepository, WorkflowRepository};
+use kagzi_store::PgStore;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let settings = Settings::new().map_err(|e| {
-        tracing::error!(error = ?e, "Failed to load configuration");
-        e
-    })?;
+async fn main() -> anyhow::Result<()> {
+    let settings = Settings::new()
+        .inspect_err(|e| tracing::error!(error = ?e, "Failed to load configuration"))
+        .context("Failed to load configuration")?;
 
     // Initialize telemetry (tracing + OpenTelemetry)
     // Keep the guard alive for the duration of the program
@@ -36,10 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max_connections(settings.server.db_max_connections)
         .connect(&settings.database_url)
         .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "Failed to connect to database");
-            e
-        })?;
+        .inspect_err(|e| tracing::error!(error = ?e, "Failed to connect to database"))
+        .context("Failed to connect to database")?;
 
     run_migrations(&db_pool).await?;
 
@@ -268,18 +266,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_migrations(
-    pool: &sqlx::Pool<sqlx::Postgres>,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_migrations(pool: &sqlx::Pool<sqlx::Postgres>) -> anyhow::Result<()> {
     sqlx::migrate!("../../migrations")
         .run(pool)
         .await
-        .map_err(|e| {
-            tracing::error!(error = ?e, "Failed to run migrations");
-            e
-        })?;
-
-    Ok(())
+        .inspect_err(|e| tracing::error!(error = ?e, "Failed to run migrations"))
+        .context("Failed to run migrations")
 }
 
 fn print_welcome_banner(settings: &Settings) {
@@ -310,23 +302,11 @@ fn print_welcome_banner(settings: &Settings) {
 }
 
 async fn print_startup_stats(store: &PgStore) {
-    // Query current state
-    let workers = store.workers().count("*", None, None).await.unwrap_or(0);
-    let pending = store
-        .workflows()
-        .count("*", Some("PENDING"))
-        .await
-        .unwrap_or(0);
-    let running = store
-        .workflows()
-        .count("*", Some("RUNNING"))
-        .await
-        .unwrap_or(0);
-    let schedules = store
-        .workflows()
-        .count("*", Some("SCHEDULED"))
-        .await
-        .unwrap_or(0);
+    let pool = store.pool();
+    let workers = count_workers_online(pool).await;
+    let schedules = count_workflows(pool, "SCHEDULED").await;
+    let pending = count_workflows(pool, "PENDING").await;
+    let running = count_workflows(pool, "RUNNING").await;
 
     info!("Current State");
     info!("   - Workers online:    {}", workers);
@@ -341,6 +321,21 @@ async fn print_startup_stats(store: &PgStore) {
     }
 }
 
+async fn count_workers_online(pool: &sqlx::PgPool) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM kagzi.workers WHERE status = 'ONLINE'")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0)
+}
+
+async fn count_workflows(pool: &sqlx::PgPool, status: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM kagzi.workflow_runs WHERE status = $1")
+        .bind(status)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0)
+}
+
 async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -352,12 +347,8 @@ async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
                 break;
             }
             _ = interval.tick() => {
-                // Count workers across all namespaces
-                let total_workers = store
-                    .workers()
-                    .count("*", None, None)
-                    .await
-                    .unwrap_or(0);
+                let pool = store.pool();
+                let total_workers = count_workers_online(pool).await;
 
                 if total_workers == 0 {
                     no_worker_reminder_count += 1;
@@ -370,35 +361,11 @@ async fn status_reporter(store: PgStore, shutdown: CancellationToken) {
 
                 no_worker_reminder_count = 0;
 
-                // Get namespaces for detailed stats
-                let namespaces = match store.workers().list_distinct_namespaces().await {
-                    Ok(ns) => ns,
-                    Err(_) => continue,
-                };
-
-                let mut total_pending = 0i64;
-                let mut total_running = 0i64;
-                let mut total_sleeping = 0i64;
-                let mut total_completed = 0i64;
-                let mut total_schedules = 0i64;
-
-                for namespace in &namespaces {
-                    if let Ok(count) = store.workflows().count(namespace, Some("PENDING")).await {
-                        total_pending += count;
-                    }
-                    if let Ok(count) = store.workflows().count(namespace, Some("RUNNING")).await {
-                        total_running += count;
-                    }
-                    if let Ok(count) = store.workflows().count(namespace, Some("SLEEPING")).await {
-                        total_sleeping += count;
-                    }
-                    if let Ok(count) = store.workflows().count(namespace, Some("COMPLETED")).await {
-                        total_completed += count;
-                    }
-                    if let Ok(count) = store.workflows().count(namespace, Some("SCHEDULED")).await {
-                        total_schedules += count;
-                    }
-                }
+                let total_schedules = count_workflows(pool, "SCHEDULED").await;
+                let total_pending = count_workflows(pool, "PENDING").await;
+                let total_running = count_workflows(pool, "RUNNING").await;
+                let total_sleeping = count_workflows(pool, "SLEEPING").await;
+                let total_completed = count_workflows(pool, "COMPLETED").await;
 
                 let now = chrono::Utc::now().format("%H:%M:%S");
                 info!(

@@ -6,6 +6,7 @@ use kagzi_proto::kagzi::{
     ListStepsRequest, ListStepsResponse, ListWorkersRequest, ListWorkersResponse,
     ListWorkflowTypesRequest, ListWorkflowTypesResponse, PageInfo, ServingStatus, WorkerStatus,
 };
+use kagzi_store::HealthRepository;
 use kagzi_store::{
     NamespaceRepository, PgStore, StepRepository, WorkerRepository,
     WorkerStatus as StoreWorkerStatus, WorkflowRepository,
@@ -17,7 +18,7 @@ use crate::helpers::{
     decode_cursor, encode_cursor, invalid_argument_error, map_store_error, normalize_page_size,
     not_found_error, require_non_empty,
 };
-use crate::proto_convert::{step_to_proto, worker_to_proto};
+use crate::proto_convert::{step_to_proto, timestamp_from, worker_to_proto};
 
 fn normalize_worker_status(status: Option<i32>) -> Result<Option<StoreWorkerStatus>, Status> {
     match status {
@@ -52,10 +53,7 @@ impl AdminService for AdminServiceImpl {
         let req = request.into_inner();
         let page = req.page.unwrap_or_default();
 
-        if req.namespace.is_empty() {
-            return Err(invalid_argument_error("namespace is required"));
-        }
-        let namespace = req.namespace;
+        let namespace = require_non_empty(req.namespace, "namespace")?;
 
         let page_size = normalize_page_size(page.page_size, 20, 100);
 
@@ -70,14 +68,14 @@ impl AdminService for AdminServiceImpl {
 
         let filter_status = normalize_worker_status(req.status_filter)?;
 
-        let task_queue = req.task_queue.clone();
+        let task_queue_filter = req.task_queue.filter(|t| !t.is_empty());
 
         let workers_result = self
             .store
             .workers()
             .list(kagzi_store::ListWorkersParams {
                 namespace: namespace.clone(),
-                task_queue: task_queue.clone().filter(|t| !t.is_empty()),
+                task_queue: task_queue_filter.clone(),
                 filter_status,
                 page_size,
                 cursor: cursor.map(|c| kagzi_store::WorkerCursor { worker_id: c }),
@@ -93,11 +91,7 @@ impl AdminService for AdminServiceImpl {
         let total_count = if page.include_total_count {
             self.store
                 .workers()
-                .count(
-                    &namespace,
-                    task_queue.as_deref().filter(|s| !s.is_empty()),
-                    filter_status,
-                )
+                .count(&namespace, task_queue_filter.as_deref(), filter_status)
                 .await
                 .map_err(map_store_error)?
         } else {
@@ -190,13 +184,7 @@ impl AdminService for AdminServiceImpl {
             .ok_or_else(|| not_found_error("Workflow not found", "workflow", run_id.to_string()))?;
 
         let page = req.page.unwrap_or_default();
-        let page_size = if page.page_size <= 0 {
-            50
-        } else if page.page_size > 100 {
-            100
-        } else {
-            page.page_size
-        };
+        let page_size = normalize_page_size(page.page_size, 50, 100);
 
         let cursor: Option<kagzi_store::StepCursor> = if page.page_token.is_empty() {
             None
@@ -247,11 +235,10 @@ impl AdminService for AdminServiceImpl {
         request: Request<HealthCheckRequest>,
     ) -> Result<Response<HealthCheckResponse>, Status> {
         let _req = request.into_inner();
-        let db_status =
-            match kagzi_store::HealthRepository::health_check(&self.store.health()).await {
-                Ok(_) => ServingStatus::Serving,
-                Err(_) => ServingStatus::NotServing,
-            };
+        let db_status = match HealthRepository::health_check(&self.store.health()).await {
+            Ok(_) => ServingStatus::Serving,
+            Err(_) => ServingStatus::NotServing,
+        };
 
         let response = HealthCheckResponse {
             status: db_status as i32,
@@ -262,13 +249,7 @@ impl AdminService for AdminServiceImpl {
                 }
                 _ => "Unknown status".to_string(),
             },
-            timestamp: Some(prost_types::Timestamp {
-                seconds: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64,
-                nanos: 0,
-            }),
+            timestamp: Some(timestamp_from(chrono::Utc::now())),
         };
 
         Ok(Response::new(response))
@@ -376,24 +357,16 @@ impl AdminService for AdminServiceImpl {
         let req = request.into_inner();
         let namespace = require_non_empty(req.namespace, "namespace")?;
 
-        let pending_count = self
-            .store
-            .workflows()
-            .count(&namespace, Some("PENDING"))
-            .await
-            .map_err(map_store_error)?;
-        let running_count = self
-            .store
-            .workflows()
-            .count(&namespace, Some("RUNNING"))
-            .await
-            .map_err(map_store_error)?;
-        let sleeping_count = self
-            .store
-            .workflows()
-            .count(&namespace, Some("SLEEPING"))
-            .await
-            .map_err(map_store_error)?;
+        let count = |status: &'static str| async {
+            self.store
+                .workflows()
+                .count(&namespace, Some(status))
+                .await
+                .map_err(map_store_error)
+        };
+        let pending_count = count("PENDING").await?;
+        let running_count = count("RUNNING").await?;
+        let sleeping_count = count("SLEEPING").await?;
 
         Ok(Response::new(GetQueueDepthResponse {
             pending_count,
