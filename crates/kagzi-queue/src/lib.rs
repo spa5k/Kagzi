@@ -14,6 +14,7 @@ mod kafka;
 #[cfg(feature = "nats")]
 mod nats;
 mod postgres;
+mod registry;
 
 pub use bus::{WorkAvailable, WorkSignalBus};
 pub use error::QueueError;

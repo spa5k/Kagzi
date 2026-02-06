@@ -1,27 +1,28 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use dashmap::DashMap;
 use futures::StreamExt;
 use rdkafka::ClientConfig;
 use rdkafka::Message;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::producer::{FutureProducer, FutureRecord};
+use tokio::sync::OnceCell;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::QueueError;
-use crate::bus::{WorkAvailable, WorkSignalBus};
+use crate::bus::{WorkAvailable, WorkSignalBus, queue_key};
+use crate::registry::ChannelRegistry;
 
 #[derive(Clone)]
 pub struct KafkaBus {
     producer: FutureProducer,
     brokers: Arc<str>,
     topic: Arc<str>,
-    channels: Arc<DashMap<String, broadcast::Sender<WorkAvailable>>>,
-    channel_capacity: usize,
+    registry: ChannelRegistry,
     group_id_prefix: Arc<str>,
+    shutdown: Arc<OnceCell<CancellationToken>>,
 }
 
 impl KafkaBus {
@@ -44,24 +45,21 @@ impl KafkaBus {
             producer,
             brokers: Arc::from(brokers),
             topic: Arc::from(topic),
-            channels: Arc::new(DashMap::new()),
-            channel_capacity,
+            registry: ChannelRegistry::new(channel_capacity),
             group_id_prefix: Arc::from(group_id_prefix.into()),
+            shutdown: Arc::new(OnceCell::new()),
         })
     }
 
     fn key(namespace: &str, task_queue: &str) -> String {
-        format!("{namespace}:{task_queue}")
+        queue_key(namespace, task_queue)
     }
 
-    fn get_or_create_channel(&self, key: &str) -> broadcast::Sender<WorkAvailable> {
-        self.channels
-            .entry(key.to_string())
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(self.channel_capacity);
-                tx
-            })
-            .clone()
+    fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown
+            .get()
+            .cloned()
+            .unwrap_or_else(CancellationToken::new)
     }
 }
 
@@ -83,20 +81,32 @@ impl WorkSignalBus for KafkaBus {
 
     fn subscribe(&self, namespace: &str, task_queue: &str) -> broadcast::Receiver<WorkAvailable> {
         let key = Self::key(namespace, task_queue);
-        let tx = self.get_or_create_channel(&key);
-        let rx = tx.subscribe();
+        let (tx, rx, first) = self.registry.subscribe_start_once(&key);
 
-        if tx.receiver_count() == 1 {
+        if first {
             let brokers = self.brokers.clone();
             let topic = self.topic.clone();
             let group_id = format!("{}-{}", self.group_id_prefix, key.replace(':', "_"));
-            let tx2 = tx.clone();
             let ns = namespace.to_string();
             let tq = task_queue.to_string();
+            let shutdown = self.shutdown_token();
+            let registry = self.registry.clone();
+            let key2 = key.clone();
+            let key_bytes = key.into_bytes();
 
             tokio::spawn(async move {
                 let mut delay_ms: u64 = 200;
+                let mut gc = tokio::time::interval(std::time::Duration::from_secs(30));
                 loop {
+                    if shutdown.is_cancelled() {
+                        registry.remove(&key2);
+                        return;
+                    }
+                    if tx.receiver_count() == 0 {
+                        registry.remove(&key2);
+                        return;
+                    }
+
                     let consumer: StreamConsumer = match ClientConfig::new()
                         .set("bootstrap.servers", brokers.as_ref())
                         .set("group.id", &group_id)
@@ -107,7 +117,13 @@ impl WorkSignalBus for KafkaBus {
                         Ok(c) => c,
                         Err(e) => {
                             warn!(error = %e, "Failed to create Kafka consumer, retrying");
-                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            tokio::select! {
+                                _ = shutdown.cancelled() => {
+                                    registry.remove(&key2);
+                                    return;
+                                }
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
+                            }
                             delay_ms = (delay_ms.saturating_mul(2)).min(10_000);
                             continue;
                         }
@@ -115,7 +131,13 @@ impl WorkSignalBus for KafkaBus {
 
                     if let Err(e) = consumer.subscribe(&[topic.as_ref()]) {
                         warn!(error = %e, "Failed to subscribe to Kafka topic, retrying");
-                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        tokio::select! {
+                            _ = shutdown.cancelled() => {
+                                registry.remove(&key2);
+                                return;
+                            }
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
+                        }
                         delay_ms = (delay_ms.saturating_mul(2)).min(10_000);
                         continue;
                     }
@@ -129,28 +151,38 @@ impl WorkSignalBus for KafkaBus {
                     );
 
                     let mut stream = consumer.stream();
-                    while let Some(msg) = stream.next().await {
-                        let msg = match msg {
-                            Ok(m) => m,
-                            Err(e) => {
-                                warn!(error = %e, "Kafka consume error");
-                                break;
+                    loop {
+                        tokio::select! {
+                            _ = shutdown.cancelled() => {
+                                registry.remove(&key2);
+                                return;
                             }
-                        };
+                            _ = gc.tick() => {
+                                if tx.receiver_count() == 0 {
+                                    registry.remove(&key2);
+                                    return;
+                                }
+                            }
+                            msg = stream.next() => {
+                                let Some(msg) = msg else { break };
+                                let msg = match msg {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        warn!(error = %e, "Kafka consume error");
+                                        break;
+                                    }
+                                };
 
-                        let Some(k) = msg.key() else {
-                            let _ = consumer.commit_message(&msg, CommitMode::Async);
-                            continue;
-                        };
+                                if msg.key() == Some(key_bytes.as_slice()) {
+                                    let _ = tx.send(WorkAvailable {
+                                        namespace: ns.clone(),
+                                        task_queue: tq.clone(),
+                                    });
+                                }
 
-                        if k == key.as_bytes() {
-                            let _ = tx2.send(WorkAvailable {
-                                namespace: ns.clone(),
-                                task_queue: tq.clone(),
-                            });
+                                let _ = consumer.commit_message(&msg, CommitMode::Async);
+                            }
                         }
-
-                        let _ = consumer.commit_message(&msg, CommitMode::Async);
                     }
 
                     warn!(namespace = %ns, task_queue = %tq, "Kafka subscription ended, recreating consumer");
@@ -161,7 +193,8 @@ impl WorkSignalBus for KafkaBus {
         rx
     }
 
-    async fn start(&self, _shutdown: CancellationToken) -> Result<(), QueueError> {
+    async fn start(&self, shutdown: CancellationToken) -> Result<(), QueueError> {
+        let _ = self.shutdown.set(shutdown);
         // Kafka subscriptions are started lazily on first subscribe().
         Ok(())
     }

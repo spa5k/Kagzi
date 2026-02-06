@@ -1,22 +1,23 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use dashmap::DashMap;
 use futures::StreamExt;
+use tokio::sync::OnceCell;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::QueueError;
-use crate::bus::{WorkAvailable, WorkSignalBus};
+use crate::bus::{WorkAvailable, WorkSignalBus, queue_key};
+use crate::registry::ChannelRegistry;
 
 #[derive(Clone)]
 pub struct NatsBus {
     client: async_nats::Client,
     subject_prefix: Arc<str>,
-    channels: Arc<DashMap<String, broadcast::Sender<WorkAvailable>>>,
-    channel_capacity: usize,
+    registry: ChannelRegistry,
     queue_group: Option<Arc<str>>,
+    shutdown: Arc<OnceCell<CancellationToken>>,
 }
 
 impl NatsBus {
@@ -37,9 +38,9 @@ impl NatsBus {
         Ok(Self {
             client,
             subject_prefix: Arc::from(subject_prefix.into()),
-            channels: Arc::new(DashMap::new()),
-            channel_capacity,
+            registry: ChannelRegistry::new(channel_capacity),
             queue_group: queue_group.map(Arc::from),
+            shutdown: Arc::new(OnceCell::new()),
         })
     }
 
@@ -50,17 +51,14 @@ impl NatsBus {
     }
 
     fn key(namespace: &str, task_queue: &str) -> String {
-        format!("{namespace}:{task_queue}")
+        queue_key(namespace, task_queue)
     }
 
-    fn get_or_create_channel(&self, key: &str) -> broadcast::Sender<WorkAvailable> {
-        self.channels
-            .entry(key.to_string())
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(self.channel_capacity);
-                tx
-            })
-            .clone()
+    fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown
+            .get()
+            .cloned()
+            .unwrap_or_else(CancellationToken::new)
     }
 }
 
@@ -80,21 +78,26 @@ impl WorkSignalBus for NatsBus {
         let key = Self::key(namespace, task_queue);
         let subject = self.subject(namespace, task_queue);
 
-        let tx = self.get_or_create_channel(&key);
-        let rx = tx.subscribe();
+        let (tx, rx, first) = self.registry.subscribe_start_once(&key);
 
-        // Spawn per-queue subscription the first time we see this key.
-        // We detect "first time" by checking receiver_count before creating; race is acceptable.
-        if tx.receiver_count() == 1 {
+        if first {
             let client = self.client.clone();
-            let tx2 = tx.clone();
             let ns = namespace.to_string();
             let tq = task_queue.to_string();
             let group = self.queue_group.clone();
+            let shutdown = self.shutdown_token();
+            let registry = self.registry.clone();
+            let key2 = key.clone();
 
             tokio::spawn(async move {
                 let mut delay_ms: u64 = 100;
+                let mut gc = tokio::time::interval(std::time::Duration::from_secs(30));
                 loop {
+                    if tx.receiver_count() == 0 {
+                        registry.remove(&key2);
+                        break;
+                    }
+
                     let sub_res = match &group {
                         Some(g) => {
                             client
@@ -108,7 +111,13 @@ impl WorkSignalBus for NatsBus {
                         Ok(s) => s,
                         Err(e) => {
                             warn!(error = %e, "Failed to subscribe to NATS subject, retrying");
-                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                            tokio::select! {
+                                _ = shutdown.cancelled() => {
+                                    registry.remove(&key2);
+                                    return;
+                                }
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
+                            }
                             delay_ms = (delay_ms.saturating_mul(2)).min(10_000);
                             continue;
                         }
@@ -117,11 +126,28 @@ impl WorkSignalBus for NatsBus {
                     delay_ms = 100;
                     info!(namespace = %ns, task_queue = %tq, "NATS wakeup subscription started");
 
-                    while let Some(_msg) = sub.next().await {
-                        let _ = tx2.send(WorkAvailable {
-                            namespace: ns.clone(),
-                            task_queue: tq.clone(),
-                        });
+                    loop {
+                        tokio::select! {
+                            _ = shutdown.cancelled() => {
+                                registry.remove(&key2);
+                                return;
+                            }
+                            _ = gc.tick() => {
+                                if tx.receiver_count() == 0 {
+                                    registry.remove(&key2);
+                                    return;
+                                }
+                            }
+                            msg = sub.next() => {
+                                if msg.is_none() {
+                                    break;
+                                }
+                                let _ = tx.send(WorkAvailable {
+                                    namespace: ns.clone(),
+                                    task_queue: tq.clone(),
+                                });
+                            }
+                        }
                     }
 
                     warn!(namespace = %ns, task_queue = %tq, "NATS subscription ended, resubscribing");
@@ -132,7 +158,8 @@ impl WorkSignalBus for NatsBus {
         rx
     }
 
-    async fn start(&self, _shutdown: CancellationToken) -> Result<(), QueueError> {
+    async fn start(&self, shutdown: CancellationToken) -> Result<(), QueueError> {
+        let _ = self.shutdown.set(shutdown);
         // NATS subscriptions are started lazily on first subscribe().
         Ok(())
     }

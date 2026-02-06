@@ -1,22 +1,19 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use backon::BackoffBuilder;
-use dashmap::DashMap;
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::bus::{WorkAvailable, WorkSignalBus};
+use crate::bus::{WorkAvailable, WorkSignalBus, queue_key};
 use crate::error::QueueError;
+use crate::registry::ChannelRegistry;
 
 #[derive(Clone)]
 pub struct PostgresNotifier {
     pool: PgPool,
-    channels: Arc<DashMap<String, broadcast::Sender<WorkAvailable>>>,
-    channel_capacity: usize,
+    registry: ChannelRegistry,
     cleanup_interval_secs: u64,
     max_reconnect_secs: u64,
 }
@@ -30,38 +27,14 @@ impl PostgresNotifier {
     ) -> Self {
         Self {
             pool,
-            channels: Arc::new(DashMap::new()),
-            channel_capacity,
+            registry: ChannelRegistry::new(channel_capacity),
             cleanup_interval_secs,
             max_reconnect_secs,
         }
     }
 
-    fn queue_key(namespace: &str, task_queue: &str) -> String {
-        format!("{}:{}", namespace, task_queue)
-    }
-
-    fn get_or_create_channel(&self, key: &str) -> broadcast::Sender<WorkAvailable> {
-        self.channels
-            .entry(key.to_string())
-            .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(self.channel_capacity);
-                tx
-            })
-            .clone()
-    }
-
     fn cleanup_stale_channels(&self) {
-        let mut removed = 0;
-        self.channels.retain(|key, tx| {
-            if tx.receiver_count() == 0 {
-                debug!(queue = %key, "Removing stale channel for queue");
-                removed += 1;
-                false
-            } else {
-                true
-            }
-        });
+        let removed = self.registry.cleanup_stale();
         if removed > 0 {
             info!(count = removed, "Cleaned up stale notification channels");
         }
@@ -71,6 +44,12 @@ impl PostgresNotifier {
         &self,
         shutdown: &CancellationToken,
     ) -> Result<PgListener, QueueError> {
+        async fn connect_and_listen(pool: &PgPool) -> Result<PgListener, sqlx::Error> {
+            let mut listener = PgListener::connect_with(pool).await?;
+            listener.listen("kagzi_work").await?;
+            Ok(listener)
+        }
+
         let max_attempts = (self.max_reconnect_secs / 10).max(3) as usize;
 
         let mut backoff = backon::ExponentialBuilder::default()
@@ -81,51 +60,34 @@ impl PostgresNotifier {
             .build();
 
         loop {
-            if shutdown.is_cancelled() {
-                return Ok(PgListener::connect_with(&self.pool).await?);
-            }
-
-            match PgListener::connect_with(&self.pool).await {
-                Ok(mut listener) => match listener.listen("kagzi_work").await {
-                    Ok(_) => {
-                        info!("Queue listener reconnected");
-                        return Ok(listener);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to re-listen after reconnect, retrying");
-                        if let Some(delay) = backoff.next() {
-                            tokio::select! {
-                                _ = shutdown.cancelled() => {
-                                    return Ok(PgListener::connect_with(&self.pool).await?);
-                                }
-                                _ = tokio::time::sleep(delay) => {}
-                            }
-                        } else {
-                            error!(
-                                "Exhausted reconnection attempts after {} seconds",
-                                self.max_reconnect_secs
-                            );
-                            return Err(QueueError::Database(sqlx::Error::PoolClosed));
+            tokio::select! {
+                _ = shutdown.cancelled() => return Err(QueueError::Other("shutdown".to_string())),
+                res = connect_and_listen(&self.pool) => {
+                    match res {
+                        Ok(listener) => {
+                            info!("Queue listener reconnected");
+                            return Ok(listener);
                         }
-                    }
-                },
-                Err(e) => {
-                    warn!(error = %e, "Failed to reconnect listener, retrying");
-                    if let Some(delay) = backoff.next() {
-                        tokio::select! {
-                            _ = shutdown.cancelled() => {
-                                return Ok(PgListener::connect_with(&self.pool).await?);
-                            }
-                            _ = tokio::time::sleep(delay) => {}
+                        Err(e) => {
+                            warn!(error = %e, "Failed to reconnect listener, retrying");
                         }
-                    } else {
-                        error!(
-                            "Exhausted reconnection attempts after {} seconds",
-                            self.max_reconnect_secs
-                        );
-                        return Err(QueueError::Database(e));
                     }
                 }
+            }
+
+            let Some(delay) = backoff.next() else {
+                error!(
+                    "Exhausted reconnection attempts after {} seconds",
+                    self.max_reconnect_secs
+                );
+                return Err(QueueError::Other(
+                    "queue listener reconnect exhausted".to_string(),
+                ));
+            };
+
+            tokio::select! {
+                _ = shutdown.cancelled() => return Err(QueueError::Other("shutdown".to_string())),
+                _ = tokio::time::sleep(delay) => {}
             }
         }
     }
@@ -135,7 +97,7 @@ impl PostgresNotifier {
 impl WorkSignalBus for PostgresNotifier {
     #[instrument(skip(self), fields(queue_key))]
     async fn publish(&self, namespace: &str, task_queue: &str) -> Result<(), QueueError> {
-        let key = Self::queue_key(namespace, task_queue);
+        let key = queue_key(namespace, task_queue);
         tracing::Span::current().record("queue_key", &key);
 
         sqlx::query("SELECT pg_notify('kagzi_work', $1)")
@@ -145,20 +107,14 @@ impl WorkSignalBus for PostgresNotifier {
 
         debug!(queue = %key, "Sent pg_notify");
 
-        if let Some(tx) = self.channels.get(&key) {
-            let _ = tx.send(WorkAvailable {
-                namespace: namespace.to_string(),
-                task_queue: task_queue.to_string(),
-            });
-        }
+        self.registry.try_send_queue(&key, namespace, task_queue);
 
         Ok(())
     }
 
     fn subscribe(&self, namespace: &str, task_queue: &str) -> broadcast::Receiver<WorkAvailable> {
-        let key = Self::queue_key(namespace, task_queue);
-        let tx = self.get_or_create_channel(&key);
-        tx.subscribe()
+        let key = queue_key(namespace, task_queue);
+        self.registry.subscribe(&key)
     }
 
     async fn start(&self, shutdown: CancellationToken) -> Result<(), QueueError> {
@@ -189,18 +145,17 @@ impl WorkSignalBus for PostgresNotifier {
                             let key = notification.payload();
                             debug!(queue = %key, "Received pg_notify");
 
-                            if let (Some((namespace, task_queue)), Some(tx)) =
-                                (key.split_once(':'), self.channels.get(key))
-                            {
-                                let _ = tx.send(WorkAvailable {
-                                    namespace: namespace.to_string(),
-                                    task_queue: task_queue.to_string(),
-                                });
+                            if let Some((namespace, task_queue)) = key.split_once(':') {
+                                self.registry.try_send_queue(key, namespace, task_queue);
                             }
                         }
                         Err(e) => {
                             error!(error = %e, "Error receiving notification, attempting to reconnect");
-                            listener = self.reconnect_listener(&shutdown).await?;
+                            match self.reconnect_listener(&shutdown).await {
+                                Ok(l) => listener = l,
+                                Err(e) if shutdown.is_cancelled() => break,
+                                Err(e) => return Err(e),
+                            }
                         }
                     }
                 }
@@ -217,9 +172,6 @@ mod tests {
 
     #[test]
     fn test_queue_key() {
-        assert_eq!(
-            PostgresNotifier::queue_key("default", "main"),
-            "default:main"
-        );
+        assert_eq!(queue_key("default", "main"), "default:main");
     }
 }

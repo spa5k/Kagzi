@@ -13,6 +13,10 @@ pub struct WorkAvailable {
     pub task_queue: String,
 }
 
+pub(crate) fn queue_key(namespace: &str, task_queue: &str) -> String {
+    format!("{namespace}:{task_queue}")
+}
+
 /// Work-signal bus for distributing wakeups to workers.
 ///
 /// # Core invariant
