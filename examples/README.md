@@ -15,7 +15,6 @@ This directory contains examples demonstrating various features of the Kagzi wor
 - **09_data_pipeline** - Data processing pipeline
 - **10_multi_queue** - Namespace-based separation patterns
 - **11_schedule_test** - Live schedule testing (demonstrates periodic execution over 5 minutes)
-- **14_queue_registry** - Queue registry (create/list/update queue metadata)
 
 ## Running Examples
 

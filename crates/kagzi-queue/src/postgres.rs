@@ -8,12 +8,12 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::bus::{WorkAvailable, WorkSignalBus, queue_key};
 use crate::error::QueueError;
-use crate::registry::ChannelRegistry;
 
 #[derive(Clone)]
 pub struct PostgresNotifier {
     pool: PgPool,
-    registry: ChannelRegistry,
+    channels: std::sync::Arc<dashmap::DashMap<String, broadcast::Sender<WorkAvailable>>>,
+    channel_capacity: usize,
     cleanup_interval_secs: u64,
     max_reconnect_secs: u64,
 }
@@ -27,15 +27,25 @@ impl PostgresNotifier {
     ) -> Self {
         Self {
             pool,
-            registry: ChannelRegistry::new(channel_capacity),
+            channels: std::sync::Arc::new(dashmap::DashMap::new()),
+            channel_capacity,
             cleanup_interval_secs,
             max_reconnect_secs,
         }
     }
 
     fn cleanup_stale_channels(&self) {
-        let removed = self.registry.cleanup_stale();
-        if removed > 0 {
+        let mut removed = 0;
+        self.channels.retain(|key, tx| {
+            if tx.receiver_count() == 0 {
+                debug!(queue = %key, "Removing stale channel for queue");
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        if removed != 0 {
             info!(count = removed, "Cleaned up stale notification channels");
         }
     }
@@ -107,14 +117,25 @@ impl WorkSignalBus for PostgresNotifier {
 
         debug!(queue = %key, "Sent pg_notify");
 
-        self.registry.try_send_queue(&key, namespace, task_queue);
+        if let Some(tx) = self.channels.get(&key) {
+            let _ = tx.send(WorkAvailable {
+                namespace: namespace.to_string(),
+                task_queue: task_queue.to_string(),
+            });
+        }
 
         Ok(())
     }
 
     fn subscribe(&self, namespace: &str, task_queue: &str) -> broadcast::Receiver<WorkAvailable> {
         let key = queue_key(namespace, task_queue);
-        self.registry.subscribe(&key)
+        self.channels
+            .entry(key)
+            .or_insert_with(|| {
+                let (tx, _) = broadcast::channel(self.channel_capacity);
+                tx
+            })
+            .subscribe()
     }
 
     async fn start(&self, shutdown: CancellationToken) -> Result<(), QueueError> {
@@ -145,8 +166,13 @@ impl WorkSignalBus for PostgresNotifier {
                             let key = notification.payload();
                             debug!(queue = %key, "Received pg_notify");
 
-                            if let Some((namespace, task_queue)) = key.split_once(':') {
-                                self.registry.try_send_queue(key, namespace, task_queue);
+                            if let Some((namespace, task_queue)) = key.split_once(':')
+                                && let Some(tx) = self.channels.get(key)
+                            {
+                                let _ = tx.send(WorkAvailable {
+                                    namespace: namespace.to_string(),
+                                    task_queue: task_queue.to_string(),
+                                });
                             }
                         }
                         Err(e) => {

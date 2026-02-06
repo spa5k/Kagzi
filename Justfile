@@ -6,9 +6,6 @@ set dotenv-load
 export DATABASE_URL := "postgres://postgres:postgres@localhost:54122/postgres"
 export SQLX_DATABASE_URL := "postgres://postgres:postgres@localhost:54122/postgres"
 
-NATS_COMPOSE := "docker/queue/docker-compose.nats.yml"
-KAFKA_COMPOSE := "docker/queue/docker-compose.kafka.yml"
-
 # --- Database ---
 
 # Start the database container
@@ -63,37 +60,6 @@ build-proto:
 # Run the gRPC server
 dev: build-proto
     DATABASE_URL={{DATABASE_URL}} cargo run -p kagzi-server
-
-# --- Broker Backends (work-signal bus) ---
-
-# Start/stop NATS broker
-nats-up:
-    docker-compose -f {{NATS_COMPOSE}} up -d
-
-nats-down:
-    docker-compose -f {{NATS_COMPOSE}} down
-
-# Start/stop Kafka broker (KRaft)
-kafka-up:
-    docker-compose -f {{KAFKA_COMPOSE}} up -d
-
-kafka-down:
-    docker-compose -f {{KAFKA_COMPOSE}} down
-
-# Run server with NATS backend (starts NATS if needed)
-nats: nats-up
-    KAGZI_QUEUE_BACKEND=nats just dev
-
-# Run server with Kafka backend (starts Kafka if needed)
-kafka: kafka-up
-    KAGZI_QUEUE_BACKEND=kafka just dev
-
-# Smoke examples (requires the server already running with matching backend)
-smoke-nats:
-    just example 13_broker_smoke nats
-
-smoke-kafka:
-    just example 13_broker_smoke kafka
 
 # Launch gRPCui (requires grpcui to be installed: go install github.com/fullstorydev/grpcui/cmd/grpcui@latest)
 grpcui:

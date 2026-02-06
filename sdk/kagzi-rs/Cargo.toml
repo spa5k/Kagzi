@@ -31,17 +31,6 @@ tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true }
 
 [features]
-default = ["nats", "kafka"]
-nats = ["dep:async-nats"]
-kafka = ["dep:rdkafka"]
-
-[dependencies.async-nats]
-version = "0.46.0"
-optional = true
-
-[dependencies.rdkafka]
-version = "0.39.0"
-features = ["tokio", "cmake-build"]
-optional = true
+default = []
 
 [dev-dependencies]

@@ -60,46 +60,15 @@ async fn main() -> anyhow::Result<()> {
     let queue_settings = settings.queue.clone();
     let worker_telemetry_settings = settings.worker_telemetry.clone();
 
-    let subscribe_work_enabled = matches!(
-        queue_settings.backend,
-        kagzi_server::config::QueueBackend::Postgres
-    );
+    let subscribe_work_enabled = true;
 
     // Create the work-signal bus backend.
-    let queue = match queue_settings.backend {
-        kagzi_server::config::QueueBackend::Postgres => {
-            kagzi_queue::WorkBus::Postgres(kagzi_queue::PostgresNotifier::new(
-                store.pool().clone(),
-                queue_settings.channel_capacity,
-                queue_settings.cleanup_interval_secs,
-                queue_settings.max_reconnect_secs,
-            ))
-        }
-        kagzi_server::config::QueueBackend::Nats => {
-            tracing::info!(
-                nats_url = %queue_settings.nats_url,
-                subject_prefix = %queue_settings.nats_subject_prefix,
-                "Using NATS work-signal backend"
-            );
-            let bus = kagzi_queue::NatsBus::connect(
-                &queue_settings.nats_url,
-                queue_settings.nats_subject_prefix.clone(),
-                queue_settings.channel_capacity,
-                Some(queue_settings.nats_queue_group.clone()),
-            )
-            .await?;
-            kagzi_queue::WorkBus::Nats(bus)
-        }
-        kagzi_server::config::QueueBackend::Kafka => {
-            let bus = kagzi_queue::KafkaBus::new(
-                queue_settings.kafka_brokers.clone(),
-                queue_settings.kafka_topic.clone(),
-                queue_settings.channel_capacity,
-                queue_settings.kafka_group_id_prefix.clone(),
-            )?;
-            kagzi_queue::WorkBus::Kafka(bus)
-        }
-    };
+    let queue = kagzi_queue::PostgresNotifier::new(
+        store.pool().clone(),
+        queue_settings.channel_capacity,
+        queue_settings.cleanup_interval_secs,
+        queue_settings.max_reconnect_secs,
+    );
 
     // Start background listener (needed for Postgres LISTEN/NOTIFY; other backends are no-op here).
     let queue_listener = queue.clone();

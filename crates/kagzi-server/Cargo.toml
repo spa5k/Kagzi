@@ -23,7 +23,7 @@ config.workspace = true
 cron.workspace = true
 governor.workspace = true
 kagzi-proto = { path = "../kagzi-proto" }
-kagzi-queue = { path = "../kagzi-queue", features = ["nats", "kafka"] }
+kagzi-queue = { path = "../kagzi-queue" }
 kagzi-store = { path = "../kagzi-store" }
 md5.workspace = true
 mime_guess = "2"

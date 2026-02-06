@@ -17,11 +17,5 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 
-# Optional signal bus backends
-async-nats = { version = "0.45.0", optional = true }
-rdkafka = { version = "0.39.0", features = ["tokio", "cmake-build"], optional = true }
-
 [features]
 default = []
-nats = ["dep:async-nats"]
-kafka = ["dep:rdkafka"]

@@ -36,7 +36,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use backon::{BackoffBuilder, ExponentialBuilder};
-use futures::StreamExt;
 use kagzi_proto::kagzi::telemetry_service_client::TelemetryServiceClient;
 use kagzi_proto::kagzi::worker_service_client::WorkerServiceClient;
 use kagzi_proto::kagzi::{
@@ -58,11 +57,6 @@ use tonic::transport::Channel;
 use tower::ServiceBuilder;
 use tracing::{error, info, warn};
 use uuid::Uuid;
-
-#[cfg(feature = "kafka")]
-use rdkafka::Message;
-#[cfg(feature = "kafka")]
-use rdkafka::consumer::Consumer;
 
 use crate::BoxFuture;
 use crate::context::Context;
@@ -109,28 +103,6 @@ const FALLBACK_CLAIM_TICK_SECS: u64 = 10;
 /// Maximum number of claim attempts per wakeup signal (bounded by available permits)
 const DRAIN_CLAIM_BUDGET: usize = 100;
 
-#[derive(Clone, Debug)]
-pub enum SignalBackend {
-    /// Use gRPC `SubscribeWork` wakeups from the server (default Postgres mode).
-    Server,
-
-    /// Subscribe directly to NATS subjects (work-signal bus), then call `ClaimTask` on wakeup.
-    #[cfg(feature = "nats")]
-    Nats {
-        url: String,
-        subject_prefix: String,
-        queue_group: String,
-    },
-
-    /// Consume Kafka wakeups from a topic, then call `ClaimTask` on wakeup.
-    #[cfg(feature = "kafka")]
-    Kafka {
-        brokers: String,
-        topic: String,
-        group_id: String,
-    },
-}
-
 /// Workflow handler function type.
 ///
 /// Wraps user-provided workflow functions with type erasure so they can be
@@ -156,7 +128,6 @@ pub struct WorkerBuilder {
     version: Option<String>,
     labels: HashMap<String, String>,
     workflows: Vec<(String, Arc<WorkflowFn>)>,
-    signal_backend: SignalBackend,
     telemetry_enabled: bool,
     telemetry_interval: Duration,
 }
@@ -172,7 +143,6 @@ impl WorkerBuilder {
             version: None,
             labels: HashMap::new(),
             workflows: Vec::new(),
-            signal_backend: SignalBackend::Server,
             telemetry_enabled: true,
             telemetry_interval: Duration::from_secs(DEFAULT_TELEMETRY_INTERVAL_SECS),
         }
@@ -212,11 +182,6 @@ impl WorkerBuilder {
 
     pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.labels.insert(key.into(), value.into());
-        self
-    }
-
-    pub fn signal_backend(mut self, backend: SignalBackend) -> Self {
-        self.signal_backend = backend;
         self
     }
 
@@ -340,7 +305,6 @@ impl WorkerBuilder {
             default_retry: self.default_retry,
             workflows: workflow_map,
             workflow_types,
-            signal_backend: self.signal_backend,
             telemetry_enabled: self.telemetry_enabled,
             telemetry_interval: self.telemetry_interval,
             worker_id: None,
@@ -384,7 +348,6 @@ pub struct Worker {
     /// Arc is used to clone handlers into each spawned task for concurrent execution.
     workflows: HashMap<String, Arc<WorkflowFn>>,
     workflow_types: Vec<String>,
-    signal_backend: SignalBackend,
     telemetry_enabled: bool,
     telemetry_interval: Duration,
     worker_id: Option<Uuid>,
@@ -428,13 +391,7 @@ impl Worker {
     }
 
     fn signal_backend_name(&self) -> String {
-        match &self.signal_backend {
-            SignalBackend::Server => "server".to_string(),
-            #[cfg(feature = "nats")]
-            SignalBackend::Nats { .. } => "nats".to_string(),
-            #[cfg(feature = "kafka")]
-            SignalBackend::Kafka { .. } => "kafka".to_string(),
-        }
+        "server".to_string()
     }
 
     fn make_event(
@@ -774,266 +731,87 @@ impl Worker {
         let telemetry_event_tx = self.telemetry_event_tx.clone();
         let telemetry_enabled = self.telemetry_enabled;
         let namespace = self.namespace.clone();
+        let mut client = self.client.clone();
+        let workflow_types = self.workflow_types.clone();
 
-        match self.signal_backend.clone() {
-            SignalBackend::Server => {
-                let mut client = self.client.clone();
-                let workflow_types = self.workflow_types.clone();
+        tokio::spawn(async move {
+            let mut backoff = ExponentialBuilder::default()
+                .with_min_delay(Duration::from_millis(100))
+                .with_max_delay(Duration::from_secs(10))
+                .with_jitter()
+                .build();
 
-                tokio::spawn(async move {
-                    let mut backoff = ExponentialBuilder::default()
-                        .with_min_delay(Duration::from_millis(100))
-                        .with_max_delay(Duration::from_secs(10))
-                        .with_jitter()
-                        .build();
+            loop {
+                if telemetry_enabled {
+                    telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                    *telemetry_state.subscription_state.write().await = "connecting".to_string();
+                }
 
-                    loop {
+                let res = client
+                    .subscribe_work(Request::new(SubscribeWorkRequest {
+                        namespace: namespace.clone(),
+                        worker_id: worker_id.clone(),
+                        task_queue: task_queue.clone(),
+                        workflow_types: workflow_types.clone(),
+                    }))
+                    .await;
+
+                let mut stream = match res {
+                    Ok(r) => r.into_inner(),
+                    Err(e) => {
+                        error!(error = %e, "Failed to SubscribeWork, retrying");
                         if telemetry_enabled {
-                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "connecting".to_string();
-                        }
-
-                        let res = client
-                            .subscribe_work(Request::new(SubscribeWorkRequest {
-                                namespace: namespace.clone(),
-                                worker_id: worker_id.clone(),
-                                task_queue: task_queue.clone(),
-                                workflow_types: workflow_types.clone(),
-                            }))
-                            .await;
-
-                        let mut stream = match res {
-                            Ok(r) => r.into_inner(),
-                            Err(e) => {
-                                error!(error = %e, "Failed to SubscribeWork, retrying");
-                                if telemetry_enabled {
-                                    *telemetry_state.last_error.lock().await = e.to_string();
-                                    telemetry_state
-                                        .last_error_at_ms
-                                        .store(now_ms(), Ordering::Relaxed);
-                                    *telemetry_state.subscription_state.write().await =
-                                        "error".to_string();
-                                    if let Some(tx_evt) = &telemetry_event_tx {
-                                        let _ = tx_evt.try_send(Worker::make_event(
-                                            &worker_id,
-                                            &namespace,
-                                            &task_queue,
-                                            TelemetryLevel::Error,
-                                            "subscribe_error",
-                                            "SubscribeWork error",
-                                            serde_json::json!({ "error": e.to_string() }),
-                                        ));
-                                    }
-                                }
-                                let d = backoff.next().unwrap_or(Duration::from_secs(10));
-                                tokio::time::sleep(d).await;
-                                continue;
-                            }
-                        };
-
-                        if telemetry_enabled {
-                            telemetry_state.subscribed.store(true, Ordering::Relaxed);
+                            *telemetry_state.last_error.lock().await = e.to_string();
                             telemetry_state
-                                .last_subscribe_ok_at_ms
+                                .last_error_at_ms
                                 .store(now_ms(), Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "subscribed".to_string();
+                            *telemetry_state.subscription_state.write().await = "error".to_string();
                             if let Some(tx_evt) = &telemetry_event_tx {
                                 let _ = tx_evt.try_send(Worker::make_event(
                                     &worker_id,
                                     &namespace,
                                     &task_queue,
-                                    TelemetryLevel::Info,
-                                    "subscribe_ok",
-                                    "SubscribeWork established",
-                                    serde_json::json!({}),
+                                    TelemetryLevel::Error,
+                                    "subscribe_error",
+                                    "SubscribeWork error",
+                                    serde_json::json!({ "error": e.to_string() }),
                                 ));
                             }
                         }
-
-                        backoff = ExponentialBuilder::default()
-                            .with_min_delay(Duration::from_millis(100))
-                            .with_max_delay(Duration::from_secs(10))
-                            .with_jitter()
-                            .build();
-
-                        loop {
-                            match stream.message().await {
-                                Ok(Some(_)) => {
-                                    if telemetry_enabled {
-                                        telemetry_state
-                                            .last_wakeup_at_ms
-                                            .store(now_ms(), Ordering::Relaxed);
-                                    }
-                                    if tx.send(()).await.is_err() {
-                                        return;
-                                    }
-                                }
-                                Ok(None) => {
-                                    warn!("SubscribeWork closed by server, resubscribing");
-                                    if telemetry_enabled {
-                                        telemetry_state.subscribed.store(false, Ordering::Relaxed);
-                                        *telemetry_state.subscription_state.write().await =
-                                            "reconnecting".to_string();
-                                        if let Some(tx_evt) = &telemetry_event_tx {
-                                            let _ = tx_evt.try_send(Worker::make_event(
-                                                &worker_id,
-                                                &namespace,
-                                                &task_queue,
-                                                TelemetryLevel::Warn,
-                                                "subscribe_closed",
-                                                "SubscribeWork stream closed; resubscribing",
-                                                serde_json::json!({}),
-                                            ));
-                                        }
-                                    }
-                                    break;
-                                }
-                                Err(e) => {
-                                    warn!(error = %e, "SubscribeWork error, resubscribing");
-                                    if telemetry_enabled {
-                                        *telemetry_state.last_error.lock().await = e.to_string();
-                                        telemetry_state
-                                            .last_error_at_ms
-                                            .store(now_ms(), Ordering::Relaxed);
-                                        telemetry_state.subscribed.store(false, Ordering::Relaxed);
-                                        *telemetry_state.subscription_state.write().await =
-                                            "reconnecting".to_string();
-                                        if let Some(tx_evt) = &telemetry_event_tx {
-                                            let _ = tx_evt.try_send(Worker::make_event(
-                                                &worker_id,
-                                                &namespace,
-                                                &task_queue,
-                                                TelemetryLevel::Warn,
-                                                "subscribe_error",
-                                                "SubscribeWork stream error; resubscribing",
-                                                serde_json::json!({ "error": e.to_string() }),
-                                            ));
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
+                        let d = backoff.next().unwrap_or(Duration::from_secs(10));
+                        tokio::time::sleep(d).await;
+                        continue;
                     }
-                });
-            }
+                };
 
-            #[cfg(feature = "nats")]
-            SignalBackend::Nats {
-                url,
-                subject_prefix,
-                queue_group,
-            } => {
-                let namespace = self.namespace.clone();
-                tokio::spawn(async move {
-                    let subject = format!("{subject_prefix}.{namespace}.{task_queue}");
-                    let mut url = url;
-                    if !url.contains("://") {
-                        url = format!("nats://{url}");
+                if telemetry_enabled {
+                    telemetry_state.subscribed.store(true, Ordering::Relaxed);
+                    telemetry_state
+                        .last_subscribe_ok_at_ms
+                        .store(now_ms(), Ordering::Relaxed);
+                    *telemetry_state.subscription_state.write().await = "subscribed".to_string();
+                    if let Some(tx_evt) = &telemetry_event_tx {
+                        let _ = tx_evt.try_send(Worker::make_event(
+                            &worker_id,
+                            &namespace,
+                            &task_queue,
+                            TelemetryLevel::Info,
+                            "subscribe_ok",
+                            "SubscribeWork established",
+                            serde_json::json!({}),
+                        ));
                     }
-                    let mut backoff = ExponentialBuilder::default()
-                        .with_min_delay(Duration::from_millis(100))
-                        .with_max_delay(Duration::from_secs(10))
-                        .with_jitter()
-                        .build();
+                }
 
-                    loop {
-                        if telemetry_enabled {
-                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "connecting".to_string();
-                        }
+                backoff = ExponentialBuilder::default()
+                    .with_min_delay(Duration::from_millis(100))
+                    .with_max_delay(Duration::from_secs(10))
+                    .with_jitter()
+                    .build();
 
-                        let client = match async_nats::connect(&url).await {
-                            Ok(c) => c,
-                            Err(e) => {
-                                warn!(error = %e, "Failed to connect to NATS, retrying");
-                                if telemetry_enabled {
-                                    *telemetry_state.last_error.lock().await = e.to_string();
-                                    telemetry_state
-                                        .last_error_at_ms
-                                        .store(now_ms(), Ordering::Relaxed);
-                                    *telemetry_state.subscription_state.write().await =
-                                        "error".to_string();
-                                    if let Some(tx_evt) = &telemetry_event_tx {
-                                        let _ = tx_evt.try_send(Worker::make_event(
-                                            &worker_id,
-                                            &namespace,
-                                            &task_queue,
-                                            TelemetryLevel::Warn,
-                                            "subscribe_error",
-                                            "NATS connect error",
-                                            serde_json::json!({ "error": e.to_string() }),
-                                        ));
-                                    }
-                                }
-                                let d = backoff.next().unwrap_or(Duration::from_secs(10));
-                                tokio::time::sleep(d).await;
-                                continue;
-                            }
-                        };
-
-                        let mut sub = match client
-                            .queue_subscribe(subject.clone(), queue_group.clone())
-                            .await
-                        {
-                            Ok(s) => s,
-                            Err(e) => {
-                                warn!(error = %e, "Failed to subscribe to NATS, retrying");
-                                if telemetry_enabled {
-                                    *telemetry_state.last_error.lock().await = e.to_string();
-                                    telemetry_state
-                                        .last_error_at_ms
-                                        .store(now_ms(), Ordering::Relaxed);
-                                    *telemetry_state.subscription_state.write().await =
-                                        "error".to_string();
-                                    if let Some(tx_evt) = &telemetry_event_tx {
-                                        let _ = tx_evt.try_send(Worker::make_event(
-                                            &worker_id,
-                                            &namespace,
-                                            &task_queue,
-                                            TelemetryLevel::Warn,
-                                            "subscribe_error",
-                                            "NATS subscribe error",
-                                            serde_json::json!({ "error": e.to_string() }),
-                                        ));
-                                    }
-                                }
-                                let d = backoff.next().unwrap_or(Duration::from_secs(10));
-                                tokio::time::sleep(d).await;
-                                continue;
-                            }
-                        };
-
-                        if telemetry_enabled {
-                            telemetry_state.subscribed.store(true, Ordering::Relaxed);
-                            telemetry_state
-                                .last_subscribe_ok_at_ms
-                                .store(now_ms(), Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "subscribed".to_string();
-                            if let Some(tx_evt) = &telemetry_event_tx {
-                                let _ = tx_evt.try_send(Worker::make_event(
-                                    &worker_id,
-                                    &namespace,
-                                    &task_queue,
-                                    TelemetryLevel::Info,
-                                    "subscribe_ok",
-                                    "NATS subscription established",
-                                    serde_json::json!({}),
-                                ));
-                            }
-                        }
-
-                        backoff = ExponentialBuilder::default()
-                            .with_min_delay(Duration::from_millis(100))
-                            .with_max_delay(Duration::from_secs(10))
-                            .with_jitter()
-                            .build();
-
-                        while let Some(_msg) = sub.next().await {
+                loop {
+                    match stream.message().await {
+                        Ok(Some(_)) => {
                             if telemetry_enabled {
                                 telemetry_state
                                     .last_wakeup_at_ms
@@ -1043,98 +821,36 @@ impl Worker {
                                 return;
                             }
                         }
-
-                        warn!("NATS subscription ended, reconnecting");
-                        if telemetry_enabled {
-                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "reconnecting".to_string();
-                            if let Some(tx_evt) = &telemetry_event_tx {
-                                let _ = tx_evt.try_send(Worker::make_event(
-                                    &worker_id,
-                                    &namespace,
-                                    &task_queue,
-                                    TelemetryLevel::Warn,
-                                    "subscribe_closed",
-                                    "NATS subscription ended; reconnecting",
-                                    serde_json::json!({}),
-                                ));
-                            }
-                        }
-                    }
-                });
-            }
-
-            #[cfg(feature = "kafka")]
-            SignalBackend::Kafka {
-                brokers,
-                topic,
-                group_id,
-            } => {
-                let namespace = self.namespace.clone();
-                tokio::spawn(async move {
-                    let key = format!("{namespace}:{task_queue}");
-                    let mut backoff = ExponentialBuilder::default()
-                        .with_min_delay(Duration::from_millis(200))
-                        .with_max_delay(Duration::from_secs(10))
-                        .with_jitter()
-                        .build();
-
-                    loop {
-                        if telemetry_enabled {
-                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "connecting".to_string();
-                        }
-
-                        let consumer: rdkafka::consumer::StreamConsumer =
-                            match rdkafka::ClientConfig::new()
-                                .set("bootstrap.servers", &brokers)
-                                .set("group.id", &group_id)
-                                .set("enable.auto.commit", "false")
-                                // Wakeup messages are idempotent: consuming earlier messages is safe.
-                                // Using "earliest" avoids missing a wakeup that was published just
-                                // before this consumer successfully joins the group.
-                                .set("auto.offset.reset", "earliest")
-                                .create()
-                            {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    warn!(error = %e, "Failed to create Kafka consumer, retrying");
-                                    if telemetry_enabled {
-                                        *telemetry_state.last_error.lock().await = e.to_string();
-                                        telemetry_state
-                                            .last_error_at_ms
-                                            .store(now_ms(), Ordering::Relaxed);
-                                        *telemetry_state.subscription_state.write().await =
-                                            "error".to_string();
-                                        if let Some(tx_evt) = &telemetry_event_tx {
-                                            let _ = tx_evt.try_send(Worker::make_event(
-                                                &worker_id,
-                                                &namespace,
-                                                &task_queue,
-                                                TelemetryLevel::Warn,
-                                                "subscribe_error",
-                                                "Kafka consumer create error",
-                                                serde_json::json!({ "error": e.to_string() }),
-                                            ));
-                                        }
-                                    }
-                                    let d = backoff.next().unwrap_or(Duration::from_secs(10));
-                                    tokio::time::sleep(d).await;
-                                    continue;
+                        Ok(None) => {
+                            warn!("SubscribeWork closed by server, resubscribing");
+                            if telemetry_enabled {
+                                telemetry_state.subscribed.store(false, Ordering::Relaxed);
+                                *telemetry_state.subscription_state.write().await =
+                                    "reconnecting".to_string();
+                                if let Some(tx_evt) = &telemetry_event_tx {
+                                    let _ = tx_evt.try_send(Worker::make_event(
+                                        &worker_id,
+                                        &namespace,
+                                        &task_queue,
+                                        TelemetryLevel::Warn,
+                                        "subscribe_closed",
+                                        "SubscribeWork stream closed; resubscribing",
+                                        serde_json::json!({}),
+                                    ));
                                 }
-                            };
-
-                        if let Err(e) = consumer.subscribe(&[&topic]) {
-                            warn!(error = %e, "Failed to subscribe to Kafka topic, retrying");
+                            }
+                            break;
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "SubscribeWork error, resubscribing");
                             if telemetry_enabled {
                                 *telemetry_state.last_error.lock().await = e.to_string();
                                 telemetry_state
                                     .last_error_at_ms
                                     .store(now_ms(), Ordering::Relaxed);
+                                telemetry_state.subscribed.store(false, Ordering::Relaxed);
                                 *telemetry_state.subscription_state.write().await =
-                                    "error".to_string();
+                                    "reconnecting".to_string();
                                 if let Some(tx_evt) = &telemetry_event_tx {
                                     let _ = tx_evt.try_send(Worker::make_event(
                                         &worker_id,
@@ -1142,102 +858,17 @@ impl Worker {
                                         &task_queue,
                                         TelemetryLevel::Warn,
                                         "subscribe_error",
-                                        "Kafka subscribe error",
+                                        "SubscribeWork stream error; resubscribing",
                                         serde_json::json!({ "error": e.to_string() }),
                                     ));
                                 }
                             }
-                            let d = backoff.next().unwrap_or(Duration::from_secs(10));
-                            tokio::time::sleep(d).await;
-                            continue;
-                        }
-
-                        info!(
-                            brokers = %brokers,
-                            topic = %topic,
-                            group_id = %group_id,
-                            namespace = %namespace,
-                            task_queue = %task_queue,
-                            key = %key,
-                            "Kafka wakeup subscription started"
-                        );
-
-                        if telemetry_enabled {
-                            telemetry_state.subscribed.store(true, Ordering::Relaxed);
-                            telemetry_state
-                                .last_subscribe_ok_at_ms
-                                .store(now_ms(), Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "subscribed".to_string();
-                            if let Some(tx_evt) = &telemetry_event_tx {
-                                let _ = tx_evt.try_send(Worker::make_event(
-                                    &worker_id,
-                                    &namespace,
-                                    &task_queue,
-                                    TelemetryLevel::Info,
-                                    "subscribe_ok",
-                                    "Kafka subscription established",
-                                    serde_json::json!({
-                                        "topic": topic.clone(),
-                                        "group_id": group_id.clone()
-                                    }),
-                                ));
-                            }
-                        }
-
-                        backoff = ExponentialBuilder::default()
-                            .with_min_delay(Duration::from_millis(200))
-                            .with_max_delay(Duration::from_secs(10))
-                            .with_jitter()
-                            .build();
-
-                        let mut stream = consumer.stream();
-                        while let Some(msg) = stream.next().await {
-                            let msg = match msg {
-                                Ok(m) => m,
-                                Err(e) => {
-                                    warn!(error = %e, "Kafka consume error");
-                                    continue;
-                                }
-                            };
-
-                            if msg.key() == Some(key.as_bytes()) {
-                                tracing::debug!("Kafka wakeup received");
-                                if telemetry_enabled {
-                                    telemetry_state
-                                        .last_wakeup_at_ms
-                                        .store(now_ms(), Ordering::Relaxed);
-                                }
-                                if tx.send(()).await.is_err() {
-                                    return;
-                                }
-                            }
-
-                            let _ =
-                                consumer.commit_message(&msg, rdkafka::consumer::CommitMode::Async);
-                        }
-
-                        warn!("Kafka stream ended, reconnecting");
-                        if telemetry_enabled {
-                            telemetry_state.subscribed.store(false, Ordering::Relaxed);
-                            *telemetry_state.subscription_state.write().await =
-                                "reconnecting".to_string();
-                            if let Some(tx_evt) = &telemetry_event_tx {
-                                let _ = tx_evt.try_send(Worker::make_event(
-                                    &worker_id,
-                                    &namespace,
-                                    &task_queue,
-                                    TelemetryLevel::Warn,
-                                    "subscribe_closed",
-                                    "Kafka stream ended; reconnecting",
-                                    serde_json::json!({}),
-                                ));
-                            }
+                            break;
                         }
                     }
-                });
+                }
             }
-        }
+        });
     }
 
     /// Spawn a background task to send periodic heartbeats to the server
