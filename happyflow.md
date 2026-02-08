@@ -158,9 +158,7 @@ CREATE TABLE happyflow.workflow_runs (
   leased_until TIMESTAMPTZ,
   locked_by UUID,
   last_fired_at TIMESTAMPTZ,
-  max_catchup INT NOT NULL DEFAULT 50,
-  CONSTRAINT uq_workflow_external_active UNIQUE (namespace, external_id, status)
-    DEFERRABLE INITIALLY IMMEDIATE
+  max_catchup INT NOT NULL DEFAULT 50
 );
 
 CREATE TABLE happyflow.workflow_payloads (
@@ -217,7 +215,6 @@ CREATE TABLE happyflow.run_queue (
   namespace TEXT NOT NULL,
   task_queue TEXT NOT NULL,
   workflow_type TEXT NOT NULL,
-  priority SMALLINT NOT NULL DEFAULT 100,
   available_at TIMESTAMPTZ NOT NULL,
   leased_until TIMESTAMPTZ,
   locked_by UUID,
@@ -235,22 +232,13 @@ CREATE TABLE happyflow.concurrency_limits (
   max_inflight INT NOT NULL,
   PRIMARY KEY (namespace, task_queue, workflow_type)
 );
-
-CREATE TABLE happyflow.concurrency_counters (
-  namespace TEXT NOT NULL,
-  task_queue TEXT,
-  workflow_type TEXT,
-  inflight INT NOT NULL DEFAULT 0,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (namespace, task_queue, workflow_type)
-);
 ```
 
 ## 6.4 Indexes
 
 ```sql
 CREATE INDEX idx_run_queue_claim
-  ON happyflow.run_queue (namespace, task_queue, available_at, priority, enqueued_at)
+  ON happyflow.run_queue (namespace, task_queue, available_at, enqueued_at)
   WHERE leased_until IS NULL OR leased_until < now();
 
 CREATE INDEX idx_workflow_status_created
@@ -268,7 +256,7 @@ CREATE INDEX idx_step_latest
   WHERE is_latest = true;
 ```
 
-Note: remove the invalid "unique by status" active-id constraint in actual implementation; use a partial unique index instead:
+Use a partial unique index for active-workflow idempotency:
 
 ```sql
 CREATE UNIQUE INDEX uq_workflow_external_active
@@ -286,7 +274,6 @@ package happyflow.v1;
 
 message Payload {
   bytes data = 1;
-  string encoding = 2; // "json", "raw"
 }
 
 message PageRequest {
@@ -569,18 +556,15 @@ message Schedule {
 message CreateScheduleResponse { Schedule schedule = 1; }
 message GetScheduleRequest { string namespace = 1; string schedule_id = 2; }
 message GetScheduleResponse { Schedule schedule = 1; }
-message PauseScheduleRequest { string namespace = 1; string schedule_id = 2; }
-message PauseScheduleResponse {}
-message ResumeScheduleRequest { string namespace = 1; string schedule_id = 2; }
-message ResumeScheduleResponse {}
+message SetScheduleEnabledRequest { string namespace = 1; string schedule_id = 2; bool enabled = 3; }
+message SetScheduleEnabledResponse {}
 message DeleteScheduleRequest { string namespace = 1; string schedule_id = 2; }
 message DeleteScheduleResponse {}
 
 service ScheduleService {
   rpc CreateSchedule(CreateScheduleRequest) returns (CreateScheduleResponse);
   rpc GetSchedule(GetScheduleRequest) returns (GetScheduleResponse);
-  rpc PauseSchedule(PauseScheduleRequest) returns (PauseScheduleResponse);
-  rpc ResumeSchedule(ResumeScheduleRequest) returns (ResumeScheduleResponse);
+  rpc SetScheduleEnabled(SetScheduleEnabledRequest) returns (SetScheduleEnabledResponse);
   rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
 }
 ```
@@ -644,7 +628,7 @@ WITH candidates AS (
     AND q.available_at <= now()
     AND (q.leased_until IS NULL OR q.leased_until < now())
     AND r.status IN ('PENDING', 'RUNNING', 'SLEEPING')
-  ORDER BY q.priority ASC, q.available_at ASC, q.enqueued_at ASC
+  ORDER BY q.available_at ASC, q.enqueued_at ASC
   LIMIT $4
   FOR UPDATE SKIP LOCKED
 )
@@ -653,27 +637,30 @@ SELECT * FROM candidates;
 -- 2) Apply limits (namespace/queue/type + worker capacity) in app-layer logic
 -- 3) Update selected rows with lease ownership
 -- 4) Update workflow_runs lock columns
--- 5) Increment inflight counters
 
 COMMIT;
 ```
 
 ## 8.3 Fairness
-- Order by `priority`, then oldest `available_at`, then `enqueued_at`.
-- Optional starvation guard: every N claims, force include oldest item globally per queue.
+- FIFO by `available_at`, then `enqueued_at`.
+- Keep fairness simple in v1; add priority only if real starvation appears.
 
 ## 9. Concurrency Limits
 
 ## 9.1 Limit levels
-1. Namespace total inflight
-2. Queue inflight
-3. Workflow-type inflight
-4. Worker local max concurrent
+1. Worker local max concurrent (required)
+2. Queue max inflight (optional)
+3. Workflow-type max inflight (optional)
 
 ## 9.2 Enforcement
-- All checks + increments happen in the same transaction as claim.
-- Decrements occur on terminal completion/failure/cancel OR lease expiry recovery.
-- Counters are periodic-reconciled by coordinator for correctness drift.
+- All checks happen in the same transaction as claim.
+- Compute inflight with live counts from leased rows in `run_queue`.
+- Decrements are implicit when lease expires or row leaves queue (completion/failure/cancel).
+
+## 9.3 System throttles (minimal)
+1. `max_batch_size` (default: `10`)
+2. `max_schedule_fires_per_sec` (default: `10`)
+3. Retry backoff from workflow retry policy (no extra global retry throttler in v1)
 
 ## 10. Notifications vs Polling
 
@@ -699,6 +686,10 @@ COMMIT;
   - Create one schedule instance run.
   - Advance `available_at` to next fire.
   - Respect `max_catchup` and global backfill rate limit.
+
+## 11.3 Schedule API simplification
+- Keep schedule control to `create/get/set_enabled/delete` in v1.
+- Do not add separate pause/resume RPCs.
 
 ## 12. Retry Policy
 
@@ -804,3 +795,10 @@ COMMIT;
 - No module should exceed ~300 LOC without split.
 - Prefer explicit code over macro-heavy abstractions.
 - Add complexity only with a failing test or measured need.
+
+## 19. Invariants (must always hold)
+1. A terminal workflow (`COMPLETED`, `FAILED`, `CANCELLED`) is never claimable.
+2. A run has at most one active lease at a time.
+3. Step replay returns cached output for completed step IDs.
+4. Queue rows must not exist for terminal workflow runs.
+5. Workflow state transition and queue mutation happen in one transaction.
